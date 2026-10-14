@@ -1,0 +1,46 @@
+[package]
+name = "minecraft-fishingbot-manager-for-discord"
+version = "0.1.0"
+edition = "2024"
+description = "Manage Minecraft FishingBot instances through Discord commands"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/voiiku/minecraft-fishingbot-manager-for-discord"
+homepage = "https://github.com/voiiku/minecraft-fishingbot-manager-for-discord"
+documentation = "https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/blob/main/docs/index-en_us.md"
+
+[lib]
+name = "minecraft_fishingbot_manager_for_discord"
+path = "src/lib.rs"
+
+[[bin]]
+name = "minecraft-fishingbot-manager-for-discord"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4.45"
+craftping = { version = "0.8.0", features = ["async-tokio"] }
+log = "0.4.34"
+poise = "0.7.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serenity = "0.12.5"
+sysinfo = "0.39.6"
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.8"
+
+
+[profile.dev]
+opt-level = 0
+debug = 0
+incremental = true
+codegen-units = 256
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+incremental = false

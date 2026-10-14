@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    # 当前只支持 64 位 Linux。
+    name: Build and release (Linux x86_64 musl)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          # 需要把重新生成的 THIRD-PARTY-NOTICES.html 提交回 main。
+          fetch-depth: 0
+
+      # 版本校验
+      - name: Validate release tag version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          package_version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)"
+
+          if [[ -z "$version" || "$version" != "$package_version" ]]; then
+            echo "Tag version '$version' does not match Cargo.toml version '$package_version'." >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain and musl target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+
+      - name: Install musl linker
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+
+      # 用仓库里的模板 about.hbs 重新生成清单。
+      - name: Regenerate third-party notices
+        run: |
+          cargo fetch --locked
+          cargo about generate about.hbs > THIRD-PARTY-NOTICES.html
+
+      # 清单是仓库产物，提交回默认分支 main，再进入下一步的测试与构建。
+      # GitHub 不会为它再触发一次 CI，所以需要测试通过后再发布
+      - name: Commit and push the regenerated notices
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- THIRD-PARTY-NOTICES.html; then
+            echo "THIRD-PARTY-NOTICES.html 已是最新，无需提交。"
+            exit 0
+          fi
+
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "标签提交不在 main 的前方（main=$(git rev-parse --short origin/main) tag=$(git rev-parse --short HEAD)）。" >&2
+            echo "为避免把其它分支的提交推进 main，这一步不推送；请在本地重新生成 THIRD-PARTY-NOTICES.html 并提交到 main。" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add THIRD-PARTY-NOTICES.html
+          git commit -m "chore: regenerate THIRD-PARTY-NOTICES.html for ${RELEASE_TAG}"
+          git push origin HEAD:main
+
+      - name: Run tests
+        run: cargo test --all-targets --locked
+        
+      - name: Build release binary
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      # 将构建输出复制到工作区根目录，并重命名为带版本、系统、架构和 ABI 的独立可执行文件。
+      - name: Rename release binary
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          binary_name="minecraft-fishingbot-manager-for-discord"
+          release_binary="${binary_name}-${VERSION}-linux-x86_64-musl"
+          install -m 0755 \
+            "target/x86_64-unknown-linux-musl/release/$binary_name" \
+            "$release_binary"
+
+      # 更新此标签对应的 GitHub Release，上传单个二进制文件。
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          make_latest: true
+          files: minecraft-fishingbot-manager-for-discord-${{ steps.version.outputs.version }}-linux-x86_64-musl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

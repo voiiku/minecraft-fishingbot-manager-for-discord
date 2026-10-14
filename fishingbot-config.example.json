@@ -1,0 +1,148 @@
+{
+  "server": {
+    "ip": "127.0.0.1",
+    "port": 25565,
+    "realm-id": -1,
+    "realm-accept-tos": false,
+    "online-mode": true,
+    "default-protocol": "AUTOMATIC",
+    "spoof-forge": false,
+    "latest-code-of-conduct": 0
+  },
+  "auto": {
+    "auto-reconnect": true,
+    "auto-reconnect-time": 30,
+    "auto-disconnect": true,
+    "auto-sneak": false,
+    "auto-disconnect-players-threshold": 50,
+    "auto-accept-code-of-conduct": false,
+    "auto-command-on-respawn": {
+      "enabled": true,
+      "delay": 1000,
+      "commands": [
+        "/home fishing"
+      ]
+    },
+    "auto-command-before-death": {
+      "enabled": true,
+      "commands": [
+        "/spawn"
+      ],
+      "min-health-before-death": 6.0
+    },
+    "auto-quit-before-death": {
+      "enabled": false,
+      "min-health-before-quit": 6.0
+    },
+    "auto-eject": {
+      "enabled": false,
+      "rules": [
+        {
+          "name": "fish",
+          "direction": "WEST",
+          "allowList": [
+            "cod",
+            "salmon",
+            "pufferfish",
+            "tropical_fish"
+          ],
+          "ejectionType": "DROP"
+        },
+        {
+          "name": "treasure",
+          "direction": "EAST",
+          "allowList": [
+            "bow",
+            "enchanted_book",
+            "name_tag",
+            "nautilus_shell",
+            "saddle"
+          ],
+          "ejectionType": "DROP"
+        },
+        {
+          "name": "junk",
+          "direction": "SOUTH",
+          "allowList": [
+            "lily_pad",
+            "bowl",
+            "leather",
+            "leather_boots",
+            "rotten_flesh",
+            "stick",
+            "string",
+            "potion",
+            "bone",
+            "ink_sac",
+            "tripwire_hook",
+            "bamboo"
+          ],
+          "ejectionType": "DROP"
+        }
+      ]
+    },
+    "timer": {
+      "enabled": false,
+      "timers": [
+        {
+          "name": "test",
+          "units": 5,
+          "timeUnit": "MINUTES",
+          "commands": [
+            "Every five minutes"
+          ]
+        }
+      ]
+    }
+  },
+  "account": {
+    "mail": ""
+  },
+  "logs": {
+    "log-count": 1,
+    "log-packets": false,
+    "log-entity-data": false,
+    "log-item-data": false
+  },
+  "announces": {
+    "discord": {
+      "enabled": false,
+      "web-hook": "YOURWEBHOOK",
+      "announce-type-discord": "NONE",
+      "alert-on-attack": false,
+      "alert-on-respawn": false,
+      "alert-on-level-update": false,
+      "ping-on-enchantment": {
+        "enabled": false,
+        "mention": "<@USER_ID>",
+        "items": [
+          "enchanted_book"
+        ],
+        "enchantments": [
+          "mending",
+          "unbreaking"
+        ]
+      }
+    },
+    "announce-type-chat": "NONE",
+    "announce-type-console": "NONE",
+    "announce-lvl-up": false,
+    "announce-lvl-up-text": "I am level %lvl% now"
+  },
+  "start-text": {
+    "enabled": true,
+    "text": [
+      "/home fishing"
+    ]
+  },
+  "misc": {
+    "stucking-fix-enabled": true,
+    "prevent-rod-breaking": true,
+    "disable-rod-checking": false,
+    "theme": "SYSTEM",
+    "gui-console-max-lines": 1000,
+    "language": "ENGLISH",
+    "look-speed": 16,
+    "wiki": "https://github.com/MrKinau/FishingBot/wiki/config"
+  }
+}

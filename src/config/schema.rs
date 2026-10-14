@@ -1,0 +1,484 @@
+//! 配置结构与 TOML 表一一对应；解析见 [`super::parse`]，校验见 [`super::validate`]。
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+
+/// 解析并校验后的配置，字段顺序与示例配置一致。
+#[derive(Debug)]
+pub struct Config {
+    /// Discord bot 的连接与身份信息（唯一凭据，必填）。
+    pub discord: DiscordConfig,
+    /// 磁盘路径，相对路径已按配置文件所在目录展开。
+    pub paths: Paths,
+    /// 游戏侧配置（FishingBot 的 `config.json`）里由本项目管理的键：启动时据此生成那份文件。
+    pub fishingbot: FishingBotConfig,
+    /// 管理员名单（Discord 用户 ID → 名字）。
+    pub admins: Admins,
+    /// 判断机器人状态用的日志关键词。
+    pub keywords: KeywordsConfig,
+    /// `/pause`、`/unpause` 的确认回显与检查参数。
+    pub command_echo: CommandEchoConfig,
+    /// 程序运行使用的语言（面向 Discord 的文案）。
+    pub i18n: I18nConfig,
+    /// 机器人运行时参数。
+    pub runtime: RuntimeConfig,
+    /// 启动队列的批次与冷却策略。
+    pub startup_queue: StartupQueueConfig,
+    /// 单批内启动错峰、会话复核、停止与看门狗时序参数。
+    pub timing: TimingConfig,
+    /// FishingBot 原始日志配置。
+    pub raw_game_logs: RawGameLogsConfig,
+    /// `/ping` 默认目标。
+    pub ping: PingConfig,
+    /// 程序日志的级别开关。
+    pub log: LogConfig,
+    /// 可自定义的提示文案。
+    pub text: TextConfig,
+}
+
+/// `/ping` 的默认目标与超时配置。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PingConfig {
+    /// 默认探测的服务器地址，域名或 IP。
+    pub default_ping_host: String,
+    /// 默认探测的服务器端口。
+    pub default_ping_port: u16,
+    /// `/ping` 总超时（毫秒），包括 TCP 建连与状态握手。
+    pub timeout_ms: u64,
+}
+
+/// Discord bot 的连接与身份信息。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiscordConfig {
+    /// Bot Token，必填。
+    pub token: String,
+}
+
+/// 程序日志级别；`RUST_LOG` 优先于此配置。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogConfig {
+    /// 是否启用 DEBUG 级日志。
+    pub debug: bool,
+}
+
+/// 程序使用的语言，影响 Discord 回复与程序日志，不影响 FishingBot 日志。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct I18nConfig {
+    /// 语言名，同时写入 FishingBot 配置的 `misc.language`。
+    pub language: String,
+}
+
+/// 管理员名单：Discord 用户 ID 到显示名称的映射。
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub struct Admins(BTreeMap<String, String>);
+
+impl Admins {
+    /// 这个 Discord 用户 ID 是不是管理员。
+    pub fn is_admin(&self, user_id: u64) -> bool {
+        self.0.contains_key(&user_id.to_string())
+    }
+
+    /// 逐条遍历（按用户 ID 排序，`BTreeMap` 保证顺序稳定）。
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(user_id, name)| (user_id.as_str(), name.as_str()))
+    }
+
+    /// 名单是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// 状态判断关键词：只配置随部署环境变化的内容。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeywordsConfig {
+    /// 成功进入游戏服务器的关键词。
+    pub online: String,
+    /// 过滤垃圾日志用的正则，直接交给 `grep -E`。
+    pub filter_regex: String,
+}
+
+/// FishingBot 原始日志的目录、文件名和丢弃目标。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawGameLogsConfig {
+    /// 原始日志的目录名：`<机器人目录>/<runtime.logs_dir>/<它>`。
+    pub dir_name: String,
+    /// 原始日志文件名。
+    pub file_name: String,
+    /// 丢弃日志内容的目标路径。
+    pub discard_path: String,
+}
+
+/// 展开后的文件路径。
+#[derive(Debug)]
+pub struct Paths {
+    /// 数据根目录：机器人目录、jar 与游戏配置的公共父目录。
+    pub base_dir: PathBuf,
+    /// 机器人目录（`base_dir/bots`），其下按 Discord 用户 ID 再分一层。
+    pub bots_dir: PathBuf,
+    /// FishingBot JAR 路径。
+    pub jar: PathBuf,
+    /// 所有机器人共用的 FishingBot 配置路径。
+    pub fishingbot_config: PathBuf,
+}
+
+/// FishingBot `config.json` 中由本项目管理的字段；其余字段沿用模板。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FishingBotConfig {
+    /// 默认服务器地址。
+    pub server_ip: String,
+    /// 游戏服务器端口。
+    pub server_port: u16,
+    /// 协议版本；可填 `AUTOMATIC` 或版本号（如 `1.20.4`）。
+    pub default_protocol: String,
+    /// 掉线后自动重连。
+    pub auto_reconnect: bool,
+    /// 自动重连前的等待秒数。
+    pub auto_reconnect_time: u64,
+    /// 进服后执行的指令；空表表示不执行。
+    pub start_text: Vec<String>,
+    /// 钓到物品时的控制台播报类型。
+    pub announce_type_console: String,
+    /// 钓到物品时的游戏聊天播报类型。
+    pub announce_type_chat: String,
+}
+
+/// 机器人运行参数。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeConfig {
+    /// JVM 启动参数。
+    pub java_opts: String,
+    /// screen 会话名前缀。
+    pub screen_prefix: String,
+    /// refreshToken 文件名；文件权限限制为 `0600`。
+    pub token_file: String,
+    /// 机器人日志目录名。
+    pub logs_dir: String,
+    /// `/log` 返回的最大行数。
+    pub max_log_lines: usize,
+    /// 单条回复字符上限，超出时按行截断。
+    pub max_reply_chars: usize,
+    /// 自动候选（autocomplete）单次返回的最大条数；不超过 [`MAX_AUTOCOMPLETE_CHOICES`]。
+    pub max_autocomplete_choices: usize,
+}
+
+/// 启动队列的批次与冷却设置。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartupQueueConfig {
+    /// 每批最多启动的机器人数量。
+    pub max_batch_size: usize,
+    /// 一批启动完成后、开始下一批前的冷却时间（毫秒）。
+    pub batch_cooldown_ms: u64,
+    /// 全局队列最多暂存的启动请求数量。
+    pub max_pending_requests: usize,
+}
+
+/// 启动、停止与看门狗的时序参数，时间单位为毫秒。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimingConfig {
+    /// 同一启动批次内相邻机器人启动的间隔（毫秒）。
+    pub stagger_ms: u64,
+    /// 每台机器人启动后的等待时间（毫秒）。
+    pub settle_per_bot_ms: u64,
+    /// 等待 JVM 优雅退出的时间（毫秒），超时后强杀。
+    pub stop_grace_ms: u64,
+    /// 强制退出后、重新启动前的等待时间（毫秒）。
+    pub stop_settle_ms: u64,
+    /// 看门狗判定窗口（毫秒），掉线后也用作重连等待时间；写 0 非法。
+    pub watchdog_window_ms: u64,
+    /// REST 探活间隔（毫秒），不能大于判定窗口。
+    pub probe_interval_ms: u64,
+    /// 每轮连接的首次握手超时（毫秒）。
+    pub first_handshake_timeout_ms: u64,
+}
+
+/// 自动候选单次返回的条数上限（Discord 对 autocomplete 的硬上限）。
+pub const MAX_AUTOCOMPLETE_CHOICES: usize = 25;
+
+/// `/pause` 与 `/unpause` 的 JAR 回显及检查参数。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommandEchoConfig {
+    /// `/pause` 生效后 JAR 打印的回显（默认值按英文 jar；中文 jar 是 `已暂停钓鱼`）。
+    pub pause_echo: String,
+    /// `/unpause` 生效后 JAR 打印的回显（默认值按英文 jar；中文 jar 是 `已恢复钓鱼`）。
+    pub unpause_echo: String,
+    /// 指令发出去之后等多久再去看日志回显（毫秒）。
+    pub wait_ms: u64,
+    /// 检查回显时读取的日志行数。
+    pub scan_lines: usize,
+}
+
+/// 可自定义的帮助文本。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TextConfig {
+    /// `/help` 的文本。
+    pub help: String,
+}
+
+// ============ 配置文件结构（仅供 parse 使用） ============
+
+/// 配置文件结构，字段顺序与示例配置和 [`Config`] 一致。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FileConfig {
+    pub(super) discord: DiscordConfig,
+    pub(super) paths: FilePaths,
+    pub(super) fishingbot: FishingBotConfig,
+    pub(super) admins: Admins,
+    pub(super) keywords: KeywordsConfig,
+    pub(super) command_echo: CommandEchoConfig,
+    pub(super) i18n: I18nConfig,
+    pub(super) runtime: RuntimeConfig,
+    pub(super) startup_queue: StartupQueueConfig,
+    pub(super) timing: TimingConfig,
+    pub(super) raw_game_logs: RawGameLogsConfig,
+    pub(super) ping: PingConfig,
+    pub(super) log: LogConfig,
+    pub(super) text: TextConfig,
+}
+
+/// 配置文件中的路径字段。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FilePaths {
+    pub(super) base_dir: PathBuf,
+    pub(super) jar: PathBuf,
+    pub(super) fishingbot_config_file_name: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 示例配置必须符合当前 schema。
+    #[test]
+    fn example_config_matches_schema() {
+        let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
+        let file: FileConfig = toml::from_str(text).expect(
+            "minecraft-fishingbot-manager-for-discord.conf.example.toml 与当前配置 schema 不一致，请同步更新示例文件",
+        );
+
+        // 示例配置字段必须齐全。
+        assert!(!file.ping.default_ping_host.trim().is_empty());
+        assert!(file.ping.default_ping_port > 0);
+        assert!(file.ping.timeout_ms > 0);
+        assert!(!file.runtime.screen_prefix.trim().is_empty());
+        assert!(file.timing.watchdog_window_ms > 0);
+        assert!(file.timing.probe_interval_ms > 0);
+        assert!(file.timing.first_handshake_timeout_ms > 0);
+        let startup_queue = &file.startup_queue;
+        assert!(startup_queue.max_batch_size > 0);
+        assert!(startup_queue.batch_cooldown_ms > 0);
+        assert!(startup_queue.max_pending_requests > 0);
+        assert!(!file.command_echo.pause_echo.trim().is_empty());
+        assert!(!file.command_echo.unpause_echo.trim().is_empty());
+        assert!(file.command_echo.wait_ms > 0);
+        assert!(file.command_echo.scan_lines > 0);
+        // 必填表必须包含在示例配置中。
+        assert!(text.contains("[discord]"));
+        assert!(text.contains("[admins]"));
+        assert!(text.contains("[keywords]"));
+        assert!(text.contains("[command_echo]"));
+        assert!(text.contains("[startup_queue]"));
+        // 帮助文本应不为空。
+        assert!(!file.text.help.trim().is_empty());
+    }
+
+    /// 示例配置中的字段都应记录在配置文档中。
+    #[test]
+    fn every_example_key_is_documented() {
+        let docs = include_str!("../../docs/mods/config/config-zh_cn.md");
+        let keys = example_keys();
+
+        // 先确认抽取器本身没失灵：真抽空了，下面的断言会变成"永远通过"。
+        assert!(
+            keys.contains(&"max_reply_chars".to_string()),
+            "从示例配置里没抽到键名，测试失效: {keys:?}"
+        );
+
+        let undocumented_keys: Vec<String> = keys
+            .into_iter()
+            .filter(|key| !docs.contains(&format!("`{key}`")))
+            .collect();
+
+        assert!(
+            undocumented_keys.is_empty(),
+            "这些字段没写进 docs/mods/config/config-zh_cn.md: {undocumented_keys:?}"
+        );
+    }
+
+    /// 从示例配置里抽出所有裸键名（`key = value` 里的 `key`）。
+    ///
+    /// 跳过注释行、表头行、`"Discord用户ID" = "名字"` 这类引号键，以及 `"""` 多行字符串里的内容：
+    /// 示例的 `help` 是一整段文案，里面的中文说明不该被当成配置项。
+    fn example_keys() -> Vec<String> {
+        let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
+        let mut keys = Vec::new();
+        let mut in_multiline_string = false;
+
+        for line in text.lines() {
+            let trimmed = line.trim();
+            let triple_quote_count = trimmed.matches("\"\"\"").count();
+
+            if in_multiline_string {
+                // 结束那一行也只有一个三引号（内容在它前面），靠奇偶判断。
+                if triple_quote_count % 2 == 1 {
+                    in_multiline_string = false;
+                }
+                continue;
+            }
+
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
+                continue;
+            }
+
+            let Some((key, _)) = trimmed.split_once(" = ") else {
+                continue;
+            };
+            let key = key.trim();
+            if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                continue; // 引号键（`[admins]` 里的 Discord 用户 ID）不算字段名
+            }
+            keys.push(key.to_string());
+
+            if triple_quote_count % 2 == 1 {
+                in_multiline_string = true;
+            }
+        }
+
+        keys
+    }
+
+    /// 管理员名单：能按 Discord 用户 ID 查权限，也能取到名字。
+    #[test]
+    fn admins_lookup_by_user_id() {
+        let admins = Admins(BTreeMap::from([(
+            "2878855255".to_string(),
+            "SlanceLenk".to_string(),
+        )]));
+
+        assert!(admins.is_admin(2878855255));
+        assert!(!admins.is_admin(123456));
+        assert!(!admins.is_empty());
+        assert!(
+            admins
+                .iter()
+                .any(|(user_id, name)| user_id == "2878855255" && name == "SlanceLenk")
+        );
+    }
+
+    /// 少写一个必需的表时必须报错，而不是悄悄用某个默认值。
+    #[test]
+    fn missing_required_table_is_error() {
+        let text = r#"
+[ping]
+host = "example.com"
+port = 25565
+"#;
+
+        assert!(toml::from_str::<FileConfig>(text).is_err());
+    }
+
+    /// 字段名拼错时必须报错（`deny_unknown_fields`）。
+    #[test]
+    fn unknown_field_is_error() {
+        let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml")
+            .replace("[runtime]", "[runtime]\nunknown_field = 1");
+
+        assert!(toml::from_str::<FileConfig>(&text).is_err());
+    }
+
+    /// 造一个绝对路径：本项目只跑在 Linux 上，加个 `/` 就行。
+    fn absolute(path: &str) -> PathBuf {
+        PathBuf::from(format!("/{path}"))
+    }
+
+    /// `base_dir` 必须是绝对路径、`jar` 与 `fishingbot_config_file_name` 必须是相对路径（相对
+    /// `base_dir`）；派生出来的 `bots_dir` 一定在 `base_dir` 之下。
+    #[test]
+    fn paths_follow_the_absolute_relative_rule() {
+        let base_dir = absolute("srv/fishbot/data");
+        let paths = FilePaths {
+            base_dir: base_dir.clone(),
+            jar: PathBuf::from("FishingBot.jar"),
+            fishingbot_config_file_name: PathBuf::from("config.json"),
+        }
+        .into_paths()
+        .expect("符合规则的路径应当通过");
+
+        assert_eq!(paths.base_dir, base_dir);
+        assert_eq!(paths.bots_dir, base_dir.join("bots"));
+        assert_eq!(paths.jar, base_dir.join("FishingBot.jar"));
+        assert_eq!(
+            paths.fishingbot_config,
+            base_dir.join("config.json"),
+            "配置里写的是文件名，运行时是展开后的完整路径"
+        );
+    }
+
+    /// 相对路径的 `base_dir` 会被拒绝（提示写绝对路径）。
+    #[test]
+    fn relative_base_dir_is_rejected() {
+        let err = FilePaths {
+            base_dir: PathBuf::from("fishingbots"),
+            jar: PathBuf::from("FishingBot.jar"),
+            fishingbot_config_file_name: PathBuf::from("config.json"),
+        }
+        .into_paths()
+        .expect_err("相对 base_dir 应当报错");
+
+        // 措辞断言钉默认语言（英语）的片段（默认语言是 `Language::default()`，见 `docs/mods/i18n/i18n-zh_cn.md`）。
+        assert!(
+            err.contains("absolute path"),
+            "报错应说明要写绝对路径: {err}"
+        );
+    }
+
+    /// 绝对路径的 `jar` / `fishingbot_config_file_name` 会被拒绝。
+    #[test]
+    fn absolute_jar_or_fishingbot_config_is_rejected() {
+        let base_dir = absolute("srv/fishbot/data");
+
+        let err = FilePaths {
+            base_dir: base_dir.clone(),
+            jar: absolute("opt/FishingBot.jar"),
+            fishingbot_config_file_name: PathBuf::from("config.json"),
+        }
+        .into_paths()
+        .expect_err("绝对 jar 应当报错");
+        // 措辞断言同 `relative_base_dir_is_rejected`：钉默认语言（英语）的片段。
+        assert!(
+            err.contains("relative path"),
+            "报错应说明要写相对路径: {err}"
+        );
+
+        let err = FilePaths {
+            base_dir,
+            jar: PathBuf::from("FishingBot.jar"),
+            fishingbot_config_file_name: absolute("etc/config.json"),
+        }
+        .into_paths()
+        .expect_err("绝对 fishingbot_config_file_name 应当报错");
+        assert!(
+            err.contains("fishingbot_config_file_name"),
+            "报错应指出字段名: {err}"
+        );
+    }
+}

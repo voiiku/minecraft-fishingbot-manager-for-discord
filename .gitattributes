@@ -1,0 +1,14 @@
+# Keep text files in LF form regardless of the editor or operating system.
+* text=auto eol=lf
+
+# State the expected line endings for the project's text formats explicitly.
+*.md text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+
+# Generated third-party license bundle; keep it in the repository/release but
+# exclude it from GitHub's language statistics and default diffs.
+THIRD-PARTY-NOTICES.html linguist-generated=true
+about.hbs linguist-generated=true

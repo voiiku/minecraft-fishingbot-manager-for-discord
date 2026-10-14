@@ -1,0 +1,213 @@
+# ============================================================================
+# configuration
+# Generated on first start if missing. Do not rename it.
+#
+# A line starting with `# CHINESE_SIMPLIFIED:` is a recommended value for Chinese.
+# Every field is required,you can change the values. This file is only read once at startup.
+# ============================================================================
+# ------------------------------ Language ------------------------------
+# The language of the replies and prompts sent to Discord, of this process's log and of its error messages.
+# It is written into the generated conf.json as `misc.language` verbatim, so the JAR use the same language.
+# Values: ENGLISH (default) or CHINESE_SIMPLIFIED - the names FishingBot itself uses. 
+# CHINESE_SIMPLIFIED: language = "CHINESE_SIMPLIFIED"
+[i18n]
+language = "ENGLISH"
+
+# ------------------------------ Discord connection ------------------------------
+[discord]
+# https://discord.com/developers/applications -> your app -> Bot -> Reset Token (only shown once).
+# A single Discord bot token can only be used on one running instance at a time; otherwise, a conflict will occur.
+# "guild_id" field is not supported from v0.2.0,now commands are registered globally
+token = "Paste Your Discord Bot Token Here"
+
+# ------------------------------ File paths ------------------------------
+[paths]
+# Root directory: the common parent of the bot directories and of the files below.
+# Must be an absolute path.
+base_dir = "/absolute/path/yourfolder/fishingbots"
+# File name of your FishingBot.jar,relative to base_dir. Change it when you upgrade.
+# Prefer a build that also has the in-game `/pause` and `/unpause` commands;
+# upstream's jar those two slash commands can only report "sent" (see README.md).
+jar = "FishingBot-2.13.15.jar"
+# File name of the config FishingBot itself reads (its `config.json`), relative to base_dir.
+# This project writes that file at startup from `[fishingbot]` below, deleting the old file first,
+# so edits that file do not survive a restart. Change `[fishingbot]` instead.
+fishingbot_config_file_name = "conf.json"
+
+# ------------------------------ FishingBot's config ------------------------------
+# Shared by every bot.
+# The keys not exposed here are documented in docs/mods/config/*.
+[fishingbot]
+# Game server address (domain or IP) and port.
+server_ip = "127.0.0.1"
+server_port = 25565
+# Protocol version: AUTOMATIC lets FishingBot detect it. If the automatic detection fails , put the exact version here, e.g. "1.20.4".
+default_protocol = "AUTOMATIC"
+# Reconnect after a disconnect, and how many seconds to wait. 
+auto_reconnect = true
+auto_reconnect_time = 30
+# Commands to run right after joining the server.
+# an empty list means "do nothing". 
+start_text = ["/home fishing"]
+# What to announce on the console / in the game chat when something is caught.
+# Values (upstream `AnnounceType`): ALL, ALL_BUT_FISH, ONLY_ENCHANTED, ONLY_BOOKS, NONE.
+# Those lines are the `[keywords] filter_regex` keeps flitering out, and the bot log is read for state, so the most bot does not need to announce anything.
+announce_type_console = "NONE"
+announce_type_chat = "NONE"
+
+# ------------------------------ Admins ------------------------------
+# Format: Discord user ID = "display name" (the name is only shown by /show admins).
+# Admins can operate any bot and use /startall, /stopall, /restartall and /commandall.
+[admins]
+"123456789012345678" = "your name"
+
+# ------------------------------ Log keywords ------------------------------
+# These strings are how the bot log is turned into the state shown by /status. 
+# Must re-check them after switching game servers , after the server changes its messages and after upgrading the JAR , otherwise the state is judged wrongly.
+[keywords]
+# The line your game server prints when the bot joins successfully.
+online = "Welcome to the xxx server"
+# Regex for noisy game lines, handed to `grep -v -E`: matching lines are dropped and never written.
+filter_regex = "([+][0-9.]+XP|is now AFK.|is no longer AFK.|is now away from keyboard.)"
+# Whether the bot has ended is not read from the log but from the screen session state (a
+# `(Dead ...)` husk), which is why there is no `stopped` key here. 
+
+# ------------------------------ Command echo confirmation ------------------------------
+# After /pause or /unpause is sent, wait wait_ms and then scan the last scan_lines lines of the newest log; the two lines below decide whether the command really took effect.
+[command_echo]
+# The line the JAR prints when it receives /pause or /unpause
+# The defaults match for English.
+# CHINESE_SIMPLIFIED: pause_echo = "已暂停钓鱼"
+pause_echo = "Fishing paused"
+# CHINESE_SIMPLIFIED: unpause_echo = "已恢复钓鱼"
+unpause_echo = "Fishing resumed"
+# How long to wait before reading the log for that echo, in milliseconds.
+# Affects: the reply delay of /pause and /unpause.
+wait_ms = 300
+# How many trailing log lines to scan for the echo. 
+# Affects: the reply delay of /pause and /unpause.
+scan_lines = 50
+
+# ------------------------------ Runtime ------------------------------
+[runtime]
+# JVM flags for every bot. With many instances the memory quota has to stay low.
+# Affects: the JVM arguments of the start command (utils/startup.rs).
+# There is no need to go lower; with plenty of RAM you can raise -Xmx (for example -Xmx256m).
+java_opts = "-Xms32m -Xmx128m -XX:+UseSerialGC"
+# screen session prefix; the session name looks like fb_<bot name>.
+# You do not need to change it unless it collides with sessions of another program.
+# Affects: the session name (utils/screen.rs, session_name); sending a command to a bot and checking whether it runs both go through it.
+screen_prefix = "fb_"
+# File name holding the refreshToken inside the bot directory (/token writes exactly this file).
+# You normally do not need to change it.
+token_file = "refreshToken"
+# The bot logs directory (by default: /fishingbots/bots/<user id>/<bot name>/logs). 
+# Every start writes a new file (logs/<timestamp>.log), older log files are kept, and only the filtered lines are written.
+# You normally do not need to change it.
+logs_dir = "logs"
+# The limit of read log file lines for /log reply. Logs are sent as an attachment.
+# Affects: the line limit of /log.
+max_log_lines = 100
+# Maximum characters per reply: longer replies are cut at a line boundary and the number of omitted lines is appended.
+# Discord hard-limits one message to 2000 characters(UTF-16), and a longer message simply fails to send.
+# You normally do not need to change it.
+max_reply_chars = 2000
+# Maximum number of autocomplete suggestions for the options.
+# Discord hard-limits an autocomplete response to 25 choices, so the accepted range is 1 - 25.
+max_autocomplete_choices = 25
+
+# ------------------------------ FishingBot Startup queue ------------------------------
+# One global FIFO queue is shared by /start, /startall, /restart and /restartall.
+# /bot login does not use this queue.
+[startup_queue]
+# Maximum number of bots to launch in one batch.
+max_batch_size = 3
+# Cooldown after a completed batch before starting the next batch, in milliseconds.
+# This reduces request frequency but cannot guarantee that Microsoft will accept every log request.
+batch_cooldown_ms = 12000
+# Maximum number of queued requests waiting for the dispatcher. Does not include the active request.
+max_pending_requests = 32
+
+# ------------------------------ Timing ------------------------------
+# All values are milliseconds.
+[timing]
+# Gap between launching bots in the same batch. Increase to reduce concurrent JVM memory use.
+stagger_ms = 600
+# Wait per launched bot before checking sessions. Two checks are made; total wait = 2 x bots x value.
+settle_per_bot_ms = 300
+# Grace period for a JVM to exit before it is force-killed.
+stop_grace_ms = 3000
+# Wait after force-killing sessions before checking that they have exited.
+stop_settle_ms = 500
+# Continuous probe-failure window before reconnecting; also the delay before reconnect.
+watchdog_window_ms = 30000
+# Interval between REST probes. Must not exceed watchdog_window_ms (the example uses one third of it).
+probe_interval_ms = 10000
+# Timeout for the first READY / RESUMED after connecting (the example uses twice watchdog_window_ms).
+first_handshake_timeout_ms = 60000
+
+# ------------------------------ FishingBot's own raw logs ------------------------------
+# The raw log of FishingBot.jar itself. 
+# These three keys follow the JAR: change them here when it changes its directory name or file name pattern. 
+# You normally do not need to change them.
+[raw_game_logs]
+# Directory name of the raw logs (by default : /<runtime.logs_dir>/raw/).
+# Affects: the directory wiped and recreated before every start (utils/startup.rs,reset_fishingbot_logs_dir).
+dir_name = "raw"
+# First raw log file name. FishingBot.jar currently uses the rolling pattern log%g.log; pointing it at discard_path creates the file successfully without keeping its content.
+file_name = "log0.log"
+# Where the raw log goes. By default it is thrown away and only the filtered log is kept.
+# You can change it to another path.
+discard_path = "/dev/null"
+
+# ------------------------------ /ping default target ------------------------------
+[ping]
+# Target of /ping when it is called without arguments.
+default_ping_host = "your.gameserver.address"
+default_ping_port = 25565
+timeout_ms = 3000
+
+# ------------------------------ Process log level ------------------------------
+# false: Record this project's all logs, framework (serenity / poise)'s WARN/ERROR.
+# true:  Record everything.
+# The RUST_LOG environment variable (one of off/error/warn/info/debug/trace) takes precedence.
+# The log goes to the terminal and to logs/<timestamp>.log.
+[log]
+debug = false
+
+# ------------------------------ Help menu ------------------------------
+[text]
+# Output of /help. You can customize this text.
+help = """Tip 1: <bot name> is case-insensitive and works as a nickname. It is not checked against an actual in-game character name, so it does not have to match one. Names are stored in lowercase in files.
+Tip 2: Before first use, find a dedicated fishing spot and run /sethome fishing to save a teleport point. Make sure the bot has a fishing rod enchanted with Mending in its inventory.
+TIP 3: This project requires saving your Minecraft account login credentials; do not log in unless you trust the provider of this bot.
+
+/help Show this help menu
+/whoami Show your Discord user ID (needed for the admins table in the config)
+/ping [host] [port] Check the game server; both arguments are optional and omitted values use the configured defaults
+/checkserver Show fishing server information
+
+/bot add <bot name> Add a bot and create its directory (letters, numbers, underscores, and hyphens only; invalid names are rejected)
+/bot del <bot name> Delete a bot's directory
+/bot rename <old bot name> <new bot name> Rename a bot
+/bot login <bot name> Sign in to the bot with a Microsoft account and save its token on the server (returns a sign-in link and code; credentials are saved automatically; reply is visible only to you)
+/token <bot name> Opens a modal to paste the token manually. Use this only if /bot login fails (reply is visible only to you)
+/log <bot name> <lines> Get the bot's latest log as an attachment (up to 100 lines; reply is visible only to you)
+
+/start <bot name> Start a bot
+/stop <bot name> Stop a bot
+/restart <bot name> Restart a bot
+/command <bot name> <command> Send a command to a bot for execution on the game server. Include the leading slash; without it, the text is sent as chat.
+/pause <bot name> Pause fishing without disconnecting
+/unpause <bot name> Resume fishing
+
+/show status Check the status of all running bots
+/show botconfig Show the current configuration of all fishing bots
+/show mybots Show the bots you added and whether each has a token (the token is not validated)
+/show allbots Show all bots and whether each has a token (the token is not validated)
+/show admins Show the administrator list and their Discord user IDs
+
+/startall (admins only) Start all bots that have tokens (Microsoft rate limits may prevent some from starting successfully)
+/stopall (admins only) Stop all bots
+/restartall (admins only) Restart all running bots (some may fail to restart)
+/commandall <command> (admins only) Send a command to all running bots"""
