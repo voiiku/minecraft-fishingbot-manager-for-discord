@@ -53,8 +53,8 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
 
 可能是断网、代理节点错误、Token 被 Reset 等原因。
 
-如果你的网络延迟较高或经常抖动，考虑把配置中的 `timing.watchdog_window_ms` 调大，必要时连
-`timing.first_handshake_timeout_ms` 一起调大。判定细节见 [watchdog.md 第 5 节](../mods/watchdog/watchdog-zh_cn.md#5-常见排查)。
+如果你的网络延迟较高或经常抖动，把配置里的 `timing.watchdog_window_ms` 调大即可：探活间隔（它的 1/3）与
+首次握手超时（它的 2 倍）跟着它一起变。判定细节见 [watchdog.md 第 5 节](../mods/watchdog/watchdog-zh_cn.md#5-常见排查)。
 
 ## 9. 钓鱼机器人的日志内容很少/有些信息没被记录
 
@@ -70,19 +70,51 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
 
 ## 11. `/startall` 有一些机器人启动失败
 
-* 微软可能限制短时间内的重复登录请求。`/start`、`/startall`、`/restart` 与 `/restartall` 共用全局启动队列：
-  随仓库发布的示例配置是每批最多启动 3 个、批间等待 12 秒；可在 `[startup_queue]` 中调整 `max_batch_size` 与
-  `batch_cooldown_ms`。这能降低请求密度，但不保证微软一定接受每次登录。
+* 微软按出口 IP 限制登录频率。`/start`、`/startall`、`/restart` 与 `/restartall` 共用全局启动队列：
+  随仓库发布的示例配置是两次登录至少间隔 20 秒（`[startup_queue] login_interval_ms`），可自行调整
+  `max_batch_size` 与 `login_interval_ms`；机制、真实登录间隔的算法与推荐取值见第 12 节。
 * 批量启动的瞬时内存峰值可能超过服务器可用内存，被杀掉的进程不会出现在 `screen -list` 里，所以结果里会
   显示"启动指令已发送，但进程不存在（通常是内存不足）"。缓解办法：把配置中的 `runtime.java_opts` 内存
-  配额调小，或把 `timing.stagger_ms` 与 `timing.settle_per_bot_ms` 调大，或稍后重试（JVM 内存占用会
-  随时间下降）。
+  配额调小，或把 `timing.settle_per_bot_ms` 与 `[startup_queue] login_interval_ms` 调大，或稍后重试（JVM
+  内存占用会随时间下降）。
 
-## 12. 我改了配置，正在跑的机器人会受影响吗
+## 12. 每次启动都固定失败同一台机器人（微软登录限流）
+
+现象：`/startall` 的报告把某台机器人算成"启动命令已发送，会话已出现"，但随后的 `/show status` 里没有它；
+与账号无关，**固定是登录次序靠后的那一台**（通常就是最后一台），而同一个账号稍后单独 `/start` 又能起来。
+
+原因：XSTS 换 Minecraft 令牌那一步（`POST https://api.minecraftservices.com/authentication/login_with_xbox`）
+按**出口 IP** 限流，超限返回 `HTTP 429`。FishingBot 不检查状态码、直接取响应里的 `access_token`，于是抛异常，
+进程在启动后 2~5 秒自己退出。它会不会被算成失败，取决于复核窗口：
+
+* 复核 = 两遍 `screen -list` 快照，发生在**整批拉起完 + `2 × timing.settle_per_bot_ms × 本批台数`**之后。
+  台数越少窗口越贴近启动瞬间：`max_batch_size = 1`（每台单独一批）与收尾的不足一批都只有约
+  `2 × timing.settle_per_bot_ms`，所以"2~5 秒后被 429 拒"常常来不及看见，被报成成功。
+
+真实登录间隔（限流看的就是它）由 `[startup_queue] login_interval_ms` 一个键决定：
+
+* 批内相邻两台：`login_interval_ms`；
+* 上一批最后一台 → 下一批第一台：`login_interval_ms`（批间等的时间 = 它 − 2 × `timing.settle_per_bot_ms` × 本批台数）。
+
+同一出口 IP 上的经验值：**≥20 秒一次（约 3 次/分）稳定**；12 秒一次（5 次/分）会掉最后一次；几秒内连发会直接
+触发惩罚窗口，之后几十秒内的登录全部被拒。同一出口 IP 上其它登录（官方启动器、另一个实例、手动登录）也占额度。
+
+处置：
+
+1. 把 `[startup_queue] login_interval_ms` 设到 18~20 秒（示例配置给的是 20000）。`max_batch_size` 取多少不影响
+   节奏，它只改变复核窗口的长度与 JVM 启动时的内存峰值。
+2. 失败的那台等 3~5 分钟再补（`/start <机器人名>` 或 `/restart <机器人名>`），不要立刻重试。
+3. 要真正提速只有两条路：用多个出口 IP；或让 JAR 复用 Minecraft access token（有效期 24 小时），
+   不要每次启动都重新登录。
+4. 与"内存不足"（第 11 节的第二种原因）的区别：限流的进程在启动后 2~5 秒自己退出，日志里有认证相关报错；
+   被 OOM 杀掉的是 0.3 秒内就没了，日志为空或写着 `Killed`，`dmesg` 里能看到。
+5. 配置项细节见 [config-zh_cn.md](../mods/config/config-zh_cn.md)。
+
+## 13. 我改了配置，正在跑的机器人会受影响吗
 
 不会。配置只在启动时读一次并加载进内存，运行中改动（甚至删除）配置文件都不影响已跑的进程；修改配置要重启本程序才生效。
 
-## 13. 怎么确认僵尸机器人
+## 14. 怎么确认僵尸机器人
 
 ```bash
 screen -ls | grep fb_                 # 根据你配置文件中定义的前缀
@@ -91,18 +123,25 @@ pgrep -af "java .*-refreshToken"      # 根据你配置文件中定义的 Token 
 
 如果有僵尸机器人就使用 `/stopall`（停止所有钓鱼机器人），或 `pkill` 掉那些 JVM，或重启本程序。
 
-## 14. 升级版本后，启动时配置字段报错
+## 15. 升级版本后，启动时配置字段报错
 
 本程序会在启动时校验配置合法性，并拒绝任何未知字段。
 你可以尝试删掉旧配置文件，然后运行本程序，它会重新生成一份最新的配置模板。
 
-## 15. 同一条指令被回复多次
+本次精简动过的字段（示例配置模板已同步）：
+
+* `[startup_queue] batch_cooldown_ms` 改名为 `login_interval_ms`：含义从"批间冷却"变成"两次登录之间的
+  最小间隔"（批内相邻两台按它错峰），原来的 `[timing] stagger_ms` 被它取代。
+* `[timing]` 删除了 `probe_interval_ms` 与 `first_handshake_timeout_ms`：它们由 `watchdog_window_ms`
+  派生（探活间隔是窗口的 1/3，首次握手超时是窗口的 2 倍）。
+
+## 16. 同一条指令被回复多次
 
 某些指令无法立即确认，所以会稍后再追加回复一些消息。
 如果一模一样的回复重复出现，说明你在服务器上同时运行了多个机器人，尝试全部关停，并再次启动一个机器人。
 * 一台机器上同时运行多个机器人是合法的，你应该为他们配置不同的工作目录，并确保配置不存在冲突（尤其是会话名前缀），此时他们可以各自作为独立的服务，服务不同游戏服务器的自动钓鱼群聊。
 
-## 16. 相关文档
+## 17. 相关文档
 
 * [tutorial/tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md)：从零开始的部署教程（本文件的多数结论在那边有上下文）；
 * [config-zh_cn.md 第 3.2 节](../mods/config/config-zh_cn.md#32-游戏侧配置confjson是生成物)：游戏侧 `conf.json` 是生成物这条规则；

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -181,8 +182,11 @@ pub struct RuntimeConfig {
 pub struct StartupQueueConfig {
     /// 每批最多启动的机器人数量。
     pub max_batch_size: usize,
-    /// 一批启动完成后、开始下一批前的冷却时间（毫秒）。
-    pub batch_cooldown_ms: u64,
+    /// 两次登录之间的最小间隔（毫秒）。
+    ///
+    /// 微软按出口 IP 限制登录频率（见 `docs/troubleshooting/troubleshooting-zh_cn.md` 第 12 节），所以节奏
+    /// 只留这一个旋钮：批内相邻两台按它错峰，批间等的时间 = 它 − `timing.settle_per_bot_ms` × 2 × 本批台数。
+    pub login_interval_ms: u64,
     /// 全局队列最多暂存的启动请求数量。
     pub max_pending_requests: usize,
 }
@@ -191,20 +195,32 @@ pub struct StartupQueueConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingConfig {
-    /// 同一启动批次内相邻机器人启动的间隔（毫秒）。
-    pub stagger_ms: u64,
     /// 每台机器人启动后的等待时间（毫秒）。
     pub settle_per_bot_ms: u64,
     /// 等待 JVM 优雅退出的时间（毫秒），超时后强杀。
     pub stop_grace_ms: u64,
     /// 强制退出后、重新启动前的等待时间（毫秒）。
     pub stop_settle_ms: u64,
-    /// 看门狗判定窗口（毫秒），掉线后也用作重连等待时间；写 0 非法。
+    /// 看门狗判定窗口（毫秒），掉线后也用作重连等待时间。
+    /// 探活间隔与首次握手超时由它派生
     pub watchdog_window_ms: u64,
-    /// REST 探活间隔（毫秒），不能大于判定窗口。
-    pub probe_interval_ms: u64,
-    /// 每轮连接的首次握手超时（毫秒）。
-    pub first_handshake_timeout_ms: u64,
+}
+
+impl TimingConfig {
+    /// 判定窗口。
+    pub fn watchdog_window(&self) -> Duration {
+        Duration::from_millis(self.watchdog_window_ms)
+    }
+
+    /// REST 探活间隔：判定窗口的 1/3（示例配置与文档里的比例）；窗口写得很小时也不小于 1 毫秒。
+    pub fn probe_interval(&self) -> Duration {
+        Duration::from_millis((self.watchdog_window_ms / 3).max(1))
+    }
+
+    /// 每轮连接的首次握手超时：判定窗口的 2 倍。
+    pub fn first_handshake_timeout(&self) -> Duration {
+        Duration::from_millis(self.watchdog_window_ms.saturating_mul(2))
+    }
 }
 
 /// 自动候选单次返回的条数上限（Discord 对 autocomplete 的硬上限）。
@@ -281,11 +297,17 @@ mod tests {
         assert!(file.ping.timeout_ms > 0);
         assert!(!file.runtime.screen_prefix.trim().is_empty());
         assert!(file.timing.watchdog_window_ms > 0);
-        assert!(file.timing.probe_interval_ms > 0);
-        assert!(file.timing.first_handshake_timeout_ms > 0);
+        assert!(file.timing.settle_per_bot_ms > 0);
+        // 探活间隔与首次握手超时由判定窗口派生：一个窗口里至少能探一次，握手超时覆盖一整轮。
+        assert!(file.timing.probe_interval() > Duration::ZERO);
+        assert!(file.timing.probe_interval() <= file.timing.watchdog_window());
+        assert_eq!(
+            file.timing.first_handshake_timeout(),
+            file.timing.watchdog_window() * 2
+        );
         let startup_queue = &file.startup_queue;
         assert!(startup_queue.max_batch_size > 0);
-        assert!(startup_queue.batch_cooldown_ms > 0);
+        assert!(startup_queue.login_interval_ms > 0);
         assert!(startup_queue.max_pending_requests > 0);
         assert!(!file.command_echo.pause_echo.trim().is_empty());
         assert!(!file.command_echo.unpause_echo.trim().is_empty());

@@ -303,8 +303,8 @@ pub trait Text: Send + Sync {
     fn command_unexpected_failure(&self) -> &'static str;
     /// 启动请求的第一条消息：明确说明请求已进入全局启动队列。
     fn command_start_queued_notice(&self, command_tag: &str) -> String;
-    /// `/startall` 报告中的启动队列批次与冷却设置。
-    fn command_start_queue_summary(&self, batch_size: usize, cooldown_ms: u64) -> String;
+    /// `/startall` 报告中的启动队列批次与登录间隔设置。
+    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String;
     /// `/log`：附件那一行的正文。
     fn command_log_attachment_body(
         &self,
@@ -631,12 +631,12 @@ mod tests {
             "英文通用错误提示应说明发生内部错误"
         );
         assert_eq!(
-            zh_cn::ZH_CN.command_start_queue_summary(3, 12_000),
-            "启动队列: 每批最多 3 台，批间冷却 12000 毫秒"
+            zh_cn::ZH_CN.command_start_queue_summary(3, 20_000),
+            "启动队列: 两次登录最小间隔 20000 毫秒，每批最多 3 台"
         );
         assert_eq!(
-            en_us::EN_US.command_start_queue_summary(3, 12_000),
-            "Start queue: up to 3 bots per batch; 12000 ms cooldown between batches"
+            en_us::EN_US.command_start_queue_summary(3, 20_000),
+            "Start queue: sign-ins at least 20000 ms apart, up to 3 per batch"
         );
     }
 

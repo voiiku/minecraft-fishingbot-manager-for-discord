@@ -33,21 +33,27 @@ struct StartRequest {
     reply: SyncSender<LaunchOutcome>,
 }
 
-/// 批次准入状态；使用完成时间计算冷却，即使队列空闲期间也持续计时。
+/// 批次准入状态：两次登录之间的间隔由 `[startup_queue] login_interval_ms` 决定，这里只记"上一次登录是
+/// 什么时候"与"当前批次已经拉起了几台"。状态跨请求保留，所以连续命令也绕不过限流。
 struct StartBatchGate {
     batch_size: usize,
-    cooldown: Duration,
+    /// 两次登录之间的最小间隔。
+    interval: Duration,
+    /// 每台机器人的复核等待（`timing.settle_per_bot_ms`）。批次完成 = 最后一次登录 + 两遍复核等待，
+    /// 所以从完成时刻反推最后一次登录时刻要用到它。
+    settle_per_bot: Duration,
     launched_in_batch: usize,
-    last_batch_completed_at: Option<Instant>,
+    last_login_at: Option<Instant>,
 }
 
 impl StartBatchGate {
-    fn new(batch_size: usize, cooldown: Duration) -> Self {
+    fn new(batch_size: usize, interval: Duration, settle_per_bot: Duration) -> Self {
         Self {
             batch_size: batch_size.max(1),
-            cooldown,
+            interval,
+            settle_per_bot,
             launched_in_batch: 0,
-            last_batch_completed_at: None,
+            last_login_at: None,
         }
     }
 
@@ -55,33 +61,44 @@ impl StartBatchGate {
         self.batch_size - self.launched_in_batch
     }
 
-    fn cooldown_remaining(&self, now: Instant) -> Duration {
-        self.last_batch_completed_at
-            .map(|completed_at| {
-                self.cooldown
-                    .saturating_sub(now.saturating_duration_since(completed_at))
+    /// 下一次登录前还要等多久：上一次登录还没满一个间隔就返回剩余时间，否则不用等。
+    fn wait_before_next_login(&self, now: Instant) -> Duration {
+        self.last_login_at
+            .map(|last_login_at| {
+                self.interval
+                    .saturating_sub(now.saturating_duration_since(last_login_at))
             })
             .unwrap_or_default()
     }
 
-    fn record_attempts(&mut self, attempt_count: usize, now: Instant) {
-        self.launched_in_batch += attempt_count;
-        if self.launched_in_batch == self.batch_size {
-            self.last_batch_completed_at = Some(now);
+    /// 记账一次批次拉起：`completed_at` 是复核结束的时刻，`attempt_count` 是本批实际拉起台数。
+    ///
+    /// 最后一次登录时刻 = 完成时刻 − 两遍复核等待。这样"批间"要等的时间就只是间隔减去这段等待
+    ///（不反推的话每一批都会白等一个复核窗口，实际间隔会大于配置值）。
+    fn record_attempts(&mut self, attempt_count: usize, completed_at: Instant) {
+        if attempt_count > 0 {
+            let recheck_wait = self
+                .settle_per_bot
+                .saturating_mul(2u32.saturating_mul(attempt_count as u32));
+            // `Instant` 只能往回退到进程开始计时的那一刻，退不动就按完成时刻算（只会更保守）。
+            self.last_login_at = Some(
+                completed_at
+                    .checked_sub(recheck_wait)
+                    .unwrap_or(completed_at),
+            );
         }
+
+        self.launched_in_batch = (self.launched_in_batch + attempt_count).min(self.batch_size);
     }
 
-    /// 队列在一个未满批次后变为空时，将该部分批次视为完成。
-    fn finish_partial_batch(&mut self, now: Instant) {
-        if self.launched_in_batch > 0 && self.launched_in_batch < self.batch_size {
-            self.launched_in_batch = self.batch_size;
-            self.last_batch_completed_at = Some(now);
-        }
+    /// 队列在一个未满批次后变为空时，把这个部分批次按已结束处理：下一条请求从新的一批开始
+    ///（间隔由 `last_login_at` 保证，与批次满没满无关）。
+    fn finish_partial_batch(&mut self) {
+        self.launched_in_batch = self.batch_size;
     }
 
     fn begin_next_batch(&mut self) {
         self.launched_in_batch = 0;
-        self.last_batch_completed_at = None;
     }
 }
 
@@ -256,9 +273,9 @@ impl LaunchOutcome {
 }
 
 /// 将启动请求加入全局 FIFO 队列并等待本请求完成。
-/// 队列按 `[startup_queue] max_batch_size` 分批；批次之间等待 `batch_cooldown_ms`。
+/// 队列按 `[startup_queue] max_batch_size` 分批；两次登录之间至少隔 `login_interval_ms`。
 ///
-/// 空闲时工作线程阻塞等待新请求，并保留批次冷却状态，防止连续命令绕过全局限流。
+/// 空闲时工作线程阻塞等待新请求，并保留"上一次登录时刻"，防止连续命令绕过全局限流。
 pub fn start_bot_sessions(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
     if bots_to_launch.is_empty() {
         return LaunchOutcome::default();
@@ -297,9 +314,11 @@ fn queue_unavailable_outcome(bots_to_launch: &[BotDirEntry], reason: &str) -> La
 
 /// 全局启动工作线程：保持批次计数与冷却时刻跨请求存活。
 fn process_start_queue(receiver: Receiver<StartRequest>) {
+    let startup_queue = &config::get().startup_queue;
     let mut batch_gate = StartBatchGate::new(
-        config::get().startup_queue.max_batch_size,
-        Duration::from_millis(config::get().startup_queue.batch_cooldown_ms),
+        startup_queue.max_batch_size,
+        Duration::from_millis(startup_queue.login_interval_ms),
+        Duration::from_millis(config::get().timing.settle_per_bot_ms),
     );
     let mut pending_request = None;
 
@@ -315,10 +334,13 @@ fn process_start_queue(receiver: Receiver<StartRequest>) {
         let mut start_index = 0usize;
 
         while start_index < request.bot_dir_entries.len() {
+            // 上一批已经结束（满了，或队列空闲时关掉了未满批次）：开新的一批。
             if batch_gate.remaining_capacity() == 0 {
-                thread::sleep(batch_gate.cooldown_remaining(Instant::now()));
                 batch_gate.begin_next_batch();
             }
+
+            // 两次登录之间至少隔 `login_interval_ms`：从"上一次登录时刻"算起，等够再拉下一批。
+            thread::sleep(batch_gate.wait_before_next_login(Instant::now()));
 
             let remaining_batch_capacity = batch_gate.remaining_capacity();
             let end_index =
@@ -332,7 +354,8 @@ fn process_start_queue(receiver: Receiver<StartRequest>) {
         }
 
         // Keep a partial batch open if another request is already waiting, so FIFO requests can
-        // share one batch. Close it only when the queue is empty, retaining cooldown across idle.
+        // share one batch. Close it only when the queue is empty; the login interval is kept
+        // across idle either way, so consecutive commands cannot bypass the rate limit.
         let has_waiting_request = match receiver.try_recv() {
             Ok(next_request) => {
                 pending_request = Some(next_request);
@@ -341,7 +364,7 @@ fn process_start_queue(receiver: Receiver<StartRequest>) {
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => false,
         };
         if !has_waiting_request {
-            batch_gate.finish_partial_batch(Instant::now());
+            batch_gate.finish_partial_batch();
         }
 
         // If the caller has already gone away, discard only its response; continue servicing the queue.
@@ -361,9 +384,9 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
         return outcome;
     }
 
-    // 批次内错峰与复核前等待是两个独立的配置（都在 `[timing]`）。
-    let timing = &config::get().timing;
-    let stagger_ms = timing.stagger_ms;
+    // 批内相邻两台的间隔与批间间隔是同一个值（`[startup_queue] login_interval_ms`）：微软限流看的是
+    // 登录频率，分成两个旋钮只会配出"批内几台连发"这种形状（见 troubleshooting 第 12 节）。
+    let login_interval_ms = config::get().startup_queue.login_interval_ms;
 
     // 没被拉起过的机器人（前置检查或第一步就失败）：复核阶段要跳开，否则会多出一条误导信息。
     let mut not_launched_bot_names: Vec<String> = Vec::new();
@@ -430,10 +453,10 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
         // 新会话的状态要重置记忆的暂停状态。
         bot_name.forget_bot_pause_status();
 
-        // 第四步：错峰，避免多个 JVM 同时启动把内存占满OOM。
+        // 第四步：等够登录间隔再拉下一台（同时也是 JVM 启动错峰，避免多台同时启动把内存占满）。
         let is_last_bot = index + 1 == bots_to_launch.len();
         if !is_last_bot {
-            thread::sleep(Duration::from_millis(stagger_ms));
+            thread::sleep(Duration::from_millis(login_interval_ms));
         }
     }
 
@@ -489,65 +512,71 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
 mod start_queue_tests {
     use super::*;
 
+    /// 间隔从"上一次登录"算起，而不是从批次完成算起：批次完成前的两遍复核等待要扣掉，
+    /// 否则每一批都会白等一个复核窗口，实际间隔会大于配置值。
     #[test]
-    fn batch_gate_limits_attempts_and_cools_down_after_a_full_batch() {
-        let batch_size = 3;
-        let cooldown = Duration::from_secs(12);
-        let started = Instant::now();
-        let mut gate = StartBatchGate::new(batch_size, cooldown);
+    fn gate_waits_the_interval_from_the_last_login_not_from_the_batch_end() {
+        let interval = Duration::from_secs(20);
+        let mut gate = StartBatchGate::new(3, interval, Duration::from_millis(300));
+        let completed_at = Instant::now();
 
         assert_eq!(gate.remaining_capacity(), 3);
-        gate.record_attempts(2, started);
-        assert_eq!(gate.remaining_capacity(), 1);
-        assert_eq!(gate.cooldown_remaining(started), Duration::ZERO);
+        gate.record_attempts(3, completed_at);
 
-        gate.record_attempts(1, started);
+        // 三台一批：最后一次登录在完成时刻前 2 × 300ms × 3 = 1.8s，所以只需再等 18.2s。
         assert_eq!(gate.remaining_capacity(), 0);
-        assert_eq!(gate.cooldown_remaining(started + cooldown), Duration::ZERO);
-        assert_eq!(gate.cooldown_remaining(started + cooldown), Duration::ZERO);
+        assert_eq!(
+            gate.wait_before_next_login(completed_at),
+            interval - Duration::from_millis(1_800)
+        );
+        assert_eq!(
+            gate.wait_before_next_login(completed_at + interval),
+            Duration::ZERO
+        );
 
         gate.begin_next_batch();
-        assert_eq!(gate.remaining_capacity(), batch_size);
-        assert_eq!(gate.cooldown_remaining(started + cooldown), Duration::ZERO);
+        assert_eq!(gate.remaining_capacity(), 3);
     }
 
+    /// 队列空闲时关掉未满批次：只影响"下一批从哪开始"，间隔仍然按上一次登录算，
+    /// 所以连续命令绕不过限流。
     #[test]
-    fn partial_batch_keeps_cooldown_when_queue_becomes_idle() {
-        let now = Instant::now();
-        let cooldown = Duration::from_secs(12);
-        let mut gate = StartBatchGate::new(3, cooldown);
+    fn partial_batch_closed_on_idle_keeps_the_interval() {
+        let interval = Duration::from_secs(20);
+        let mut gate = StartBatchGate::new(3, interval, Duration::from_millis(300));
+        let completed_at = Instant::now();
 
-        gate.record_attempts(2, now);
+        gate.record_attempts(2, completed_at);
         assert_eq!(gate.remaining_capacity(), 1);
 
-        gate.finish_partial_batch(now);
+        gate.finish_partial_batch();
         assert_eq!(gate.remaining_capacity(), 0);
+
+        // 两台：最后一次登录在完成时刻前 2 × 300ms × 2 = 1.2s，之后 4 秒里一直在倒计时。
         assert_eq!(
-            gate.cooldown_remaining(now + Duration::from_secs(4)),
-            Duration::from_secs(8)
+            gate.wait_before_next_login(completed_at + Duration::from_secs(4)),
+            interval - Duration::from_millis(5_200)
         );
     }
 
+    /// 排队中的下一条请求可以接着用这个未满批次（调度器不关它，也就不必多等一个间隔）。
     #[test]
     fn partial_batch_can_be_filled_by_the_next_queued_request() {
-        let now = Instant::now();
-        let mut gate = StartBatchGate::new(3, Duration::from_secs(12));
+        let completed_at = Instant::now();
+        let mut gate = StartBatchGate::new(3, Duration::from_secs(20), Duration::from_millis(300));
 
-        gate.record_attempts(2, now);
+        gate.record_attempts(2, completed_at);
         assert_eq!(gate.remaining_capacity(), 1);
+
         // The dispatcher does not close this batch while a queued request is available.
-        gate.record_attempts(1, now);
+        gate.record_attempts(1, completed_at);
 
         assert_eq!(gate.remaining_capacity(), 0);
-        assert_eq!(
-            gate.cooldown_remaining(now + Duration::from_secs(4)),
-            Duration::from_secs(8)
-        );
     }
 
     #[test]
     fn zero_batch_size_is_safely_clamped_for_internal_callers() {
-        let gate = StartBatchGate::new(0, Duration::from_secs(1));
+        let gate = StartBatchGate::new(0, Duration::from_secs(1), Duration::from_millis(300));
         assert_eq!(gate.remaining_capacity(), 1);
     }
 

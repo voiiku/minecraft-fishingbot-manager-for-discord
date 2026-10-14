@@ -77,15 +77,15 @@
   同层 `[raw_game_logs] dir_name` 下的 `[raw_game_logs] file_name`，指向 `discard_path`，见
   [utils.md 第 7 节](../utils/utils-zh_cn.md#7-日志有两条线)）；`max_reply_chars` 是单条回复的长度上限（Discord 硬
   上限 2000，超长会直接发送失败）；`max_autocomplete_choices` 是机器人名选项自动候选的条数上限（1-25，Discord 硬上限）。
-* `[startup_queue]`：`max_batch_size`、`batch_cooldown_ms`、`max_pending_requests`，分别是全局 FIFO 启动队列每批最多启动数量、批间冷却时间（毫秒）和等待调度的请求上限（不包括正在执行的请求）。整张表与其中每个字段都必填，且每个值必须大于 0。
-  `/start`、`/startall`、`/restart` 与 `/restartall` 共用队列；`/bot login` 不使用它。队列空闲时未满批次会关闭并进入冷却；
-  程序重启会丢弃尚未执行的队列任务。
-* `[timing]`：`stagger_ms`、`settle_per_bot_ms`、`stop_grace_ms`、`stop_settle_ms`、`watchdog_window_ms`、
-  `probe_interval_ms`、`first_handshake_timeout_ms`。各流程等待时间（毫秒）。`stagger_ms` 是同一批次内相邻两台的启动间隔；
-  `settle_per_bot_ms` 是每批复核会话前每台的等待（复核做两遍，总等待
-  是 2 乘台数乘它）；后三项是网关看门狗的时序，各自独立，即判定窗口与重建连接前的等待
-  （`watchdog_window_ms`）、探活间隔（`probe_interval_ms`）、首次握手超时
-  （`first_handshake_timeout_ms`），见 [watchdog.md](../watchdog/watchdog-zh_cn.md)。
+* `[startup_queue]`：`max_batch_size`、`login_interval_ms`、`max_pending_requests`，分别是全局 FIFO 启动队列每批最多启动数量、两次登录之间的最小间隔（毫秒）和等待调度的请求上限（不包括正在执行的请求）。整张表与其中每个字段都必填，且每个值必须大于 0。
+  `login_interval_ms` 是唯一决定登录节奏的旋钮：批内相邻两台按它错峰，批间等的时间 = 它 − `timing.settle_per_bot_ms` × 2 × 本批台数。
+  微软按出口 IP 限制登录频率，取值理由见[故障提示第 12 节](../../troubleshooting/troubleshooting-zh_cn.md)。
+  `/start`、`/startall`、`/restart` 与 `/restartall` 共用队列；`/bot login` 不使用它。队列空闲时未满批次会关闭，
+  但登录间隔仍然保留（连续命令也绕不过限流）；程序重启会丢弃尚未执行的队列任务。
+* `[timing]`：`settle_per_bot_ms`、`stop_grace_ms`、`stop_settle_ms`、`watchdog_window_ms`。各流程等待时间（毫秒）。
+  `settle_per_bot_ms` 是每批复核会话前每台的等待（复核做两遍，总等待是 2 乘台数乘它，也是批间等待要扣掉的那部分）；
+  `watchdog_window_ms` 是网关看门狗的判定窗口，掉线后也用作重建连接前的等待，REST 探活间隔（它的 1/3）与首次
+  握手超时（它的 2 倍）由它派生，不再是独立配置项，见 [watchdog.md](../watchdog/watchdog-zh_cn.md)。
 * `[raw_game_logs]`：`dir_name`、`file_name`、`discard_path`。FishingBot.jar 自己那份原始日志的约定
   （目录名、文件名、内容丢到哪里）。跟着 JAR 走，整张表必填；示例配置里是 `raw`、`log0.log`、`/dev/null`。
 * `[ping]`：`default_ping_host`、`default_ping_port`、`timeout_ms`。`/ping` 不带参数时的默认目标与超时。
@@ -183,13 +183,11 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
   `runtime.logs_dir`（后三个还要求不含空格与斜杠、不能写成 `.` 或 `..`）、`raw_game_logs.discard_path`，
   以及 `raw_game_logs.dir_name` 与 `raw_game_logs.file_name`（这两个同样要求是纯名字）。
 * 数值范围：`ping.default_ping_port` 不能是 0；`runtime.max_autocomplete_choices` 必须在 1 到 25 之间
-  （Discord 对候选条数的硬上限）；`startup_queue.max_batch_size`、`startup_queue.batch_cooldown_ms`、
+  （Discord 对候选条数的硬上限）；`startup_queue.max_batch_size`、`startup_queue.login_interval_ms`、
   `startup_queue.max_pending_requests`、`ping.timeout_ms`、`runtime.max_log_lines`、`runtime.max_reply_chars`、
-  `timing.watchdog_window_ms`、`timing.probe_interval_ms`、
-  `timing.first_handshake_timeout_ms`、`command_echo.wait_ms`、`command_echo.scan_lines` 必须大于 0
-  （网关看门狗这几项为 0 会让判定退化，比如窗口为 0 就永远证明不了"还连着"）。另外
-  `timing.probe_interval_ms` 不能大于 `timing.watchdog_window_ms`：探活比判定窗口还慢的话，第一次探活
-  失败就已经满一个窗口，等于一次失败就判掉线。
+  `timing.watchdog_window_ms`、`timing.settle_per_bot_ms`、`command_echo.wait_ms`、`command_echo.scan_lines`
+  必须大于 0（看门狗判定窗口为 0 会让判定退化，永远证明不了"还连着"；探活间隔与首次握手超时由窗口派生，
+  所以没有再写一条"探活不能比窗口慢"的规则）。
 
 `command_echo` 的两条回显也不能相同、更不能互相包含（含完全相同）：否则日志里那条回显认不出属于哪条
 指令，判定会永远偏向先检查的那句。
@@ -203,7 +201,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 
 除此之外一律不管：时间参数该设多大、地址写哪个、名字里能不能用中文，都是使用者的判断。`[discord]`
 只有 token 一条规则（不能为空）；`[log]` 的 `debug` 是布尔开关，没有规则；`[timing]` 有两条
-（`stagger_ms` 与 `settle_per_bot_ms` 都大于 0、网关窗口大于 0）；`[command_echo]` 有两条（两条回显
+（`settle_per_bot_ms` 大于 0、网关窗口大于 0）；`[command_echo]` 有两条（两条回显
 非空且不能互相包含、两项时间都大于 0）。
 
 ## 6. 模板（`template`）

@@ -627,8 +627,8 @@ impl Text for ZhCn {
         )
     }
 
-    fn command_start_queue_summary(&self, batch_size: usize, cooldown_ms: u64) -> String {
-        format!("启动队列: 每批最多 {batch_size} 台，批间冷却 {cooldown_ms} 毫秒")
+    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
+        format!("启动队列: 两次登录最小间隔 {interval_ms} 毫秒，每批最多 {batch_size} 台")
     }
 
     fn command_log_attachment_body(
@@ -858,6 +858,13 @@ impl Text for ZhCn {
                 command_path,
                 reply,
             } => format!("回复 /{command_path} (调用者 {caller_id}): {reply}"),
+            LogText::ReportPostedToChannel {
+                caller_id,
+                command_path,
+                reason,
+            } => format!(
+                "回复 /{command_path} (调用者 {caller_id}): 交互令牌已过期（{reason}），发送频道消息"
+            ),
             LogText::FrameworkError { detail } => format!("框架错误: {detail}"),
             LogText::SigtermRegisterFailed { reason } => {
                 format!("注册 SIGTERM 处理失败: {reason}")
@@ -1062,12 +1069,8 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
             "必须在 1-25 之间 (Discord 对候选的上限)".to_string()
         }
         ConfigRequirement::WatchdogTimingPositive => "必须大于 0".to_string(),
-        ConfigRequirement::ProbeIntervalWithinWindow => {
-            "不能大于 timing.watchdog_window_ms".to_string()
-        }
         ConfigRequirement::EchoTextsOverlap => {
-            "不能与 command_echo.pause_echo 相同或互相包含，否则日志里那条回显认不出属于哪条指令"
-                .to_string()
+            "不能与 command_echo.pause_echo 相同或互相包含".to_string()
         }
         ConfigRequirement::OneOf(allowed) => {
             format!("必须是以下之一: {}", allowed.join(", "))

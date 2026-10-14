@@ -104,13 +104,14 @@
 
 * 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；
   调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动
-  `[startup_queue] max_batch_size` 台；该请求完成后才处理下一个 FIFO 请求。整批完成后至少等待
-  `[startup_queue] batch_cooldown_ms` 再开始下一批。队列空闲时未满批次会关闭并进入冷却，冷却状态跨命令保留；进程重启时
-  未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
-* `start_bot_sessions` 负责批内启动、`stagger_ms` 错峰与会话复核。批间冷却由队列调度器负责；`settle_per_bot_ms`
-  仍按批次台数计算复核等待，两次会话快照间隔相同。总耗时取决于批次数、批内错峰、批间冷却与会话复核；调小
-  `stagger_ms` 不能缩短批间冷却，并会提高 JVM 启动时的内存峰值（见
-  [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)）。
+  `[startup_queue] max_batch_size` 台；该请求完成后才处理下一个 FIFO 请求。两次登录之间至少隔
+  `[startup_queue] login_interval_ms`：批内相邻两台按它错峰，批间等的时间 = 它减去本批的复核等待
+  （`timing.settle_per_bot_ms` × 2 × 本批台数）。队列空闲时未满批次会关闭，但"上一次登录时刻"跨命令保留，
+  连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
+* `start_bot_sessions` 负责批内启动与错峰，队列调度器负责批间等待，`settle_per_bot_ms` 仍按批次台数计算复核等待
+  （两次会话快照间隔相同）。登录频率才是被限制的东西，所以批内与批间用同一个间隔值：批内台数只影响复核窗口的
+  长度与 JVM 启动时的内存峰值，不影响总耗时（总耗时 ≈ 台数 × 间隔）。见
+  [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
 * 停止流程的两种等待都不吃参数、由流程自己读配置：`stop_grace_ms` 在 `shutdown::stop_bot_sessions`
   里读（先发信号，等不到才强杀），`stop_settle_ms` 也在 `stop_bot_sessions` 里读（强杀后、复核前的
   注销缓冲）。

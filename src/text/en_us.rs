@@ -653,9 +653,9 @@ impl Text for EnUs {
         )
     }
 
-    fn command_start_queue_summary(&self, batch_size: usize, cooldown_ms: u64) -> String {
+    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
         format!(
-            "Start queue: up to {batch_size} bots per batch; {cooldown_ms} ms cooldown between batches"
+            "Start queue: sign-ins at least {interval_ms} ms apart, up to {batch_size} per batch"
         )
     }
 
@@ -905,6 +905,14 @@ impl Text for EnUs {
                 command_path,
                 reply,
             } => format!("replied to /{command_path} (caller {caller_id}): {reply}"),
+            LogText::ReportPostedToChannel {
+                caller_id,
+                command_path,
+                reason,
+            } => format!(
+                "replied to /{command_path} (caller {caller_id}): the interaction token expired ({reason}), \
+                 the report was posted as a channel message instead"
+            ),
             LogText::FrameworkError { detail } => format!("framework error: {detail}"),
             LogText::SigtermRegisterFailed { reason } => {
                 format!("failed to register the SIGTERM handler: {reason}")
@@ -1142,9 +1150,6 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
             "must be between 1 and 25 (Discord's autocomplete limit)".to_string()
         }
         ConfigRequirement::WatchdogTimingPositive => "must be greater than 0".to_string(),
-        ConfigRequirement::ProbeIntervalWithinWindow => {
-            "must not exceed timing.watchdog_window_ms".to_string()
-        }
         ConfigRequirement::EchoTextsOverlap => {
             "must not be equal to or overlap with command_echo.pause_echo, otherwise the log line cannot be attributed to one command".to_string()
         }

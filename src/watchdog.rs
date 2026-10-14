@@ -60,14 +60,15 @@ impl WatchdogSlot {
 }
 
 impl Watchdog {
-    /// 按配置中的 `[timing]` 建一个看门狗（只给单例用：进程入口要的是那一份）。
+    /// 按配置中的 `[timing]` 创建看门狗。
+    /// 探活间隔与首次握手超时由判定窗口派生，见 [`crate::config::TimingConfig`]。
     fn from_config(started: Instant) -> Self {
         let timing = &crate::config::get().timing;
         Self::new(
             started,
-            Duration::from_millis(timing.watchdog_window_ms),
-            Duration::from_millis(timing.probe_interval_ms),
-            Duration::from_millis(timing.first_handshake_timeout_ms),
+            timing.watchdog_window(),
+            timing.probe_interval(),
+            timing.first_handshake_timeout(),
         )
     }
 

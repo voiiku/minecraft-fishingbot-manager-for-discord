@@ -344,8 +344,8 @@ other; startup validates this, otherwise that echo line cannot be attributed to 
    several bots at once later" will not need them rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
    section 8).
 
-   Between two neighbouring launches it waits `timing.stagger_ms`, and after launching them all it waits (count x that)
-   to check twice, with the same wait in between again, because the JVM may exit by itself one or two seconds after
+   Between two neighbouring launches it waits `[startup_queue] login_interval_ms`, and after launching them all it waits
+   (count x `timing.settle_per_bot_ms`) to check twice, with the same wait in between again, because the JVM may exit by itself one or two seconds after
    starting and a single check would report "started and gone" as a success; see
    [utils-en_us.md](../utils/utils-en_us.md) section 4.
 4. Failure is always decided by the methods on the details utils returns (when `outcome.has_failed_lines()` is true,
@@ -629,7 +629,7 @@ file missing, left as it is" rather than disappearing silently.
 The transient memory peak of a batch start is often higher than a cloud server's available memory, and a process killed
 by the OOM killer never shows up in `screen -list`, so the result says "the start command was sent but the process does
 not exist (usually due to insufficient memory)". What to do: lower the memory allowance in `runtime.java_opts`, raise
-`timing.settle_per_bot_ms` or `timing.stagger_ms` (watching longer or staggering wider), or repeat the command later
+`timing.settle_per_bot_ms` or `[startup_queue] login_interval_ms` (watching longer or signing in slower), or repeat the command later
 (JVM memory usage improves over time).
 
 ## 6. Queries: `/show status` and `/show botconfig|mybots|allbots|admins`

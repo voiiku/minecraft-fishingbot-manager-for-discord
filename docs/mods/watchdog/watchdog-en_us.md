@@ -33,13 +33,12 @@ restart. This avoids a cold start and repeated program log files for each retry.
 
 Details:
 
-* All three timings come from the config and are independent: the judging window `timing.watchdog_window_ms`, the
-  probe interval `timing.probe_interval_ms` (a third of the window in the shipped example) and the first-handshake
-  timeout `timing.first_handshake_timeout_ms` (twice the window in the shipped example). All three are required (no
-  in-code defaults). The entry point packs them into the `Watchdog` (they are three of its fields), and both the
-  decision and the probe use that one value. The probe interval must be less than or
-  equal to the judging window: if it is slower, the very first failed probe already fills a window, which makes one
-  failure a disconnect; startup rejects that config.
+* The timings come from the judging window `timing.watchdog_window_ms` in the config; the probe interval (a third of
+  the window) and the first-handshake timeout (twice the window) are derived from it instead of being separate keys,
+  because those two only make sense as a ratio of the window. The entry point packs them into the `Watchdog` (they are
+  three of its fields), and both the decision and the probe use that one value. Deriving them guarantees the probe
+  interval is always shorter than the judging window, so "a probe slower than the window, where the first failed probe
+  is already a disconnect" can no longer be configured.
 * The probe goes over REST: an HTTP response from `GET /api/v10/gateway` proves only that the REST endpoint is
   reachable, not that the token is valid. Authentication errors are reported by the Discord client's connection flow.
   Timeouts and connection errors count as failed probes. The probe hits `discord.com` while the gateway connects to
@@ -126,8 +125,8 @@ servers it was sent to, and how many failed).
   `curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway` should return 200.
 * The log says `Unreachable`: no network, the proxy died, the token expired; the line above it, `REST probe failed:`,
   gives the concrete reason.
-* A bit of network flakiness causes one reconnect: raise `timing.watchdog_window_ms` (60000, say, and
-  `timing.first_handshake_timeout_ms` with it if needed); recovering inside the window is not a false verdict.
+* A bit of network flakiness causes one reconnect: raise `timing.watchdog_window_ms` (60000, say) - the probe interval
+  and the first-handshake timeout follow it; recovering inside the window is not a false verdict.
 * The log keeps saying the connection could not be rebuilt while the process stays alive: that is the normal retry
   (a disconnect does not exit the process). For a config mistake such as `Missing Access` or `401` the process exits
   with code 1; with `RestartPreventExitStatus=1` in the unit it is not restarted (one exit, then `failed`), while

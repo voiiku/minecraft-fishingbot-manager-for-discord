@@ -51,7 +51,7 @@ pub(crate) fn start_all_bots() -> Result<String, String> {
 
     report.basics.push(i18n_text.command_start_queue_summary(
         crate::config::get().startup_queue.max_batch_size,
-        crate::config::get().startup_queue.batch_cooldown_ms,
+        crate::config::get().startup_queue.login_interval_ms,
     ));
 
     // 分别列出已运行和缺少 Token 的账号。

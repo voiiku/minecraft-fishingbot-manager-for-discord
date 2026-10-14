@@ -291,7 +291,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    三个流程函数吃的都是 `&[BotDirEntry]`，单机就是一个元素的切片 —— 这也是"以后要支持一次多台"
    不用重写它们的原因（见 [CONTEXT 第 8 节](../../CONTEXTS/CONTEXT-zh_cn.md)）。
 
-   拉起相邻两台之间等 `timing.stagger_ms`，全部拉起后再等台数乘它复核两遍（中间再等同样久，第二遍
+   拉起相邻两台之间等 `[startup_queue] login_interval_ms`，全部拉起后再等台数乘 `timing.settle_per_bot_ms` 复核两遍（中间再等同样久，第二遍
    还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功），见
    [utils.md 第 4 节](../utils/utils-zh_cn.md#4-startup--shutdown-的等待参数)。
 4. 失败判定都看 utils 返回的明细自己的方法（`outcome.has_failed_lines()` 为真就把
@@ -529,7 +529,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 批量启动的瞬时内存峰值常高于云服务器可用内存，被 OOM 杀掉的进程不会出现在 `screen -list` 里，因此
 结果里会写"启动指令已发送，但进程不存在（通常是内存不足）"。处理方式：调小 `runtime.java_opts` 的
-内存配额、调大 `timing.settle_per_bot_ms` 或 `timing.stagger_ms`（等得更久或错峰更宽），或稍后重复
+内存配额、调大 `timing.settle_per_bot_ms` 或 `[startup_queue] login_interval_ms`（等得更久或登录更慢），或稍后重复
 一次命令（JVM 内存占用会随时间优化）。
 
 ## 6. 查询：`/show status` 与 `/show botconfig|mybots|allbots|admins`

@@ -33,11 +33,8 @@ pub enum ConfigRequirement<'a> {
     ReplyCharsPositive,
     /// `runtime.max_autocomplete_choices` 必须在 1..=25 之间（Discord 对自动候选条数的硬上限）。
     AutocompleteChoicesInRange,
-    /// 网关看门狗的时序项（`timing.watchdog_window_ms` / `probe_interval_ms` /
-    /// `first_handshake_timeout_ms`）必须大于 0。
+    /// 网关看门狗的判定窗口（`timing.watchdog_window_ms`）必须大于 0。
     WatchdogTimingPositive,
-    /// `timing.probe_interval_ms` 不能大于 `timing.watchdog_window_ms`。
-    ProbeIntervalWithinWindow,
     /// `command_echo.pause_echo` 与 `command_echo.unpause_echo` 不能相同或互相包含。
     EchoTextsOverlap,
     /// 取值必须是给定清单里的一个（`[fishingbot]` 的那两个播报开关，上游是枚举）。

@@ -122,17 +122,18 @@ max_autocomplete_choices = 25
 [startup_queue]
 # Maximum number of bots to launch in one batch.
 max_batch_size = 3
-# Cooldown after a completed batch before starting the next batch, in milliseconds.
-# This reduces request frequency but cannot guarantee that Microsoft will accept every log request.
-batch_cooldown_ms = 12000
+# Minimum gap between two sign-ins, in milliseconds.
+# Microsoft rate-limits sign-ins per egress IP: about one every 20 seconds is stable, one every 12 seconds loses the
+# last bot, and several sign-ins within a few seconds trip a penalty window that rejects every sign-in for the next
+# few tens of seconds (see docs/troubleshooting section 12). This single value drives both the gap inside a batch and
+# the gap between batches: the wait between batches is this value minus the session recheck wait.
+login_interval_ms = 20000
 # Maximum number of queued requests waiting for the dispatcher. Does not include the active request.
 max_pending_requests = 32
 
 # ------------------------------ Timing ------------------------------
 # All values are milliseconds.
 [timing]
-# Gap between launching bots in the same batch. Increase to reduce concurrent JVM memory use.
-stagger_ms = 600
 # Wait per launched bot before checking sessions. Two checks are made; total wait = 2 x bots x value.
 settle_per_bot_ms = 300
 # Grace period for a JVM to exit before it is force-killed.
@@ -140,11 +141,9 @@ stop_grace_ms = 3000
 # Wait after force-killing sessions before checking that they have exited.
 stop_settle_ms = 500
 # Continuous probe-failure window before reconnecting; also the delay before reconnect.
+# The REST probe interval (a third of this window) and the first-handshake timeout (twice this window) are derived
+# from this value; they are not separate keys.
 watchdog_window_ms = 30000
-# Interval between REST probes. Must not exceed watchdog_window_ms (the example uses one third of it).
-probe_interval_ms = 10000
-# Timeout for the first READY / RESUMED after connecting (the example uses twice watchdog_window_ms).
-first_handshake_timeout_ms = 60000
 
 # ------------------------------ FishingBot's own raw logs ------------------------------
 # The raw log of FishingBot.jar itself. 

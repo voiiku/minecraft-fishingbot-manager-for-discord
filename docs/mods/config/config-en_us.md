@@ -101,18 +101,21 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
   the length limit of a single reply (Discord hard-limits a message to 2000 characters, and an overlong one simply
   fails to send); `max_autocomplete_choices` caps the autocomplete suggestions for the bot-name options (1..=25,
   Discord's hard limit).
-* `[startup_queue]`: `max_batch_size`, `batch_cooldown_ms` and `max_pending_requests` set the global FIFO queue's
-  maximum bots per batch, cooldown between batches and maximum waiting requests (excluding the active request). The
-  table and all of its fields are required and every value must be greater than zero. `/start`, `/startall`, `/restart`
-  and `/restartall` share this queue; `/bot login` does not use it. The dispatcher remains alive while idle, closes a
-  partial batch when the queue becomes idle, and drops pending work if the process restarts.
-* `[timing]`: `stagger_ms`, `settle_per_bot_ms`, `stop_grace_ms`, `stop_settle_ms`, `watchdog_window_ms`,
-  `probe_interval_ms` and `first_handshake_timeout_ms`. These per-flow waits are in milliseconds. `stagger_ms` is the gap
-  between launches within a batch; `settle_per_bot_ms` is the wait per bot before checking the session (the
-  check runs twice, so the total wait is twice the number of bots times it); the last three are the gateway watchdog
-  timings, each independent: the judging window and the wait before rebuilding the connection
-  (`watchdog_window_ms`), the probe interval (`probe_interval_ms`) and the first-handshake timeout
-  (`first_handshake_timeout_ms`), see [watchdog-en_us.md](../watchdog/watchdog-en_us.md).
+* `[startup_queue]`: `max_batch_size`, `login_interval_ms` and `max_pending_requests` set the global FIFO queue's
+  maximum bots per batch, the minimum gap between two sign-ins and the maximum waiting requests (excluding the active
+  request). The table and all of its fields are required and every value must be greater than zero.
+  `login_interval_ms` is the only knob that decides the pace: bots inside a batch are spaced by it, and the wait between
+  batches is it minus `timing.settle_per_bot_ms` times 2 times the batch size. Microsoft rate-limits sign-ins per egress
+  IP, see [troubleshooting section 12](../../troubleshooting/troubleshooting-en_us.md) for the numbers.
+  `/start`, `/startall`, `/restart` and `/restartall` share this queue; `/bot login` does not use it. The dispatcher
+  remains alive while idle, closes a partial batch when the queue becomes idle, and drops pending work if the process
+  restarts; the login interval is kept across idle either way.
+* `[timing]`: `settle_per_bot_ms`, `stop_grace_ms`, `stop_settle_ms` and `watchdog_window_ms`. These per-flow waits are
+  in milliseconds. `settle_per_bot_ms` is the wait per bot before checking the session (the check runs twice, so the
+  total wait is twice the number of bots times it, and it is also the part the wait between batches subtracts);
+  `watchdog_window_ms` is the gateway watchdog's judging window, also used as the wait before rebuilding the
+  connection; the REST probe interval (a third of it) and the first-handshake timeout (twice it) are derived from it
+  instead of being separate keys, see [watchdog-en_us.md](../watchdog/watchdog-en_us.md).
 * `[raw_game_logs]`: `dir_name`, `file_name`, `discard_path`. The convention for FishingBot.jar's own raw log (its
   directory name, its file name, and where the contents are thrown away). It follows the JAR; the example config
   ships `raw`, `log0.log` and `/dev/null`.
@@ -236,13 +239,12 @@ It only looks at the three kinds of problem that make the program fail to run (s
   `raw_game_logs.discard_path`, and `raw_game_logs.dir_name` / `raw_game_logs.file_name` (these two must be plain names
   as well).
 * Numeric ranges: `ping.default_ping_port` must not be 0; `runtime.max_autocomplete_choices` must be between 1 and 25
-  (Discord's hard limit on suggestions); `startup_queue.max_batch_size`, `startup_queue.batch_cooldown_ms`,
+  (Discord's hard limit on suggestions); `startup_queue.max_batch_size`, `startup_queue.login_interval_ms`,
   `startup_queue.max_pending_requests`, `ping.timeout_ms`, `runtime.max_log_lines`, `runtime.max_reply_chars`,
-  `timing.watchdog_window_ms`, `timing.probe_interval_ms`,
-  `timing.first_handshake_timeout_ms`, `command_echo.wait_ms` and `command_echo.scan_lines` must be greater than 0 (a
-  zero in the watchdog values degrades the decision - a window of 0 can never prove "still connected"). Also
-  `timing.probe_interval_ms` must not be greater than `timing.watchdog_window_ms`: if probing is slower than the
-  judging window, the very first failed probe already fills a window, which turns one failure into a disconnect.
+  `timing.watchdog_window_ms`, `timing.settle_per_bot_ms`, `command_echo.wait_ms` and `command_echo.scan_lines` must be
+  greater than 0 (a watchdog window of 0 degrades the decision - it can never prove "still connected"). The probe
+  interval and the first-handshake timeout are derived from that window, so the "the probe must not be slower than the
+  window" rule no longer exists.
 
 The two `command_echo` echoes must also differ, and neither may contain the other (complete equality included):
 otherwise that log line cannot be attributed and the decision always leans towards whichever is checked first.
@@ -257,8 +259,8 @@ clear message.
 
 Nothing else is policed: how large a timing value should be, which address to use, and whether a name may contain
 Chinese characters are all the user's judgement. `[discord]` has only one rule (the token must not be empty); `[log]`'s
-`debug` is a boolean switch with no rule; `[timing]` has two (`stagger_ms` and `settle_per_bot_ms` both greater than
-0, and the gateway window greater than 0); `[command_echo]` has two (both echoes non-empty and neither containing the
+`debug` is a boolean switch with no rule; `[timing]` has two (`settle_per_bot_ms` greater than 0 and the gateway window
+greater than 0); `[command_echo]` has two (both echoes non-empty and neither containing the
 other, and both durations greater than 0).
 
 ## 6. The template (`template`)

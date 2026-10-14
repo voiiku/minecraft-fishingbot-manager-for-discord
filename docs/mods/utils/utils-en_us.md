@@ -124,16 +124,18 @@ ago would immediately count as already running and the statistics would drift.
 
 * All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start
   queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most
-  `[startup_queue] max_batch_size`; the next FIFO request is not processed until the current request completes. After a
-  full batch, the next batch waits at least `[startup_queue] batch_cooldown_ms`. A partial batch is closed and cooled down
-  when the queue becomes idle. Queued requests are not persisted and are lost if the process restarts. `/bot login` does
-  not use this queue.
-* `start_bot_sessions` handles launches within a batch, spacing them by `stagger_ms` and checking the sessions afterward.
-  The dispatcher handles cooldown between batches. `settle_per_bot_ms` still scales the session-recheck wait by the
-  number of bots in that batch, with the two snapshots separated by the same interval. Total duration depends on the
-  number of batches, within-batch staggering, inter-batch cooldown and session checks. Reducing `stagger_ms` does not
-  shorten the cooldown and increases the JVM memory peak (see [commands-en_us.md](../commands/commands-en_us.md)
-  section 5.5).
+  `[startup_queue] max_batch_size`; the next FIFO request is not processed until the current request completes. Two
+  sign-ins are at least `[startup_queue] login_interval_ms` apart: bots inside a batch are spaced by it, and the wait
+  between batches is it minus that batch's recheck wait (`timing.settle_per_bot_ms` times 2 times the batch size). A
+  partial batch is closed when the queue becomes idle, but the "last sign-in" timestamp is kept across commands, so
+  consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process
+  restarts. `/bot login` does not use this queue.
+* `start_bot_sessions` handles launches within a batch and spaces them; the queue dispatcher handles the wait between
+  batches, and `settle_per_bot_ms` still scales the session-recheck wait by the number of bots in that batch, with the
+  two snapshots separated by the same interval. The sign-in rate is the only thing that is limited, so one interval
+  value covers both inside and between batches: the batch size only changes the length of the verification window and
+  the JVM memory peak, not the total duration (total duration is about the number of bots times the interval). See
+  [commands-en_us.md](../commands/commands-en_us.md) section 5.5.
 * Neither wait of the stop flow takes a parameter; the flow reads the config itself: `stop_grace_ms` is read in
   `shutdown::stop_bot_sessions` (send the signal first, force kill only if that does not work) and `stop_settle_ms` is
   read there too (the deregistration buffer after a force kill and before the re-check).

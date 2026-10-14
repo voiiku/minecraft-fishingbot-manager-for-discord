@@ -28,7 +28,9 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   `/unpause` in-game commands, and the build this project uses adds them plus their echoes (`已暂停钓鱼` and
   `已恢复钓鱼`; the English build prints `Fishing paused` and `Fishing resumed`; both strings are copied into the
   `[command_echo]` configuration as `pause_echo` and `unpause_echo`, so swapping the jar build needs no
-  recompilation). Two constraints follow: first, the confirmation that `/pause` and `/unpause` took effect only holds
+  recompilation). These two keys are kept **for now**: once upstream ships those two commands, they can move into the
+  language table and be derived from `[i18n] language` (that is the last step of the config slimming plan). Two
+  constraints follow: first, the confirmation that `/pause` and `/unpause` took effect only holds
   on the patched jar - with the original jar it only replies "command sent" and the pause state stays "fishing";
   second, that patch is a GPL-3.0 derivative work, so this repository contains neither it nor its jar (it is
   maintained in a separate GPL-3.0 repository).
@@ -172,7 +174,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   the echo is seen do they answer "pause confirmed" or "resumed" - otherwise they only say "sent". Pick the wording of
   new commands by this principle: say exactly as much as can be verified.
 * An interaction has to be answered within 3 seconds, otherwise the user sees "the interaction failed". What we have to
-  do (starting a JVM, running `screen -list`, waiting `timing.stagger_ms` per bot, reading logs) usually takes far
+  do (starting a JVM, running `screen -list`, waiting `[startup_queue] login_interval_ms` per bot, reading logs) usually takes far
   longer, so:
   * commands that trigger process operations or external probes (`/start`, `/stop`, `/restart`, `/pause`, `/unpause`,
     `/command`, the four `*all` commands, `/ping`, `/checkserver`, `/log`) always call `ctx.defer()` first; among them
@@ -187,9 +189,11 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     immediately, and after it finishes the full report from `Report::render()`.
     The second reply is sent as a new message under Discord's defer behaviour; re-check this in a live deployment if
     changing the response flow.
-  * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window (watch out
-    when there are very many targets; if it really runs out, only an ordinary channel message is possible, and a note
-    is left in the log).
+  * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window. When a
+    batch start runs longer than that (many bots, a large `[startup_queue] login_interval_ms`) the followup always
+    fails, so the final report of a long command goes through `commands::say_final_report`: if it cannot be sent as a
+    reply it is posted as an ordinary channel message (those are not bound to the interaction token) and a
+    `LogText::ReportPostedToChannel` line records why, together with the failure reason.
 * Sensitive input has to go through a Modal and must not be a command parameter: every invocation of a slash command
   creates a message in the channel (that is exactly Discord's `CHAT_INPUT_COMMAND` message type), the parameter values
   live in that message, and `ephemeral` only covers replies, not the invocation itself. `/token` therefore collects it
@@ -369,13 +373,12 @@ Both criteria are implemented in `src/watchdog/gateway.rs` (pure timing, indepen
 
 Details:
 
-* All three timings come from the configuration and are independent and all required (there are no in-code defaults):
-  the judgement window `timing.watchdog_window_ms`, the probe interval `timing.probe_interval_ms` (one third of the
-  window in the shipped example) and the first-handshake timeout `timing.first_handshake_timeout_ms` (twice the
-  window in the shipped example). The entry point builds them into the `Watchdog` (they are three of its fields), and
-  judging and probing share that one instance (the probe interval has to be less
-  than or equal to the judgement window, otherwise the first failed probe would already declare a disconnect, and that
-  is caught by start-up validation).
+* The timings come from the judging window `timing.watchdog_window_ms` in the configuration; the probe interval (one
+  third of the window) and the first-handshake timeout (twice the window) are derived from it
+  (`TimingConfig::probe_interval` / `first_handshake_timeout`) instead of being separate keys, because those two only
+  make sense as a ratio of the window. The entry point builds them into the `Watchdog` (they are three of its fields),
+  and judging and probing share that one instance; deriving them also means "a probe slower than the window, where the
+  first failed probe is already a disconnect" can no longer be configured.
 * The probe only looks at network reachability, not at whether the credentials are right: a wrong token makes
   `client.start()` fail and exit on its own, which is not the watchdog's business.
   ?The probe hits `discord.com`, whereas the gateway connects to `gateway.discord.gg`; if a deployment shows the API

@@ -240,9 +240,9 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
-    if startup_queue.batch_cooldown_ms == 0 {
+    if startup_queue.login_interval_ms == 0 {
         return Err(invalid(
-            "startup_queue.batch_cooldown_ms",
+            "startup_queue.login_interval_ms",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -258,37 +258,21 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
 
 /// 检查等待时间与看门狗时序。
 fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
-    // 启动错峰与复核等待不能为 0。
-    for (field, value) in [
-        ("timing.stagger_ms", timing.stagger_ms),
-        ("timing.settle_per_bot_ms", timing.settle_per_bot_ms),
-    ] {
-        if value == 0 {
-            return Err(invalid(field, text::ConfigRequirement::GreaterThanZero));
-        }
-    }
-
-    for (field, value) in [
-        ("timing.watchdog_window_ms", timing.watchdog_window_ms),
-        ("timing.probe_interval_ms", timing.probe_interval_ms),
-        (
-            "timing.first_handshake_timeout_ms",
-            timing.first_handshake_timeout_ms,
-        ),
-    ] {
-        if value == 0 {
-            return Err(invalid(
-                field,
-                text::ConfigRequirement::WatchdogTimingPositive,
-            ));
-        }
-    }
-
-    // 探活间隔不能大于判定窗口。
-    if timing.probe_interval_ms > timing.watchdog_window_ms {
+    // 复核等待不能为 0，否则"拉起完立刻判定"，等于没复核。
+    if timing.settle_per_bot_ms == 0 {
         return Err(invalid(
-            "timing.probe_interval_ms",
-            text::ConfigRequirement::ProbeIntervalWithinWindow,
+            "timing.settle_per_bot_ms",
+            text::ConfigRequirement::GreaterThanZero,
+        ));
+    }
+
+    // 看门狗判定窗口写 0 会让判定退化（永远证明不了"还连着 Discord"）。探活间隔与首次握手超时由它
+    // 按固定比例派生（见 `TimingConfig::probe_interval` / `first_handshake_timeout`），不再是配置项，
+    // 所以"探活比窗口还慢"这种组合已经不可能配出来。
+    if timing.watchdog_window_ms == 0 {
+        return Err(invalid(
+            "timing.watchdog_window_ms",
+            text::ConfigRequirement::WatchdogTimingPositive,
         ));
     }
 
@@ -637,27 +621,39 @@ mod tests {
     /// 网关看门狗的时序项写 0 会让判定退化（比如永远证明不了"还连着 Discord"），必须在启动时就拦下。
     #[test]
     fn zero_watchdog_timing_is_reported() {
-        for (field, dir_name) in [
-            ("watchdog_window_ms", "zero-watchdog-window"),
-            ("probe_interval_ms", "zero-probe-interval"),
-            ("first_handshake_timeout_ms", "zero-handshake-timeout"),
-        ] {
-            let (dir, text) = staged_example(dir_name);
-            let text = set_field(&text, field, "0");
+        let (dir, text) = staged_example("zero-watchdog-window");
+        let text = set_field(&text, "watchdog_window_ms", "0");
 
-            let err = load_text(&text, &dir).expect_err("0 应当报错");
+        let err = load_text(&text, &dir).expect_err("0 应当报错");
 
-            assert!(err.contains(field), "报错应指出字段 {field}: {err}");
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        assert!(
+            err.contains("timing.watchdog_window_ms"),
+            "报错应指出字段: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 启动队列的批次大小和批间冷却时间必须大于 0。
+    /// 复核等待写 0 会变成"拉起完立刻判定"，等于没复核：启动时就拦下。
+    #[test]
+    fn zero_settle_per_bot_ms_is_reported() {
+        let (dir, text) = staged_example("zero-settle-per-bot");
+        let text = set_field(&text, "settle_per_bot_ms", "0");
+
+        let err = load_text(&text, &dir).expect_err("0 应当报错");
+
+        assert!(
+            err.contains("timing.settle_per_bot_ms"),
+            "报错应指出字段: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 启动队列的批次大小与登录间隔必须大于 0。
     #[test]
     fn zero_start_batch_timing_is_reported() {
         for (field, tag) in [
             ("max_batch_size", "zero-start-batch-size"),
-            ("batch_cooldown_ms", "zero-start-batch-cooldown"),
+            ("login_interval_ms", "zero-start-interval"),
             ("max_pending_requests", "zero-start-queue-capacity"),
         ] {
             let (dir, text) = staged_example(tag);
@@ -671,33 +667,6 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&dir);
         }
-    }
-
-    /// 探活间隔比判定窗口还慢时，第一次探活失败就已经"满一个窗口"，等于一次失败就判掉线：启动时就拦下。
-    #[test]
-    fn probe_interval_slower_than_window_is_reported() {
-        let (dir, text) = staged_example("probe-slower-than-window");
-        let text = set_field(&text, "watchdog_window_ms", "30000");
-        let text = set_field(&text, "probe_interval_ms", "30001");
-
-        let err = load_text(&text, &dir).expect_err("探活比窗口慢应当报错");
-
-        assert!(
-            err.contains("timing.probe_interval_ms"),
-            "报错应指出字段: {err}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// 相等是允许的：一个判定窗口里至少还能探一次，不拦这个边界。
-    #[test]
-    fn probe_interval_equal_to_window_is_allowed() {
-        let (dir, text) = staged_example("probe-equal-window");
-        let text = set_field(&text, "watchdog_window_ms", "30000");
-        let text = set_field(&text, "probe_interval_ms", "30000");
-
-        load_text(&text, &dir).expect("探活间隔等于窗口应当允许");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 管理员名单的键必须是 Discord 用户 ID：写成别的会让权限静默失效。

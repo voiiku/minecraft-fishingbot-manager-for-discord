@@ -27,11 +27,10 @@
 
 细节：
 
-* 三项时序都来自配置、各自独立：判定窗口 `timing.watchdog_window_ms`、探活间隔 `timing.probe_interval_ms`
-  （示例配置里取窗口的 1/3）、首次握手超时 `timing.first_handshake_timeout_ms`（示例配置里取窗口的 2 倍）。
-  三项都必填（代码里没有默认值）。入口把它们装进 `Watchdog`（就是它的三个字段），
-  判定与探活用的是同一份。探活间隔要小于或等于判定窗口，比它慢的话
-  第一次探活失败就已经满一个窗口、等于一次失败就判掉线，启动时会拦下这个配置。
+* 时序来自配置里的判定窗口 `timing.watchdog_window_ms`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
+  由它派生，不再是独立配置项——这两个值只有按窗口比例取才有意义。入口把三项装进 `Watchdog`（就是它的三个
+  字段），判定与探活用的是同一份。派生保证了探活间隔永远小于判定窗口，所以"探活比窗口还慢、一次失败就判
+  掉线"这种组合已经配不出来。
 * 探活走 REST：`GET /api/v10/gateway` 收到 HTTP 响应只证明 REST 端点可达，不代表 Token 有效；认证错误由
   Discord 客户端连接流程报告。超时或连接错误才记为探活失败。探活打的是 `discord.com`，网关实际连的
   是 `gateway.discord.gg`；若出现 API 可达但网关不可达的部署，再考虑增加网关域名的 TCP 或 TLS 探活。
@@ -100,8 +99,8 @@ serenity 0.12.5 的 `ShardMessenger`（也就是 `ctx.shard`）只暴露 `shutdo
 * 日志反复出现 `NeverReady` 的重连（进程没退出）：出网被拦、Token 不对或 Discord 侧故障。先在部署机
   上验：`curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway` 应当拿到 200。
 * 日志说 `Unreachable`：断网、代理掉了、Token 失效；看上一行 `REST 探活失败:` 给的具体原因。
-* 网络偶尔抖动就会重连一次：把 `timing.watchdog_window_ms` 调大（例如 60000，必要时连
-  `timing.first_handshake_timeout_ms` 一起调大）；窗口内恢复不会误杀。
+* 网络偶尔抖动就会重连一次：把 `timing.watchdog_window_ms` 调大（例如 60000）即可，探活间隔与首次握手超时
+  跟着它一起变；窗口内恢复不会误杀。
 * 日志里反复出现"重建连接失败"，但进程没退出：这是正常的重试（掉线不退出进程）。若是
   `Missing Access`、`401` 这类配置写错，进程会以退出码 1 退出；单元里配 `RestartPreventExitStatus=1`
   就不重拉（退一次就停、进 `failed`），配 `StartLimitBurst` 则挡的是崩溃循环。

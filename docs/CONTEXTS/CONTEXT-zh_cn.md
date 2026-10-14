@@ -24,7 +24,8 @@
 * 依赖的 FishingBot 是打过补丁的构建：上游（`MrKinau/FishingBot`，GPL-3.0）没有 `/pause`、`/unpause`
   这两条游戏内指令，本项目用的那份补上了它们与对应回显（`已暂停钓鱼` 与 `已恢复钓鱼`，英文构建为
   `Fishing paused` 与 `Fishing resumed`；两句抄进配置 `[command_echo]` 的 `pause_echo`、`unpause_echo`，
-  所以换 jar 构建不必重新编译）。由此派生两条约束：一是 `/pause`、`/unpause` 的确认生效只在
+  所以换 jar 构建不必重新编译。这两个键**暂时保留**：等上游原版支持这两条指令后，它们可以收进语言表、
+  按 `[i18n] language` 派生（那是配置精简计划里还没做的一步））。由此派生两条约束：一是 `/pause`、`/unpause` 的确认生效只在
   带补丁的 jar 上成立，用原版 jar 只会回"命令已发送"、暂停状态永远是"钓鱼中"；二是那份补丁是 GPL-3.0
   的衍生作品，本仓库不放它、也不放它的 jar（另立 GPL-3.0 仓库维护）。
 * 干什么：用 Discord 斜杠指令批量管理多个 Minecraft 账号的
@@ -142,8 +143,10 @@
     启动指令先确认请求已加入全局启动队列；其他长指令先报告开始执行；任务完成后再发送
     `Report::render()` 的完整结果。
     第二条消息按 Discord defer 规则作为新消息发送；如改动该行为，需在真实部署中回归验证。
-  * 交互令牌只有 15 分钟：所有 defer 后的回复必须在这个窗口内发出（批量目标极多时要留意；真超了就只能
-    改发普通频道消息，日志里会留一条说明）。
+  * 交互令牌只有 15 分钟：所有 defer 后的回复必须在这个窗口内发出。批量启动跑得比它久时（台数多、
+    `[startup_queue] login_interval_ms` 大）followup 一定失败，所以长指令的最终报告走
+    `commands::say_final_report`：发不出去就改发普通频道消息（普通消息不受交互令牌约束），并留一条
+    `LogText::ReportPostedToChannel` 日志说明原因与失败原因。
 * 敏感输入必须走 Modal，不能当指令参数：斜杠指令的每次调用都会在频道里生成一条消息（Discord 的
   `CHAT_INPUT_COMMAND` 消息类型就是它），参数值就在那条消息里，而 `ephemeral` 只管回复、管不了调用
   本身。所以 `/token` 用 `#[derive(poise::Modal)]` 弹窗收集（输入走 `MODAL` 回调、不进频道），提交后
@@ -273,11 +276,10 @@
 
 细节：
 
-* 三项时序都来自配置、各自独立、且都必填（代码里没有默认值）：判定窗口 `timing.watchdog_window_ms`、
-  探活间隔 `timing.probe_interval_ms`（示例配置里取窗口的 1/3）、首次握手超时
-  `timing.first_handshake_timeout_ms`（示例配置里取窗口的 2 倍）。入口把三项装进 `Watchdog`，判定与探活
-  共用同一份（探活间隔要小于或等于判定窗口，否则第一次探活失败就
-  判掉线，这一条在启动校验里拦下）。
+* 时序来自配置里的判定窗口 `timing.watchdog_window_ms`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
+  由它派生（`TimingConfig::probe_interval` / `first_handshake_timeout`），不再是配置项——这两个值只有按窗口
+  比例取才有意义。入口把三项装进 `Watchdog`，判定与探活共用同一份；派生同时保证了"探活比窗口还慢、一次
+  失败就判掉线"这种组合配不出来。
 * 探活只看网络可达性，不看凭据对错：Token 错会让 `client.start()` 自己报错退出，不归看门狗管。
   ?探活请求发往 `discord.com`，网关连接 `gateway.discord.gg`；如果部署中出现 API 可达但网关不可达，再增加
   针对网关域名的 TCP 或 TLS 探活。

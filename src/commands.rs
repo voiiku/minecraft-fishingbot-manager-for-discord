@@ -229,7 +229,33 @@ where
     say_and_log(ctx, started_notice).await?;
 
     let reply = tokio::task::spawn_blocking(run).await?;
-    say_and_log(ctx, reply).await?;
+    say_final_report(ctx, &reply).await?;
+
+    Ok(())
+}
+
+/// 发送长任务的最终报告；当交互回复发不出去时，改发普通频道消息。
+/// 交互令牌只有 15 分钟，批量操作需要的时间比它久时一定失败，用户收不到回复。
+/// 这条兜底把报告发进当前频道，并留一条 `ReportPostedToChannel` 日志
+/// 说明为什么改成了频道消息。发送失败的原因写进日志。
+async fn say_final_report(ctx: Context<'_>, report: &str) -> Result<(), Error> {
+    let caller_id = ctx.author().id.get();
+    let command_path = ctx.command().qualified_name.clone();
+
+    if let Err(error) = say_and_log(ctx, report).await {
+        // `log` 是本文件的子模块（`/log` 指令），所以这里要写全路径指向 `log` crate。
+        ::log::warn!(
+            "{}",
+            text::get().log_text(text::LogText::ReportPostedToChannel {
+                caller_id,
+                command_path: &command_path,
+                reason: &error.to_string(),
+            })
+        );
+
+        ctx.channel_id().say(ctx.http(), report).await?;
+        log_reply(caller_id, &command_path, report);
+    }
 
     Ok(())
 }

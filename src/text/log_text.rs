@@ -45,6 +45,15 @@ pub enum LogText<'a> {
         command_path: &'a str,
         reply: &'a str,
     },
+    /// 最终报告没能作为交互回复发出，改发普通频道消息。
+    ///
+    /// 交互令牌只有 15 分钟（见 `docs/CONTEXTS/CONTEXT-zh_cn.md` 第 3 节）：批量启动跑得比它久时
+    /// followup 一定失败，报告改走普通频道消息，用户至少能看到结果。
+    ReportPostedToChannel {
+        caller_id: u64,
+        command_path: &'a str,
+        reason: &'a str,
+    },
     /// 框架级错误（非指令级）。
     FrameworkError { detail: &'a str },
     /// 注册 SIGTERM 处理失败。
