@@ -65,6 +65,8 @@
 
 本项目许可证采用 [MIT License](../../LICENSE)。
 
+第三方许可证请查看[THIRD-PARTY-NOTICES.html](../../THIRD-PARTY-NOTICES.html)
+
 [FishingBot](https://github.com/MrKinau/FishingBot) 使用 [GPL-3.0 许可证](https://github.com/MrKinau/FishingBot/blob/main/LICENSE)的独立程序，本项目只管理它，不包含它，也不与它一起打包发布。
 
 ## 8. 参与贡献

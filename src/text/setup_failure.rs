@@ -2,7 +2,7 @@
 
 use super::LogText;
 
-/// 将装配错误映射为日志文案；无法识别时保留原始错误。
+/// 把不同错误映射为对应的日志文案，无法识别时保留原始错误。
 pub fn setup_failure_log_text(error: &str) -> LogText<'_> {
     // 机器人未加入任何服务器（或邀请时缺少 `applications.commands` 权限）。
     const NOT_INVITED_PHRASES: [&str; 2] = ["Missing Access", "Unknown Guild"];
@@ -24,7 +24,7 @@ pub fn setup_failure_log_text(error: &str) -> LogText<'_> {
     }
 }
 
-/// 判断装配失败是否不可重试。
+/// 根据错误，判断错误是否是永久性错误
 pub fn failure_is_permanent(failure: &LogText<'_>) -> bool {
     matches!(
         failure,

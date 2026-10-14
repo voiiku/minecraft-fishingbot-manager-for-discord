@@ -11,6 +11,8 @@ pub(crate) fn all_bots_list() -> Result<String, String> {
 
     let mut report = Report::new();
     report.set_title(i18n_text.allbots_title());
+    // 计数行只有这里输出「扫描机器人目录」：它说明这次看到多少台，其余指令的报告不带这个字段。
+    report.set_counts(&[(i18n_text.count_scanned_dirs(), bot_dir_entries.len())]);
 
     if bot_dir_entries.is_empty() {
         report.basics.push(i18n_text.allbots_empty().to_string());

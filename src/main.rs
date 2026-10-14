@@ -3,9 +3,9 @@
 //!
 //! 启动顺序：
 //!
-//! 1. 取配置：`config::get_or_init()` 会尝试读取可执行文件同级目录的 `minecraft-fishingbot-manager-for-discord.conf.toml`，
+//! 1. 取配置：`config::Config::get_or_init()` 会尝试读取可执行文件同级目录的 `minecraft-fishingbot-manager-for-discord.conf.toml`，
 //!    解析、校验与安装语言都在里面做；配置文件不存在时它写好模板并打印提示，进程正常退出（退出码 0）；
-//!    当某项配置不合法，就带着字段名报错退出；
+//!    当某项配置不合法，它就带着字段名报错、以退出码 1 结束进程；
 //!    当配置解析成功后，语言会被立刻安装，此后的报错与日志都跟随配置语言（在语言成功安装前，默认使用英语报错/提示）
 //! 2. `init_process_log()`：创建本次进程日志，并向终端与 `<部署目录>/logs/时间戳.log` 实时写入日志信息，日志创建完成后立刻写入进程信息；
 //! 3. `WATCHDOG.get_or_init()`：显式获取并自动初始化进程内唯一的看门狗
@@ -25,26 +25,18 @@ use std::time::Instant;
 
 use poise::serenity_prelude as serenity;
 
-use minecraft_fishingbot_manager_for_discord::config::{self, LoadOutcome};
+use commands::{Data, Error, register_commands};
+use minecraft_fishingbot_manager_for_discord::config;
 use minecraft_fishingbot_manager_for_discord::{
     WATCHDOG, Watchdog, init_process_log, regenerate_fishingbot_config, text,
 };
-
-use commands::{Data, Error, register_commands};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 获取配置
     // 没有配置文件时将生成模板、打印提示后退出。
     // 配置不合法时报错并以退出码 1 退出。
-    let settings = match config::get_or_init() {
-        Ok(LoadOutcome::Loaded(settings)) => settings,
-        Ok(LoadOutcome::TemplateGenerated) => return Ok(()),
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(1);
-        }
-    };
+    let settings = config::Config::get_or_init();
     // 2. 初始化本次运行的程序日志。
     // 失败时不影响程序运行，输出终端警告，日志级别由配置文件中的 `[log] debug` 决定。
     init_process_log(settings.log.debug);
@@ -53,13 +45,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 所有关于程序状态、信息获取与对不同生命周期的处理逻辑都通过看门狗进行。
     let watchdog = WATCHDOG.get_or_init();
 
-    // 4. 生成钓鱼机器人的配置（Fishingbot.jar 使用的 conf.json），会覆盖旧文件。
+    // 4. 根据配置中的[fishingbot]表，重新生成钓鱼机器人的配置，会覆盖旧文件。
     // 失败是永久错误，以退出码 1 退出。
     if let Err(message) = regenerate_fishingbot_config() {
         watchdog.exit_on_permanent_failure(&message);
     }
 
-    // 5. 进入连接循环：每一轮就是一次尝试；
+    // 5. 进入连接循环，每一轮就是一次尝试连接到Discord的过程，并阻塞等待不同失败结果以执行对应处理逻辑
     // 正常运行时会阻塞在第 8 步，直到客户端返回、看门狗判定掉线或收到退出信号。
     // 尝试连接的次数
     let mut attempt_times: u32 = 0;
@@ -68,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 探活使用的 REST 句柄：可能保持连接但故障收不到内容。
     // 看门狗需要定期主动检查网络，让每轮探活任务各拿一份句柄，同时避免冲突和消耗所有权。
     let probe_http = Arc::new(serenity::Http::new(discord_bot_token));
-    // Intent 决定 Discord 推送哪些事件给本机器人。
+    // Intents 决定 Discord 推送哪些事件给本机器人。
     // 必须订阅 GUILDS：它提供服务器的结构信息（频道、成员列表等），其余可以不订阅。
     let intents = serenity::GatewayIntents::GUILDS;
     loop {
@@ -77,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         watchdog.begin_connection_attempt(Instant::now());
 
         // 6. 启动一个新的探活任务
-        // 停止标志，每轮重置，用于判断是否应该提前结束。
+        // 创建停止探活标志，每轮重置，用于判断是否应该提前结束。
         let stop_probe = Arc::new(AtomicBool::new(false));
         watchdog.probe(Arc::clone(&probe_http), Arc::clone(&stop_probe));
 
@@ -105,12 +97,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             }
         };
-        // 8. 成功构造 client 后就等这一次尝试结束，再按结束方式收尾。
-        // 尝试结束的概念：[`Watchdog::lifecycle::AttempEnding`],正常运行时不会结束，会在这一步一直等待
+        // 8. 成功构造 client 后，阻塞等待这一次尝试结束，再按结束方式收尾。
+        // 尝试结束的概念：表示出现意外，正常运行时相当不会出现尝试结束，会在这一步一直等待
         // [`wait_for_attempt`]会一直等待三个结束标志中的一个出现，谁先出现就先进入对应的逻辑
         // 三种结束分别是:
         // 客户端返回：客户端只有遇到严重错误时才会返回，掉线不会返回，而是静默尝试重连。
-        // 看门狗认定掉线：由于无法从客户端内获取实时的网络状态，需要让看门狗定时主动探测网络是否正常，超时就认定掉线，停止全部机器人
+        // 看门狗认定掉线：由于客户端掉线时不返回，所以需要让看门狗定时主动探测网络是否正常，超时就认定掉线，停止全部机器人
         // 收到退出信号：当进程收到退出信号时，执行永久退出，不再自动重启。
         if let Some(client) = client.as_mut() {
             // 阻塞等待这一次尝试结束，并按结束方式收尾。
@@ -135,8 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// 装配失败原因的分流点，检查错误是可恢复的还是永久错误。
-/// 如果是永久性错误（如 token 错误、机器人没被邀请进服务器），就执行永久退出（exit_on_permanent_failure(）
+/// 根据错误，获取错误文本，并判断是否是永久性错误，写入日志
+/// 如果是永久性错误（如 token 错误、机器人没被邀请进服务器），就执行永久退出流程
 /// 否则返回渲染好的失败文案，交给调用方当重试原因
 fn setup_failure_reason(watchdog: &Watchdog, error: &str) -> String {
     let failure = text::setup_failure_log_text(error);
@@ -148,7 +140,7 @@ fn setup_failure_reason(watchdog: &Watchdog, error: &str) -> String {
     text::get().log_text(failure)
 }
 
-/// 装配 poise 框架：`setup` 里注册指令并打印邀请链接；事件与错误交给下面就地定义的两个处理接口。
+/// 装配 poise 框架，注册指令并打印邀请链接，事件与错误交给内部定义的两个处理接口。
 /// 每次重建连接都要重新装配。
 fn build_framework() -> poise::Framework<Data, Error> {
     /// 1. 定义框架的事件处理接口：gateway 的事件转给看门狗。
@@ -176,6 +168,9 @@ fn build_framework() -> poise::Framework<Data, Error> {
                 );
             }
 
+            // 记下这次握手的上下文：收到退出信号时的收尾要用它把结果发到各服务器。
+            watchdog.remember_notice_context(framework_ctx.serenity_context);
+
             // 掉线又重连后发送这条通报。
             watchdog
                 .notify_reconnect_success(framework_ctx.serenity_context)
@@ -186,13 +181,11 @@ fn build_framework() -> poise::Framework<Data, Error> {
     }
 
     /// 2. 定义错误处理接口：命令层与装配阶段的错误出口。
-    ///    装配失败按成因分流，配置写错（机器人没被邀请进服务器、token 无效）是永久错误，
-    ///    其余当掉线、重建连接、指令出错，记入日志并向调用者发送通用私密信息，框架级错误只记日志。
     async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
         match error {
             poise::FrameworkError::Setup { error, .. } => {
                 let watchdog = WATCHDOG.get_or_init();
-                // 装配失败按成因分流：永久错误（token 错、机器人没被邀请进服务器）在这里就退出进程；
+                // 装配失败按成因分流，永久错误就退出进程
                 // 其余的当掉线处理，把原因交给进程入口，由它停机并重建连接。
                 watchdog.request_reconnect(setup_failure_reason(watchdog, &error.to_string()));
             }
@@ -249,8 +242,7 @@ fn build_framework() -> poise::Framework<Data, Error> {
                     })
                 );
 
-                // 指令全局注册，确认当前全局指令已经在 Discord 稳定存在后，清理各服务器上
-                // 遗留的 guild 指令（以前注册到服务器的指令不会自己消失，会让同一条指令出现两次）。
+                // 指令全局注册，确认当前全局指令已经在 Discord 稳定存在后，尝试清理各服务器上遗留的 guild 指令。
                 register_commands(ctx, &framework.options().commands, &ready.guilds).await?;
 
                 Ok(Data)

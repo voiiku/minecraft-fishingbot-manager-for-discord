@@ -52,7 +52,7 @@ async fn bot_name_choices(
     let choices =
         match tokio::task::spawn_blocking(move || bot_name_candidate_states(caller_id)).await {
             Ok(Ok(candidates)) => {
-                let max_choices = config::get().runtime.max_autocomplete_choices;
+                let max_choices = config::Config::get().runtime.max_autocomplete_choices;
                 select_candidates(&candidates, &partial, scope, max_choices)
                     .into_iter()
                     .map(|(display_name, bot_name)| {

@@ -12,8 +12,8 @@
   业务函数。
 * 报告由调用方拼装：utils 只返回原始明细（例如停止给的是 `StopOutcome`，它自带 `into_report()` 与
   `to_failure_text()`），`into_report()` 这一步必须在调用方显式调用，utils 不会替你返回拼好的 `Report`。
-  批量停止由 `all_bots_control::stopall::stop_all_bots()` 显式拼，进程收尾走同一份拼装的
-  `stop_all_bots_for_shutdown()`（只有标题不同）。
+  批量停止由 `all_bots_control::stopall::stop_all_bots()` 显式拼，进程收尾在
+  `watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细（只有标题不同）。
 * 可见性，每个模块一个对外面：crate 的对外面只有 `lib.rs`（`pub fn handle_*`、`pub use` 的两个视图
   类型 `BotLogView` 与 `FishingbotConfigView`、`pub mod config`、`pub mod text`）；下层的五个业务模块与
   `utils` 是同一形状，子模块是私有 `mod`，父模块顶部一份精选的 `pub(crate) use` 就是它的面。于是
@@ -78,11 +78,12 @@
 进程级生命周期在 `src/watchdog/lifecycle.rs`，是 `Watchdog` 对象上的方法（路由层只是替 `main.rs` 再导出）：
 
 * `WATCHDOG.get_or_init()`：取进程内唯一的那一份看门狗（首次调用按配置 `[timing]` 建，之后拿到的都是它；
-  进程入口与事件回调都走这一行）。要在 `config::get_or_init()` 之后调：首次调用会读配置。
+  进程入口与事件回调都走这一行）。要在 `config::Config::get_or_init()` 之后调：首次调用会读配置。
   `Watchdog::new(...)` 是显式给时序的构造，仅供测试。
 * `watchdog.shutdown_all_bots()`：停止所有运行中的机器人会话（不退出进程）。
 * `watchdog.exit_on_shutdown_signal()`：收到 SIGTERM / Ctrl+C 后的收尾（入口收到信号后调它）：记日志、停全部
-  机器人、以退出码 0 结束进程（systemd 不会重拉）。
+  机器人、把收尾报告发到各服务器的通报频道（本次连接还没握手成功就只写日志）、以退出码 0 结束进程
+  （systemd 不会重拉）。
 * `watchdog.exit_on_permanent_failure(reason)`：停止全部机器人并以退出码 1 退出进程（`reason` 会写进本进程
   日志）。只给配置写错用（Token 无效、机器人没被邀请进服务器）：退出码 1 是本项目的主动失败专用码，
   systemd 单元里配 `RestartPreventExitStatus=1` 即可让它不重拉。
@@ -92,6 +93,8 @@
   `stop_all_bots_on_disconnect()`（停全部机器人 + 记原因与时刻）收尾，看门狗判定掉线就取来判定侧交的原因后同样
   收尾，收到退出信号就退出进程。
 * `watchdog.wait_before_reconnect()`：等一个判定窗口再重建连接；期间收到退出信号就直接退出进程。
+* `watchdog.remember_notice_context(ctx)`：每次握手成功（`Ready` / `Resume`）由入口记下当前上下文，退出信号收尾
+  靠它发频道消息（掉线收尾不发频道，不用它）。
 * `watchdog.notify_reconnect_success(ctx)`：掉线过又回来了（`Ready` / `Resume` 再次到来）就向本机器人所在的
   所有服务器补报一次；没掉线过就什么都不做。
 

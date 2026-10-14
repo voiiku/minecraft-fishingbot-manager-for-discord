@@ -109,8 +109,11 @@ static START_QUEUE: OnceLock<Result<SyncSender<StartRequest>, String>> = OnceLoc
 fn start_queue_sender() -> Result<SyncSender<StartRequest>, String> {
     START_QUEUE
         .get_or_init(|| {
-            let (sender, receiver) =
-                mpsc::sync_channel(crate::config::get().startup_queue.max_pending_requests);
+            let (sender, receiver) = mpsc::sync_channel(
+                crate::config::Config::get()
+                    .startup_queue
+                    .max_pending_requests,
+            );
             thread::Builder::new()
                 .name("bot-start-queue".to_string())
                 .spawn(move || process_start_queue(receiver))
@@ -125,7 +128,7 @@ fn start_queue_sender() -> Result<SyncSender<StartRequest>, String> {
 /// 清之前先把"意料之外的文件"报出来，如果静默删除的话，会忽略 FishingBot.jar 的日志改了命名规则。
 /// 意外只警告、不打断启动，最坏情况是 FishingBot.jar 因建不出日志文件而拒绝启动。
 fn reset_fishingbot_logs_dir(bot_dir: &Path) -> PathBuf {
-    let raw_game_logs = &config::get().raw_game_logs;
+    let raw_game_logs = &config::Config::get().raw_game_logs;
 
     reset_raw_logs_dir(
         &target_logs_dir(&bot_logs_dir(bot_dir), &raw_game_logs.dir_name),
@@ -314,11 +317,11 @@ fn queue_unavailable_outcome(bots_to_launch: &[BotDirEntry], reason: &str) -> La
 
 /// 全局启动工作线程：保持批次计数与冷却时刻跨请求存活。
 fn process_start_queue(receiver: Receiver<StartRequest>) {
-    let startup_queue = &config::get().startup_queue;
+    let startup_queue = &config::Config::get().startup_queue;
     let mut batch_gate = StartBatchGate::new(
         startup_queue.max_batch_size,
         Duration::from_millis(startup_queue.login_interval_ms),
-        Duration::from_millis(config::get().timing.settle_per_bot_ms),
+        Duration::from_millis(config::Config::get().timing.settle_per_bot_ms),
     );
     let mut pending_request = None;
 
@@ -386,7 +389,7 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
 
     // 批内相邻两台的间隔与批间间隔是同一个值（`[startup_queue] login_interval_ms`）：微软限流看的是
     // 登录频率，分成两个旋钮只会配出"批内几台连发"这种形状（见 troubleshooting 第 12 节）。
-    let login_interval_ms = config::get().startup_queue.login_interval_ms;
+    let login_interval_ms = config::Config::get().startup_queue.login_interval_ms;
 
     // 没被拉起过的机器人（前置检查或第一步就失败）：复核阶段要跳开，否则会多出一条误导信息。
     let mut not_launched_bot_names: Vec<String> = Vec::new();
@@ -466,7 +469,7 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
     }
 
     // 等 JVM 初始化，让内存不足一类的问题先暴露出来再复核。
-    let settle_ms = config::get()
+    let settle_ms = config::Config::get()
         .timing
         .settle_per_bot_ms
         .saturating_mul(outcome.attempted_launch_count as u64);
@@ -491,17 +494,21 @@ fn start_bot_sessions_now(bots_to_launch: &[BotDirEntry]) -> LaunchOutcome {
             continue;
         };
 
-        // 第二遍还在 = 启动成功（`-dmS` 偶尔慢一点也没关系：只有第一遍抓到也算成功）。
+        // 第二遍还在 = 启动成功（第一遍没确认不算失败）。
         if second_check_sessions.contains_key(&target_session_name) {
             outcome.started_bot_names.push(bot_name.clone());
-        } else if first_check_sessions.contains_key(&target_session_name) {
-            outcome
-                .failure_lines
-                .push(text::get().start_exited_soon(bot_name));
         } else {
+            log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::StartVerificationFailed {
+                    bot_name,
+                    session_seen_at_first_check: first_check_sessions
+                        .contains_key(&target_session_name),
+                })
+            );
             outcome
                 .failure_lines
-                .push(text::get().start_no_process(bot_name));
+                .push(text::get().start_failed(bot_name));
         }
     }
 
@@ -733,7 +740,7 @@ pub fn launch_command_line(
 
 /// 启动流程的取值层：只读拼命令要用的那五个字段，交给 [`launch_command_line`]。
 fn build_launch_command(log_path: &Path, fishingbot_logs_dir: &Path) -> String {
-    let settings = config::get();
+    let settings = config::Config::get();
 
     launch_command_line(
         log_path,

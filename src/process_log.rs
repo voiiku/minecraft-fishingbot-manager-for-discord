@@ -61,7 +61,7 @@ pub fn init_process_log(debug: bool) {
     log::info!(
         "{}",
         text::get().log_text(text::LogText::ConfigLoaded {
-            path: &config::path().display().to_string(),
+            path: &config::Config::get().config_file_path.display().to_string(),
         })
     );
     log::info!(
@@ -74,7 +74,7 @@ pub fn init_process_log(debug: bool) {
 
 /// 创建程序日志文件。
 fn create_process_log_file() -> Result<(PathBuf, File), String> {
-    let process_logs_dir = config::install_dir()?.join(LOG_DIR_NAME);
+    let process_logs_dir = config::Config::install_dir()?.join(LOG_DIR_NAME);
     // 首行使用当前语言。
     let first_line = text::get().log_text(text::LogText::ProcessLogFirstLine);
 

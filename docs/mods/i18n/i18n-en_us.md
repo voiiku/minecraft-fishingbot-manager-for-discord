@@ -129,14 +129,14 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
   [config.md section 3.2](../config/config-en_us.md)), so the jar speaks the same language and the two can
   no longer disagree.
 * When the language is installed decides which messages can only be bootstrap English:
-  1. `config::get_or_init()` installs once right after parsing succeeds, so config validation errors are in the configured
+  1. `config::Config::get_or_init()` installs once right after parsing succeeds, so config validation errors are in the configured
      language too;
   2. `main.rs` does not install a second time. The language is already installed in step 1, so `init_process_log()`
      starting the program log also uses the configured language. The entry point deliberately omits a second
      `install()`, because it would have no effect and would only blur "where is the language chosen";
   3. Anything sent before step 1 is fixed English: the config file is missing, cannot be read or fails to parse, the
      template cannot be generated, the executable path cannot be located, `[i18n] language` is itself wrong, and the
-     `expect` for calling `config::get()` before the config is loaded (`bootstrap::CONFIG_NOT_LOADED`). No language
+     `expect` for calling `config::Config::get()` before the config is loaded (`bootstrap::CONFIG_NOT_LOADED`). No language
      is available then, and English is the most neutral fallback. They all live in `crate::text::bootstrap`
      (alongside the language tables but not implementing `Text`). The single criterion: is this note a product of the
      config not having been read successfully.
@@ -192,7 +192,7 @@ The following text is provided through `Text` and the related enums:
 
 Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions.
 
-`Text` currently has 153 methods (including `log_text`), 27 command descriptions, plus 67 `LogText` variants and 21
+`Text` currently has 151 methods (including `log_text`), 27 command descriptions, plus 74 `LogText` variants and 20
 `ConfigRequirement` variants, all of them with a call site. You can check that yourself (the first command cuts the
 `pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so a signature written
 across lines cannot be missed - that is how `command_log_attachment_body` is written; that first command also lists
@@ -200,15 +200,15 @@ methods without a call site, and prints nothing when all is well; the last two c
 and since the `match` is exhaustive the names that appear in a language file are exactly the variants):
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 153
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 151
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
-grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 67
-grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 21
+grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 74
+grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 20
 ```
 
-The English implementation `src/text/en_us.rs` matches the Chinese one completely (153 methods, 27 command
-descriptions, 67 and 21 enum variants, not one missing: a missing method or `match` branch does not compile, a missing
+The English implementation `src/text/en_us.rs` matches the Chinese one completely (151 methods, 27 command
+descriptions, 74 and 20 enum variants, not one missing: a missing method or `match` branch does not compile, a missing
 command description fails a test). To confirm English really comes up, set `language = "ENGLISH"` in the config and
 run once; the unit test `text::tests::english_impl_is_english` asserts against the English implementation directly
 (it does not call `install`, because `OnceLock` is process-wide and installing would disturb other tests running in

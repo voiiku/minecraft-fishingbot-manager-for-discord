@@ -6,7 +6,7 @@ use crate::utils::Report;
 
 /// 返回管理员名单（名称与 Discord 用户 ID）。
 pub(crate) fn admins_list() -> String {
-    let admins = config::admins();
+    let admins = config::Config::admins();
     let i18n_text = text::get();
 
     let mut report = Report::new();

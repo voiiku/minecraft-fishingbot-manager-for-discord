@@ -181,7 +181,8 @@ what are repeated here, so that the two places cannot drift apart:
   all call `is_bot_screen_running` before touching anything; the restart flow is stricter still and drops targets with
   a missing token before it stops anything.
 * There is one exit path: SIGTERM or Ctrl+C goes through `watchdog.exit_on_shutdown_signal()`, which logs first,
-  then calls `shutdown_all_bots()` to stop every bot, and finally exits with code 0 (systemd does not restart it). A
+  stops every bot and assembles the same wrap-up as `/stopall` (it goes into the program log and is also sent to every
+  server's notice channel), and finally exits with code 0 (systemd does not restart it). A
   disconnect and `client.start()` returning no longer exit at all: they stop every bot, wait one judging window and
   rebuild the connection (see [watchdog-en_us.md section 4](../watchdog/watchdog-en_us.md)); only a wrong config (an
   invalid token, the bot not being invited to the server) exits with code 1 and is handed to systemd (the unit sets
@@ -205,15 +206,15 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   logic unit-testable.
 * Names explain themselves: action functions use verb phrases (`start_bot`); things that return a value use nouns
   (`all_running_bot_infos`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
-  `into_paths`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
+  `into_report`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
   disk use `find_*`; predicates use `is_` and `has_`; an ID is always `*_id` (`caller_id`, `owner_id`).
 * The suffix follows the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
   (`all_running_bots_status`); one-off probes or checks are `*_report` (`ping_report`, `checkserver_report`); data sent
   as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`). Only text that is already written out in
   full uses a bare noun (`help`, `whoami`).
-* Global singleton accessors share one shape: config `config::get()` and text `text::get()` both "fetch the one copy in
+* Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both "fetch the one copy in
   this process". A missing config `expect`s (that is an internal invariant); a missing language falls back to the
-  default (English, `Language::default()`). Both are installed once each by the process entry (`config::get_or_init()`
+  default (English, `Language::default()`). Both are installed once each by the process entry (`config::Config::get_or_init()`
   installs `text::install()` along the way). The watchdog takes a different route: `WATCHDOG` in
   `src/watchdog.rs` is a process-wide slot, anyone who needs it calls `WATCHDOG.get_or_init()` (the first call
   builds it from the config); poise's event callbacks are plain fn pointers that cannot capture anything, so they go

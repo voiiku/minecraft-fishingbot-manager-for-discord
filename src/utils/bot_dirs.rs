@@ -26,7 +26,7 @@ pub enum BotTokenStatus {
 /// Token 文件路径：`<机器人目录>/<runtime.token_file>`。
 /// 文件名只在这里从配置读一次，判存在与写 Token 都用它。
 pub fn token_file_path(bot_dir: &Path) -> PathBuf {
-    bot_dir.join(&config::get().runtime.token_file)
+    bot_dir.join(&config::Config::get().runtime.token_file)
 }
 
 impl BotTokenStatus {
@@ -103,7 +103,7 @@ impl BotDirEntry {
 
 /// 由已清洗的机器人名 + 归属 Discord 用户 ID，拼接获取机器人目录的理论路径（`base_dir/bots/Discord用户ID/机器人名`）。
 fn bot_dir_path(clean_bot_name: &str, owner_id: u64) -> PathBuf {
-    config::get()
+    config::Config::get()
         .paths
         .bots_dir
         .join(owner_id.to_string())
@@ -142,7 +142,7 @@ fn bot_dir_entries_in_owner_dir(
 /// 全服所有机器人目录条目，按机器人名排序。
 /// 不存在算正常空结果，错误显式提示。
 pub fn all_bot_dir_entries() -> Result<Vec<BotDirEntry>, String> {
-    let bots_dir = &config::get().paths.bots_dir;
+    let bots_dir = &config::Config::get().paths.bots_dir;
 
     // `NotFound` = 还没有任何机器人；其余读取失败才是错误。
     let owner_dir_names = match list_subdirectory_names(bots_dir) {
@@ -173,7 +173,7 @@ pub fn all_bot_dir_entries() -> Result<Vec<BotDirEntry>, String> {
 /// 传入参数必须是 [`ToCleanBotName::to_clean_bot_name`] 转过的名字。
 pub fn is_bot_name_taken(clean_bot_name: &str) -> bool {
     // 读取所有 Discord 用户 ID 的父目录 base_dir/bots。
-    let bots_dir = &config::get().paths.bots_dir;
+    let bots_dir = &config::Config::get().paths.bots_dir;
     let Ok(owner_dir_names) = list_subdirectory_names(bots_dir) else {
         return false;
     };
@@ -210,7 +210,7 @@ pub fn token_ready_bot_dir_entries() -> Result<Vec<BotDirEntry>, String> {
 
 /// 获取某个 Discord 用户 ID 下的全部机器人目录条目，按机器人名排序；该用户目录不存在时返回空列表。
 pub fn bot_dir_entries_of_owner(query_owner_id: u64) -> Result<Vec<BotDirEntry>, String> {
-    let query_dir = config::get()
+    let query_dir = config::Config::get()
         .paths
         .bots_dir
         .join(query_owner_id.to_string());

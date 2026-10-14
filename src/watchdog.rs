@@ -7,6 +7,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use poise::serenity_prelude as serenity;
+
 mod gateway;
 mod lifecycle;
 
@@ -33,6 +35,9 @@ pub struct Watchdog {
     offline_since: Mutex<Option<(String, std::time::SystemTime)>>,
     /// 判定侧交给进程入口的掉线原因：入口收尾时取走（见 [`Watchdog::request_reconnect`]）。
     pending_disconnect_reason: Mutex<Option<String>>,
+    /// 最近一次握手时拿到的 Discord 上下文：收到退出信号时的收尾靠它把结果发到各服务器
+    /// （掉线与永久错误那两条收尾不发：那时连接已经不可用）。
+    notice_ctx: Mutex<Option<serenity::Context>>,
 }
 
 /// 进程内唯一的那一份看门狗：谁要谁调 `WATCHDOG.get_or_init()`（首次调用按配置建）。
@@ -53,7 +58,7 @@ impl WatchdogSlot {
     /// 取进程内唯一的那一份看门狗：首次调用按配置 `[timing]` 建，之后拿到的都是它。
     ///
     /// 只在 `static` 上调用：要交出 `'static` 的那一份，槽位自己得活满整个进程。
-    /// 另外要在 `config::get_or_init()` 之后调：首次调用会读配置。
+    /// 另外要在 `config::Config::get_or_init()` 之后调：首次调用会读配置。
     pub fn get_or_init(&'static self) -> &'static Watchdog {
         self.0.get_or_init(|| Watchdog::from_config(Instant::now()))
     }
@@ -63,7 +68,7 @@ impl Watchdog {
     /// 按配置中的 `[timing]` 创建看门狗。
     /// 探活间隔与首次握手超时由判定窗口派生，见 [`crate::config::TimingConfig`]。
     fn from_config(started: Instant) -> Self {
-        let timing = &crate::config::get().timing;
+        let timing = &crate::config::Config::get().timing;
         Self::new(
             started,
             timing.watchdog_window(),
@@ -90,6 +95,7 @@ impl Watchdog {
             reconnect_signal: tokio::sync::Notify::new(),
             offline_since: Mutex::new(None),
             pending_disconnect_reason: Mutex::new(None),
+            notice_ctx: Mutex::new(None),
         }
     }
 

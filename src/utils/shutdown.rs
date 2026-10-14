@@ -23,14 +23,10 @@ use super::screen::{
 /// 实现了根据自身状态，获取相应回复/文案的方法，必须由外部显式调用（工具函数层不返回成品报告）。
 #[derive(Debug, Default)]
 pub(crate) struct StopOutcome {
-    /// 停止前正在运行的机器人数量。
-    pub(crate) running_bot_count: usize,
     /// 确认已停止的机器人名。
     pub(crate) stopped_bot_names: Vec<String>,
     /// 停止后仍在运行的机器人名。
     pub(crate) still_running_bot_names: Vec<String>,
-    /// 扫描到但原本未运行的机器人。
-    pub(crate) not_running_bot_entries: Vec<BotDirEntry>,
     /// 执行过程中的错误信息。
     pub(crate) failure_lines: Vec<String>,
 }
@@ -62,15 +58,7 @@ impl StopOutcome {
 
         let i18n_text = text::get();
         report.set_counts(&[
-            (
-                i18n_text.count_scanned_dirs(),
-                self.running_bot_count + self.not_running_bot_entries.len(),
-            ),
             (i18n_text.count_stopped(), self.stopped_bot_names.len()),
-            (
-                i18n_text.count_skipped_not_running(),
-                self.not_running_bot_entries.len(),
-            ),
             (
                 i18n_text.count_stop_failed(),
                 self.still_running_bot_names.len() + self.failure_lines.len(),
@@ -82,12 +70,6 @@ impl StopOutcome {
             .stopped_bot_names
             .iter()
             .map(|bot_name| i18n_text.stop_succeeded_line(bot_name))
-            .collect();
-
-        report.skipped = self
-            .not_running_bot_entries
-            .iter()
-            .map(|bot_dir_entry| i18n_text.stop_skipped_not_running(&bot_dir_entry.bot_name))
             .collect();
 
         for bot_name in &self.still_running_bot_names {
@@ -102,37 +84,25 @@ impl StopOutcome {
 /// 停止全部运行中的机器人，包含 Token 已失效的孤儿进程。
 /// 用于 `/stopall` 与进程退出收尾。只返回原始明细（[`StopOutcome`]），报告由调用方拼装。
 pub fn stop_all_bot_sessions() -> Result<StopOutcome, String> {
-    let (running_bot_entries, not_running_bot_entries) =
-        split_bot_entries_by_is_running(&all_bot_dir_entries()?);
-    Ok(stop_bot_sessions(
-        &running_bot_entries,
-        not_running_bot_entries,
-    ))
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(&all_bot_dir_entries()?);
+    Ok(stop_bot_sessions(&running_bot_entries))
 }
 
 /// 停止单个机器人对应的会话（`/stop` 用）。
 /// 调用方负责先确认该会话确实在运行，并把已鉴权的条目传进来；同样只返回原始明细。
 pub fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> StopOutcome {
-    stop_bot_sessions(&[bot_dir_entry], Vec::new())
+    stop_bot_sessions(&[bot_dir_entry])
 }
 
 /// 停止一批会话：发送 Ctrl+C 等待 JVM 正常退出，超时强杀，最后复核一次。
 ///
 /// 这是所有停止入口的唯一实现（`/stop`、`/stopall`、重启的停止阶段、进程收尾）。
-/// `entries_to_stop` 是要停的那批；`not_running_entries` 只是顺带带进报告
-/// （算「原本未运行，无需停止」），不参与任何停止动作 —— 传它进来是为了让报告里的
-/// 「扫描机器人目录」总数说得通。两种等待都自己读配置：正常退出等待（`stop_grace_ms`）
+/// `entries_to_stop` 是要停的那批（原本未运行的机器人不必传进来：报告只报停止的成功与失败）。
+/// 两种等待都自己读配置：正常退出等待（`stop_grace_ms`）
 /// 与注销缓冲（`stop_settle_ms`）都在本模块。
 /// 这两个键名不带 `batch_` 前缀，因为它们同时服务单机与批量（单机就是一片元素的切片）。
-pub(crate) fn stop_bot_sessions(
-    entries_to_stop: &[BotDirEntry],
-    not_running_entries: Vec<BotDirEntry>,
-) -> StopOutcome {
-    let mut outcome = StopOutcome {
-        running_bot_count: entries_to_stop.len(),
-        not_running_bot_entries: not_running_entries,
-        ..Default::default()
-    };
+pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> StopOutcome {
+    let mut outcome = StopOutcome::default();
 
     if entries_to_stop.is_empty() {
         return outcome;
@@ -163,7 +133,9 @@ pub(crate) fn stop_bot_sessions(
         }
     }
 
-    thread::sleep(Duration::from_millis(config::get().timing.stop_grace_ms));
+    thread::sleep(Duration::from_millis(
+        config::Config::get().timing.stop_grace_ms,
+    ));
 
     // 还没退出的强杀（先发信号的那批是同时等的，所以这里只看一次快照）。
     let still_alive_sessions = active_screen_sessions();
@@ -177,7 +149,9 @@ pub(crate) fn stop_bot_sessions(
     }
 
     // 3. 留出会话注销时间，再复核一次，确认账号已释放。
-    thread::sleep(Duration::from_millis(config::get().timing.stop_settle_ms));
+    thread::sleep(Duration::from_millis(
+        config::Config::get().timing.stop_settle_ms,
+    ));
     let final_sessions = active_screen_sessions();
     for (bot_name, target_session_name) in &target_sessions {
         if final_sessions.contains_key(target_session_name) {

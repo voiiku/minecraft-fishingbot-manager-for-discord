@@ -9,7 +9,7 @@ pub(super) const TEMPLATE: &str =
     include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
 
 /// 配置不存在时写入模板；已存在时不覆盖。返回是否新建。
-pub(super) fn write_if_missing(path: &Path) -> Result<bool, String> {
+pub(super) fn create_config_file_when_missing(path: &Path) -> Result<bool, String> {
     if path.exists() {
         return Ok(false);
     }
@@ -49,7 +49,7 @@ mod tests {
     fn writes_template_when_missing() {
         let path = temp_config_path("missing");
 
-        let created = write_if_missing(&path).expect("生成模板失败");
+        let created = create_config_file_when_missing(&path).expect("生成模板失败");
         let written = std::fs::read_to_string(&path).expect("读取生成的模板失败");
 
         assert!(created, "文件不存在时应当新建");
@@ -62,7 +62,7 @@ mod tests {
         let path = temp_config_path("existing");
         std::fs::write(&path, "使用者自己写的配置").expect("写入测试文件失败");
 
-        let created = write_if_missing(&path).expect("已存在的文件不应报错");
+        let created = create_config_file_when_missing(&path).expect("已存在的文件不应报错");
         let content = std::fs::read_to_string(&path).expect("读取失败");
 
         assert!(!created, "文件已存在时不应重建");
@@ -75,7 +75,7 @@ mod tests {
         // 临时目录已清理，父目录不存在。
         let path = temp_test_dir("template-absent").join(crate::config::CONFIG_FILE_NAME);
 
-        let err = write_if_missing(&path).expect_err("目录不存在时应当报错");
+        let err = create_config_file_when_missing(&path).expect_err("目录不存在时应当报错");
 
         // 引导期文案固定为英文。
         assert!(

@@ -2,8 +2,9 @@
 
 use crate::text;
 
+use super::Config;
 use super::schema::{
-    Admins, CommandEchoConfig, Config, DiscordConfig, FishingBotConfig, I18nConfig, KeywordsConfig,
+    Admins, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig, KeywordsConfig,
     MAX_AUTOCOMPLETE_CHOICES, Paths, PingConfig, RawGameLogsConfig, RuntimeConfig,
     StartupQueueConfig, TextConfig, TimingConfig,
 };
@@ -49,7 +50,7 @@ fn invalid_value(
     })
 }
 
-/// 检查必填字符串（值已在 `parse` 里去过两头的空白，这里只判空）。
+/// 检查必填字符串（值已在 `parse.rs` 里去过两头的空白，这里只判空）。
 fn require_non_empty(field: impl std::fmt::Display, value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err(invalid(field, text::ConfigRequirement::NonEmpty));
@@ -392,8 +393,8 @@ fn is_mc_version_string(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::parse;
-    use std::path::{Path, PathBuf};
+
+    use std::path::PathBuf;
 
     /// 配置示例；测试只依赖其结构。
     const EXAMPLE: &str =
@@ -468,11 +469,8 @@ mod tests {
     }
 
     /// 跑一遍 `load_from` 的核心流程：解析 + 校验。
-    fn load_text(text: &str, config_dir: &Path) -> Result<Config, String> {
-        let config = parse::parse(
-            text,
-            &config_dir.join("minecraft-fishingbot-manager-for-discord.conf.toml"),
-        )?;
+    fn load_text(text: &str) -> Result<Config, String> {
+        let config = Config::from_toml_text(text)?;
         validate(&config)?;
         Ok(config)
     }
@@ -482,7 +480,7 @@ mod tests {
     fn example_config_passes_validation() {
         let (dir, text) = staged_example("ok");
 
-        let config = load_text(&text, &dir).expect("示例配置应当通过校验");
+        let config = load_text(&text).expect("示例配置应当通过校验");
         assert_eq!(config.paths.base_dir, dir);
         assert!(config.paths.jar.is_file());
 
@@ -496,7 +494,7 @@ mod tests {
 
         for value in ["0", "26"] {
             let text = set_field(&text, "max_autocomplete_choices", value);
-            let error = load_text(&text, &dir).expect_err("超出 1..=25 的候选上限应当被拒绝");
+            let error = load_text(&text).expect_err("超出 1..=25 的候选上限应当被拒绝");
             assert!(
                 error.contains("runtime.max_autocomplete_choices"),
                 "报错应指出字段名: {error}"
@@ -514,7 +512,7 @@ mod tests {
         let missing = dir.join("not-there").to_string_lossy().replace('\\', "/");
         let text = set_field(&text, "base_dir", &format!("\"{missing}\""));
 
-        let err = load_text(&text, &dir).expect_err("目录不存在应当报错");
+        let err = load_text(&text).expect_err("目录不存在应当报错");
 
         assert!(err.contains("paths.base_dir"), "报错应指出字段: {err}");
         // 措辞断言钉默认语言（英语）的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
@@ -531,7 +529,7 @@ mod tests {
         let (dir, text) = staged_example("java-opts");
         let text = set_field(&text, "java_opts", "\"-Xmx128m; rm -rf /\"");
 
-        let err = load_text(&text, &dir).expect_err("危险字符应当报错");
+        let err = load_text(&text).expect_err("危险字符应当报错");
 
         assert!(err.contains("runtime.java_opts"), "报错应指出字段: {err}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -544,7 +542,7 @@ mod tests {
         // 把 /unpause 的回显改成与 /pause 那句一样：这正是抄错一行时的样子。
         let text = set_field(&text, "unpause_echo", "\"Fishing paused\"");
 
-        let err = load_text(&text, &dir).expect_err("两条回显相同应当报错");
+        let err = load_text(&text).expect_err("两条回显相同应当报错");
 
         assert!(
             err.contains("command_echo.unpause_echo"),
@@ -564,7 +562,7 @@ mod tests {
         let (dir, text) = staged_example("screen-prefix");
         let text = set_field(&text, "screen_prefix", "\"fb _\"");
 
-        let err = load_text(&text, &dir).expect_err("空白字符应当报错");
+        let err = load_text(&text).expect_err("空白字符应当报错");
 
         assert!(
             err.contains("runtime.screen_prefix"),
@@ -579,7 +577,7 @@ mod tests {
         let (dir, text) = staged_example("max-log-lines");
         let text = set_field(&text, "max_log_lines", "0");
 
-        let err = load_text(&text, &dir).expect_err("0 应当报错");
+        let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
             err.contains("runtime.max_log_lines"),
@@ -594,7 +592,7 @@ mod tests {
         let (dir, text) = staged_example("ping-timeout");
         let text = set_field(&text, "timeout_ms", "0");
 
-        let err = load_text(&text, &dir).expect_err("0 应当报错");
+        let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(err.contains("ping.timeout_ms"), "报错应指出字段: {err}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -607,7 +605,7 @@ mod tests {
         // 用一个确实没实现的取值：`GERMAN` 是 jar 认识的语言，但本项目没写德语文案。
         let text = set_field(&text, "language", "\"GERMAN\"");
 
-        let err = load_text(&text, &dir).expect_err("不认识的语言应当报错");
+        let err = load_text(&text).expect_err("不认识的语言应当报错");
 
         assert!(err.contains("i18n.language"), "报错应指出字段: {err}");
         assert!(err.contains("ENGLISH"), "报错应列出可选值: {err}");
@@ -624,7 +622,7 @@ mod tests {
         let (dir, text) = staged_example("zero-watchdog-window");
         let text = set_field(&text, "watchdog_window_ms", "0");
 
-        let err = load_text(&text, &dir).expect_err("0 应当报错");
+        let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
             err.contains("timing.watchdog_window_ms"),
@@ -639,7 +637,7 @@ mod tests {
         let (dir, text) = staged_example("zero-settle-per-bot");
         let text = set_field(&text, "settle_per_bot_ms", "0");
 
-        let err = load_text(&text, &dir).expect_err("0 应当报错");
+        let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
             err.contains("timing.settle_per_bot_ms"),
@@ -659,7 +657,7 @@ mod tests {
             let (dir, text) = staged_example(tag);
             let text = set_startup_queue_field(&text, field, "0");
 
-            let err = load_text(&text, &dir).expect_err("启动队列设置为 0 应当报错");
+            let err = load_text(&text).expect_err("启动队列设置为 0 应当报错");
 
             assert!(
                 err.contains(&format!("startup_queue.{field}")),
@@ -683,7 +681,7 @@ mod tests {
         );
     }
 
-    /// 管理员的名字不能是空的，否则 /show admins 会很难看（全空白的名字在 `parse` 里已经被去成空串，
+    /// 管理员的名字不能是空的，否则 /show admins 会很难看（全空白的名字在 `parse.rs` 里已经被去成空串，
     /// 所以进到 `validate` 的只可能是空串）。
     #[test]
     fn admin_name_must_not_be_empty() {

@@ -74,7 +74,7 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
   随仓库发布的示例配置是两次登录至少间隔 20 秒（`[startup_queue] login_interval_ms`），可自行调整
   `max_batch_size` 与 `login_interval_ms`；机制、真实登录间隔的算法与推荐取值见第 12 节。
 * 批量启动的瞬时内存峰值可能超过服务器可用内存，被杀掉的进程不会出现在 `screen -list` 里，所以结果里会
-  显示"启动指令已发送，但进程不存在（通常是内存不足）"。缓解办法：把配置中的 `runtime.java_opts` 内存
+  显示"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。缓解办法：把配置中的 `runtime.java_opts` 内存
   配额调小，或把 `timing.settle_per_bot_ms` 与 `[startup_queue] login_interval_ms` 调大，或稍后重试（JVM
   内存占用会随时间下降）。
 

@@ -100,7 +100,7 @@ fn connection_status_of_log(
         return Err(text::get().bot_status_log_not_found(bot_name));
     };
 
-    let online_keyword = &config::get().keywords.online;
+    let online_keyword = &config::Config::get().keywords.online;
     // 记下最新的结论，初始为无结论。
     let mut connection: Option<ConnectionStatus> = None;
 
@@ -272,7 +272,7 @@ impl PauseCommand {
 
     /// 这条命令的回显关键词：来自配置 `[command_echo]`（只有本项目用的那份补丁 jar 打印这两句，
     /// 上游原版没有这两条指令）。
-    /// 吃 `&CommandEchoConfig` 而不是自己调 `config::get()`，是为了让"最后一条回显是谁的"能单测。
+    /// 吃 `&CommandEchoConfig` 而不是自己调 `config::Config::get()`，是为了让"最后一条回显是谁的"能单测。
     fn echo_keyword(self, command_echo: &config::CommandEchoConfig) -> &str {
         match self {
             Self::SetPause => &command_echo.pause_echo,
@@ -326,17 +326,19 @@ pub fn confirm_pause_command(
 ) -> Result<bool, String> {
     inject()?;
 
-    thread::sleep(Duration::from_millis(config::get().command_echo.wait_ms));
+    thread::sleep(Duration::from_millis(
+        config::Config::get().command_echo.wait_ms,
+    ));
 
     // 回显一定落在最新一份日志的末尾；没有合法日志就是错误
     //（这时指令已经发出去了，调用方只能说"发了但没确认到"）。
     let Some(log_path) = latest_log_path(&bot_dir_entry.bot_dir_path) else {
         return Err(text::get().bot_status_log_not_found(&bot_dir_entry.bot_name));
     };
-    let recent_lines = read_last_lines(&log_path, config::get().command_echo.scan_lines)?;
+    let recent_lines = read_last_lines(&log_path, config::Config::get().command_echo.scan_lines)?;
 
     // 最新的回显决定这次调用的结果
-    let command_echo = &config::get().command_echo;
+    let command_echo = &config::Config::get().command_echo;
     match PauseCommand::last_confirmed_pause_command(&recent_lines, pause_command, command_echo) {
         Some(confirmed_pause_command) if confirmed_pause_command == pause_command => {
             bot_dir_entry

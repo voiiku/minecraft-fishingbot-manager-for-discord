@@ -1,7 +1,8 @@
 # The config file
 [简体中文](config-zh_cn.md) | **English**
 
-* Code: `src/config.rs` and `src/config/{schema,parse,validate,template}.rs`
+* Code: `src/config.rs` (the runtime `Config` and its accessors) and `src/config/{schema,parse,validate,template}.rs`
+  (the tables and the file shape of `[paths]`, parsing, validation, the template)
 * File: `minecraft-fishingbot-manager-for-discord.conf.toml` next to the executable (the name is fixed by
   `CONFIG_FILE_NAME` and cannot be changed)
 * It deliberately ignores the working directory and reads no environment variables: put the binary and the config
@@ -10,15 +11,16 @@
 
 ## 1. Load flow (the very beginning of startup)
 
-1. `config::get_or_init()` locates the config file path.
+1. `config::Config::get_or_init()` locates the config file path.
 2. When the file does not exist, one is generated from the repository's
    `minecraft-fishingbot-manager-for-discord.conf.example.toml`: writing the template and printing the note both happen
-   inside this call, and `LoadOutcome::TemplateGenerated` is returned, so the caller exits normally without touching
-   Discord.
-3. When the file exists, its text is read. `parse` first parses the TOML into a value tree and recursively trims every
-   string value, then uses Serde's `Deserialize` implementation to map the values into `FileConfig` (the only cleanup
-   in the whole chain); `into_config` then expands and checks paths and constructs the runtime `Config`. Parsing and
-   conversion do not apply every configuration rule.
+   inside this call, and the process then exits right there with code 0, without touching Discord. When the file does
+   exist, the path it found is printed to the terminal before continuing (no logger is installed at this point, so the
+   terminal is the only place; the `config loaded: ...` line in the program log comes from `init_process_log`).
+3. When the file exists, its text is read. `Config::from_toml_text` parses the TOML into a value tree, recursively trims
+   every string value and maps the result straight into the runtime `Config` with Serde's `Deserialize` implementation
+   (the only cleanup in the whole chain); the three keys of `[paths]` are expanded into paths rooted at `base_dir` by
+   `Paths`'s own `Deserialize` implementation. Parsing and conversion do not apply every configuration rule.
 4. `validate` checks field values, ranges and the runtime environment (for example required values, port ranges, and
    whether the configured directory and JAR exist).
 5. Any failing step exits with an error shaped as "config entry + field name + requirement"; the process never runs
@@ -26,15 +28,15 @@
 6. On success the config is written into a `OnceLock`: read once at startup, kept in memory. Editing the config file
    while the process runs does not affect it; restart the process to make the new config take effect.
 
-Surrounding whitespace of string values is removed in `parse`: a stray space or an indented line break never reaches
+Surrounding whitespace of string values is removed in `Config::from_toml_text`: a stray space or an indented line break never reaches
 the code, so everyone reading the config (`main.rs`, the business layer and similar entry points) passes the value
 as-is and never calls `trim()` itself. To really keep surrounding whitespace, write the escape (in TOML, `"\u0020"`).
 
-Deserialization relies on `#[derive(Deserialize)]` on `FileConfig` and its field types. Serde maps TOML table and key
+Deserialization relies on `#[derive(Deserialize)]` on `Config` and its field types. Serde maps TOML table and key
 names to the corresponding struct fields; a type mismatch, a missing required field or an unknown field returns a
 parse error. There are **no in-code defaults**: every table and every field must be present in the file, so a missing
-key or a typo fails at startup instead of being silently filled in. Path fields are converted by `into_config` into
-runtime paths rooted at `base_dir`; the later `validate` step handles the remaining value rules.
+key or a typo fails at startup instead of being silently filled in. Path fields are converted by `Paths`'s own
+`Deserialize` implementation into runtime paths rooted at `base_dir` (`bots_dir` is derived in code); the later `validate` step handles the remaining value rules.
 
 After the config is read and before anything else, the process entry also **generates the game-side config** from
 `[fishingbot]` (FishingBot's `conf.json`, at the path from `paths.fishingbot_config_file_name`): the old file is
@@ -44,19 +46,24 @@ everything else (an `ERROR` record and exit code 1). Why it is a generated file,
 
 ## 2. Public interface
 
-* `get_or_init()`: fetch the config, the process entry's only entry point. The first call locates, reads, parses and
-  validates it; later calls return that same copy. It returns `Loaded(&Config)` or `TemplateGenerated`: the latter means
-  the template was written and the note was printed, so the caller exits normally, and at that point the config is not
-  loaded yet, so do not call `path()`.
-* `get()`: the loaded `Config`.
-* `path()`: the config file path this run uses.
-* `admins()`: the admin table (short for `get().admins`).
-* `install_dir()`: the deployment directory (where the executable is). The config and the program log live there.
+These are all associated functions on `Config` (the module has no free accessor functions; the runtime `Config` is
+defined in this file), so the process entry is a single line, `let settings = config::Config::get_or_init();`:
 
-`get()` and `path()` panic while nothing is loaded, with the text from `text::bootstrap::CONFIG_NOT_LOADED` (an
-internal invariant message: no language is installed yet, so it is fixed English). The first thing the process entry
-does is `get_or_init()`, so a panic here means the call order is wrong. The path and the contents live in the same
-`Settings`, so "is it loaded" has exactly one answer.
+* `Config::get_or_init()`: fetch the config, the process entry's only entry point. The first call locates, reads,
+  parses and validates it; later calls return that same `&'static Config`. A generated template (with its note already
+  printed) exits right there with code 0, and an invalid config reports the error and exits with code 1 - both failure
+  paths end the process inside the function, so what it returns is always a usable config and the caller never checks a
+  result.
+* `Config::get()`: the loaded `Config`.
+* `Config::config_file_path`: the config file path this run uses (computed once at load time from the executable's
+  location, and kept in the struct).
+* `Config::admins()`: the admin table (short for `Config::get().admins`).
+* `Config::install_dir()`: the deployment directory (where the executable is). The config and the program log live there.
+
+`Config::get()` panics while nothing is loaded, with the text from `text::bootstrap::CONFIG_NOT_LOADED` (an internal
+invariant message: no language is installed yet, so it is fixed English). The first thing the process entry does is
+`Config::get_or_init()`, so a panic here means the call order is wrong. The config file path is a field of `Config`
+(computed once at load time), so "is it loaded" still has exactly one answer: that single `OnceLock<Config>`.
 
 ## 3. Table structure
 
@@ -277,7 +284,7 @@ In code there is one `Config` plus one struct per TOML table (`Config::ping`, `r
 one more layer, but to keep the name identical in three places:
 
 * the key in the config file: `logs_dir` under the `[runtime]` table;
-* the way the code reads it: `config::get().runtime.logs_dir`;
+* the way the code reads it: `config::Config::get().runtime.logs_dir`;
 * a startup validation error: `配置项 runtime.logs_dir 不能为空`.
 
 Before flattening the structs into one big struct of concrete fields, you have to decide what happens to the TOML
@@ -297,10 +304,10 @@ tables, and none of the three ways pays off:
   become macro arguments and `cargo doc` no longer shows the explanations we have now - a bad trade for a project
   where the config is the documentation.
 
-So the conclusion is to keep the tables: the dotted layer after `config::get()` is an acceptable cost, and what it
+So the conclusion is to keep the tables: the dotted layer after `config::Config::get()` is an acceptable cost, and what it
 buys is exactly "file key name equals struct path equals validation error". What is more, "read once at startup, then
-read fields directly" already holds: `get_or_init()` writes the config into a `OnceLock` at the very beginning, and every
-later `config::get()` is a memory read with no IO.
+read fields directly" already holds: `Config::get_or_init()` writes the config into a `OnceLock` at the very beginning, and every
+later `config::Config::get()` is a memory read with no IO.
 
 ## 8. Related documents
 

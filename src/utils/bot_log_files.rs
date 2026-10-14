@@ -77,7 +77,7 @@ pub fn create_timestamped_log_file(
 
 /// 由机器人文件夹路径，获取机器人日志文件夹路径（日志目录名只在这里从配置读一次）。
 pub(crate) fn bot_logs_dir(bot_dir: &Path) -> PathBuf {
-    target_logs_dir(bot_dir, &config::get().runtime.logs_dir)
+    target_logs_dir(bot_dir, &config::Config::get().runtime.logs_dir)
 }
 
 /// 在开始一次机器人运行流程前新建日志文件：`<机器人目录>/<runtime.logs_dir>/时间戳.log`。

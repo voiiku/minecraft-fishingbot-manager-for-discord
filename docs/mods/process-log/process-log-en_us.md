@@ -78,7 +78,7 @@ degraded decision onto the caller would only make every call site repeat the sam
 ## 5. When it is called
 
 It must be called before the poise `Framework` is assembled and before anything else logs; the order is in
-`src/main.rs` (`config::get_or_init()`, `init_process_log`, then build the `Framework`/`Client` and call `client.start()`).
+`src/main.rs` (`config::Config::get_or_init()`, `init_process_log`, then build the `Framework`/`Client` and call `client.start()`).
 When the config fails to load there is no log file yet, so those few
 notes only appear in the terminal. Only three places still write without the logger: the template note in
 `src/config.rs` (stdout), and the two warnings for when the log itself fails (`src/process_log.rs`: stdout when the

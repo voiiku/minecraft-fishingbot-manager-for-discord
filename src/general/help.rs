@@ -10,7 +10,7 @@ use crate::utils::Report;
 pub(crate) fn help() -> String {
     let mut report = Report::new();
     report.set_title(text::get().help_title());
-    report.content = Some(config::get().text.help.clone());
+    report.content = Some(config::Config::get().text.help.clone());
 
     report.render()
 }

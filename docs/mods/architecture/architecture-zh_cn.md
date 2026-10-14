@@ -162,8 +162,9 @@ src/
   账号的孤儿 JVM。
 * 运行中不许动的动作先查会话：`/token`、`/bot del`、`/bot rename` 在真正动手前都先
   `is_bot_screen_running`；重启流程更严，它在停止之前就剔掉缺 Token 的目标。
-* 退出只有一条路径：收到 SIGTERM 或 Ctrl+C 时走 `watchdog.exit_on_shutdown_signal()`，先记日志，
-  再 `shutdown_all_bots()` 停掉全部机器人，最后以退出码 0 退出（systemd 不重拉）。掉线与
+* 退出只有一条路径：收到 SIGTERM 或 Ctrl+C 时走 `watchdog.exit_on_shutdown_signal()`，先记日志，再停掉全部
+  机器人、就地拼一份与 `/stopall` 同口径的收尾报告（报告进程序日志，此外还发到各服务器的通报频道），最后以
+  退出码 0 退出（systemd 不重拉）。掉线与
   `client.start()` 返回都不再退出，而是停全部机器人、等一个判定窗口、重建连接（见
   [watchdog.md 第 4 节](../watchdog/watchdog-zh_cn.md)）；只有配置写错（Token 无效、机器人没被邀请进服务器）才以退出码
   1 退出，交给 systemd（单元里配 `RestartPreventExitStatus=1`，这类错误不重拉）。
@@ -183,16 +184,16 @@ src/
 * 框架只出现在命令层与进程入口：业务层与 `lib.rs` 不引用 serenity 与 poise，只吃普通参数、返回
   `Result<String, String>`，这样业务逻辑能单测。
 * 命名自解释：动作函数用动词短语（`start_bot`）；取返回值用名词（`all_running_bot_infos`，没有
-  `get_` 前缀）；转换用 `to_` 与 `into_` 前缀（`to_clean_bot_name`、`into_paths`，消费 `self` 的用
+  `get_` 前缀）；转换用 `to_` 与 `into_` 前缀（`to_clean_bot_name`、`into_report`，消费 `self` 的用
   `into_`、其余用 `to_`，clippy 也这么认）；需要磁盘查找的构造用 `find_*`；判断用 `is_` 与 `has_`；
   ID 一律叫 `*_id`（`caller_id`、`owner_id`）。
 * 按返回形态带后缀：列表用 `*_list`（`my_bots_list`）；状态表用 `*_status`
   （`all_running_bots_status`）；一次性探测或检查用 `*_report`（`ping_report`、
   `checkserver_report`）；当附件发出去的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。只有
   整段已经写好的文本用裸名词（`help`、`whoami`）。
-* 全局单例访问器同名：配置 `config::get()`、文案 `text::get()`，都是"取进程内那一份"。配置没装就 `expect`
+* 全局单例访问器同名：配置 `config::Config::get()`、文案 `text::get()`，都是"取进程内那一份"。配置没装就 `expect`
   panic（那是内部不变量）；文案没装则回落到默认语言（英语，`Language::default()`）。这两个由进程入口各装
-  一次（`config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs` 里的 `WATCHDOG` 是
+  一次（`config::Config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs` 里的 `WATCHDOG` 是
   进程级槽位，谁要谁调一次 `WATCHDOG.get_or_init()`（首次按配置建）；事件回调只收函数指针、捕获不了闭包，
   所以它们也走同一个入口拿同一份；其余方法都吃 `&self`。
 * 文件内的顺序固定：模块文档（`//!`）、`mod` 声明、`use`、对外转出（`pub use`）、常量与类型与函数；

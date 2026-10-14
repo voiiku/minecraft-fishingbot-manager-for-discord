@@ -66,8 +66,9 @@ and ACK machinery (the protocol guarantees it); we must not and cannot reimpleme
 The judgement is `gateway.rs`; the cleanup and the rebuild are `src/watchdog/lifecycle.rs`. The division is "the
 judging side only judges and wakes; every visible action (stopping, recording, logging, exiting) lives on the
 entry-point side" - its actions are `wait_for_attempt()` (wait for this attempt to end and clean up a
-disconnect), `wait_before_reconnect()` (wait out one judging window) and `exit_on_shutdown_signal()` (stop the bots
-and exit with code 0 after a shutdown signal).
+disconnect), `wait_before_reconnect()` (wait out one judging window) and `exit_on_shutdown_signal()` (assemble the
+same details as `/stopall` on the spot, log them under the title "shutdown signal received, wrap-up", send them to
+every server's notice channel, then exit with code 0 after a shutdown signal).
 
 1. The judging side: a lost verdict leads to `request_reconnect(reason)`, which stores the reason on the watchdog
    and wakes the process entry (a `tokio::Notify`); it does not touch the bots itself.
@@ -117,6 +118,18 @@ It lands in that server's system channel, or in its first text channel when ther
 and a server it cannot reach only leaves a warning without affecting the others. (Want the bots running again after
 such a notice? Send `/startall`.) The notice also goes into the program log (`ReconnectedAfterOffline`: how many
 servers it was sent to, and how many failed).
+
+### The wrap-up when an exit signal arrives
+
+The details `exit_on_shutdown_signal()` assembles (the same as `/stopall`) go into the program log first and are then
+sent to every server by the same channel rule (the system channel, else the first text channel)
+(`ShutdownReportNotified`: how many servers it went to, how many failed; a connection that never handshaked only gets
+the log, through `ShutdownReportNoContext`). The disconnect and permanent-failure wrap-ups send nothing: the
+connection is already unusable, so a send could not succeed.
+
+The send has a 30-second overall limit (`SHUTDOWN_REPORT_TIMEOUT`): ones already delivered are unaffected, the rest is
+dropped (logged as `ShutdownReportTimeout`) and the process exits as usual; the report is not stored anywhere, so the
+next startup does not resend it.
 
 ## 5. Common problems
 

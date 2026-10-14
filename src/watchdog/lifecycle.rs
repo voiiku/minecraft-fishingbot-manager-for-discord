@@ -1,12 +1,16 @@
 //! 一次连接尝试的结束方式，以及随之而来的进程级收尾（停机、重连、退出）。
 
+use std::time::Duration;
+
 use poise::serenity_prelude as serenity;
 
-use crate::all_bots_control::stop_all_bots_for_shutdown;
 use crate::text;
-use crate::utils::IntoReplyText;
 
 use super::Watchdog;
+
+/// 退出信号收尾把报告发到各服务器的总时限：到点还没发完就不再发（已发出的不受影响）、直接退出；
+/// 这份报告不落盘，下次启动也不补发。
+const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 这一次尝试是怎么结束的（仅本模块内部用）：只有尝试结束了才有它；正常运行时三个分支谁都不发生，
 /// [`Watchdog::wait_for_attempt`] 会一直挂着。变体名说明"是谁结束了它"。
@@ -24,7 +28,14 @@ enum AttemptEnding {
 impl Watchdog {
     /// 停止全部机器人，供进程退出时调用。
     pub fn shutdown_all_bots(&self) -> String {
-        stop_all_bots_for_shutdown().to_reply_text()
+        match crate::utils::stop_all_bot_sessions() {
+            Ok(outcome) => {
+                let mut report = outcome.into_report();
+                report.set_title(text::get().log_text(text::LogText::ShutdownReportTitle));
+                report.render()
+            }
+            Err(message) => message,
+        }
     }
 
     /// 不可恢复错误：停止机器人并以退出码 1 结束进程。
@@ -71,10 +82,88 @@ impl Watchdog {
     }
 
     /// 收到退出信号后的收尾：记日志、停掉全部机器人，然后以 0 结束进程（正常退出，systemd 不会重拉）。
-    pub fn exit_on_shutdown_signal(&self) -> ! {
+    pub async fn exit_on_shutdown_signal(&self) -> ! {
         log::info!("{}", text::get().log_text(text::LogText::ShutdownSignal));
-        log::info!("{}", self.shutdown_all_bots());
+
+        let report = match crate::utils::stop_all_bot_sessions() {
+            Ok(outcome) => {
+                let mut report = outcome.into_report();
+                report.set_title(text::get().log_text(text::LogText::ShutdownSignalReportTitle));
+                report.render()
+            }
+            Err(message) => {
+                log::warn!("{message}");
+                message
+            }
+        };
+        log::info!("{report}");
+
+        // 只有这一条收尾发频道：掉线与永久错误那两条收尾只写日志，那时连接已经不可用，发也发不出去。
+        // 发送有总时限：超时就跳过，不让退出卡在这里（详情见 SHUTDOWN_REPORT_TIMEOUT）。
+        if tokio::time::timeout(SHUTDOWN_REPORT_TIMEOUT, self.send_shutdown_report(&report))
+            .await
+            .is_err()
+        {
+            log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::ShutdownReportTimeout {
+                    seconds: SHUTDOWN_REPORT_TIMEOUT.as_secs(),
+                })
+            );
+        }
+
         std::process::exit(0);
+    }
+
+    /// 把收尾报告发到本机器人所在每个服务器的通报频道：没握手过就只写日志，发不出去的服务器只留一条告警。
+    async fn send_shutdown_report(&self, report: &str) {
+        let ctx = self
+            .notice_ctx
+            .lock()
+            .expect("发送收尾报告时，看门狗的 notice_ctx 字段的互斥锁被占用")
+            .clone();
+        let Some(ctx) = ctx else {
+            log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::ShutdownReportNoContext)
+            );
+            return;
+        };
+
+        let mut notified = 0usize;
+        let mut failed = 0usize;
+        for guild_id in ctx.cache.guilds() {
+            let guild_name = ctx
+                .cache
+                .guild(guild_id)
+                .map(|guild| guild.name.clone())
+                .unwrap_or_else(|| guild_id.to_string());
+
+            let Some(channel_id) = choose_notice_channel(&ctx, guild_id) else {
+                failed += 1;
+                log_when_shutdown_report_failed(
+                    &guild_name,
+                    &text::get().log_text(text::LogText::ReconnectNoticeNoChannel),
+                );
+                continue;
+            };
+
+            match channel_id.say(&ctx.http, report).await {
+                Ok(_) => notified += 1,
+                Err(e) => {
+                    failed += 1;
+                    log_when_shutdown_report_failed(&guild_name, &e.to_string());
+                }
+            }
+        }
+
+        log::info!(
+            "{}",
+            text::get().log_text(text::LogText::ShutdownReportNotified {
+                notified_guilds: notified,
+                failed_guilds: failed,
+            })
+        );
     }
 
     /// 等这一次尝试结束，并按结束方式收尾（正常运行时它一直不返回：`client.start()` 没返回、看门狗没判
@@ -105,7 +194,7 @@ impl Watchdog {
                     self.stop_all_bots_on_disconnect(reason);
                 }
             }
-            AttemptEnding::ShutdownSignal => self.exit_on_shutdown_signal(),
+            AttemptEnding::ShutdownSignal => self.exit_on_shutdown_signal().await,
         }
     }
 
@@ -113,8 +202,17 @@ impl Watchdog {
     pub async fn wait_before_reconnect(&self) {
         tokio::select! {
             _ = tokio::time::sleep(self.window()) => {}
-            _ = wait_for_shutdown_signal() => self.exit_on_shutdown_signal(),
+            _ = wait_for_shutdown_signal() => self.exit_on_shutdown_signal().await,
         }
+    }
+
+    /// 记下本机器人当前可用的 Discord 上下文（每次握手成功后由入口交过来）：收到退出信号时的收尾用它发频道消息。
+    pub fn remember_notice_context(&self, ctx: &serenity::Context) {
+        *self
+            .notice_ctx
+            .lock()
+            .expect("记录 Discord 上下文时，看门狗的 notice_ctx 字段的互斥锁被占用") =
+            Some(ctx.clone());
     }
 
     /// 掉线后又成功重连：向本机器人所在的所有服务器发送一条通知，并把结果写进日志。
@@ -209,6 +307,14 @@ fn log_when_reconnect_notice_failed(guild_name: &str, reason: &str) {
     log::warn!(
         "{}",
         text::get().log_text(text::LogText::ReconnectNoticeFailed { guild_name, reason })
+    );
+}
+
+/// 发不出去的服务器不重试，只记一条告警日志（收到退出信号时的收尾报告版）。
+fn log_when_shutdown_report_failed(guild_name: &str, reason: &str) {
+    log::warn!(
+        "{}",
+        text::get().log_text(text::LogText::ShutdownReportNoticeFailed { guild_name, reason })
     );
 }
 

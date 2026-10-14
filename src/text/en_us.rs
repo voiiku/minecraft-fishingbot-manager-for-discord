@@ -653,6 +653,13 @@ impl Text for EnUs {
         )
     }
 
+    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String {
+        format!(
+            "Request accepted: /startall. {bot_count} bots to start, about {}; the complete result will follow in a separate message.",
+            expected_duration_text(expected_secs)
+        )
+    }
+
     fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
         format!(
             "Start queue: sign-ins at least {interval_ms} ms apart, up to {batch_size} per batch"
@@ -763,20 +770,12 @@ impl Text for EnUs {
         "stopped successfully"
     }
 
-    fn count_skipped_not_running(&self) -> &'static str {
-        "skipped (was not running)"
-    }
-
     fn count_stop_failed(&self) -> &'static str {
         "stop failed"
     }
 
     fn stop_succeeded_line(&self, bot_name: &str) -> String {
         format!("Bot {bot_name}: stopped")
-    }
-
-    fn stop_skipped_not_running(&self, bot_name: &str) -> String {
-        format!("Bot {bot_name}: was not running, nothing to stop")
     }
 
     fn stop_still_running(&self, bot_name: &str) -> String {
@@ -795,15 +794,9 @@ impl Text for EnUs {
         format!("Bot {bot_name}: start command sent, session appeared")
     }
 
-    fn start_no_process(&self, bot_name: &str) -> String {
+    fn start_failed(&self, bot_name: &str) -> String {
         format!(
-            "Bot {bot_name}: start command sent but the process is gone (usually out of memory)"
-        )
-    }
-
-    fn start_exited_soon(&self, bot_name: &str) -> String {
-        format!(
-            "Bot {bot_name}: the session exited right after starting (usually because Microsoft refuses frequent logins, or out of memory)"
+            "Bot {bot_name}: failed to start (usually because Microsoft refuses frequent logins, or out of memory)"
         )
     }
 
@@ -991,6 +984,25 @@ impl Text for EnUs {
                 format!("the Discord connection failed: {error}")
             }
             LogText::ShutdownReportTitle => "shutdown wrap-up".to_string(),
+            LogText::ShutdownSignalReportTitle => "shutdown signal received, wrap-up".to_string(),
+            LogText::ShutdownReportNoticeFailed { guild_name, reason } => {
+                format!("could not send the shutdown wrap-up to {guild_name}: {reason}")
+            }
+            LogText::ShutdownReportNotified {
+                notified_guilds,
+                failed_guilds,
+            } => format!(
+                "the shutdown wrap-up went to {notified_guilds} server(s) (failed: {failed_guilds})"
+            ),
+            LogText::ShutdownReportNoContext => {
+                "no Discord context is available yet (this connection never handshaked), so the \
+                 shutdown wrap-up was only written to the program log"
+                    .to_string()
+            }
+            LogText::ShutdownReportTimeout { seconds } => format!(
+                "the shutdown wrap-up did not finish sending within {seconds}s, so the rest is \
+                 skipped and the process exits (nothing is resent on the next startup)"
+            ),
 
             // 机器人目录与房间
             LogText::BotRestartRequested { bot_name } => {
@@ -1019,6 +1031,17 @@ impl Text for EnUs {
                 log_path,
             } => format!(
                 "launching the screen session of bot {bot_name} ({session_name}), log: {log_path}"
+            ),
+            LogText::StartVerificationFailed {
+                bot_name,
+                session_seen_at_first_check,
+            } => format!(
+                "the start of bot {bot_name} failed the re-check: {}",
+                if session_seen_at_first_check {
+                    "the session appeared and then exited"
+                } else {
+                    "the session never appeared"
+                }
             ),
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "unexpected file '{file_name}' in the FishingBot log directory {dir} (if this keeps \
@@ -1111,6 +1134,15 @@ impl Text for EnUs {
 /// 配置校验里那一句"要求"（`ConfigFieldInvalid` / `ConfigFieldValueInvalid` 用）。
 ///
 /// 单独一个函数是为了让"多条规则共用同一句话"只翻一次；`match` 穷尽，漏一条编译不过。
+/// Human-readable seconds for the `/startall` notice: `90` -> `1m 30s`.
+fn expected_duration_text(expected_secs: u64) -> String {
+    match (expected_secs / 60, expected_secs % 60) {
+        (0, secs) => format!("{secs}s"),
+        (minutes, 0) => format!("{minutes}m"),
+        (minutes, secs) => format!("{minutes}m {secs}s"),
+    }
+}
+
 fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
     match requirement {
         ConfigRequirement::NonEmpty => "must not be empty".to_string(),

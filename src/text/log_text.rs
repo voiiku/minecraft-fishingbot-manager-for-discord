@@ -110,8 +110,24 @@ pub enum LogText<'a> {
     DiscordClientEnded,
     /// 与 Discord 的连接出错。
     DiscordClientError { error: &'a str },
-    /// 进程退出收尾报告的标题。
+    /// 进程退出收尾报告的标题（掉线、永久错误这类收尾用）。
     ShutdownReportTitle,
+    /// 收到退出信号后收尾报告的标题（正常退出，与 `/stopall` 同一份明细）。
+    ShutdownSignalReportTitle,
+    /// 给某个服务器发收到退出信号时的收尾报告失败。
+    ShutdownReportNoticeFailed {
+        guild_name: &'a str,
+        reason: &'a str,
+    },
+    /// 收到退出信号时的收尾报告已发往各服务器。
+    ShutdownReportNotified {
+        notified_guilds: usize,
+        failed_guilds: usize,
+    },
+    /// 收到退出信号时还没有可用的 Discord 上下文（本次连接没握手成功），收尾报告只能写日志。
+    ShutdownReportNoContext,
+    /// 收到退出信号时的收尾报告没能在时限内发完：跳过发送，直接退出。
+    ShutdownReportTimeout { seconds: u64 },
 
     // ============ 机器人目录与房间（`bot_manage/*`、`utils/*`） ============
     /// 收到单机器人重启指令。
@@ -140,6 +156,11 @@ pub enum LogText<'a> {
         bot_name: &'a str,
         session_name: &'a str,
         log_path: &'a str,
+    },
+    /// 启动复核失败：会话要么从没出现，要么出现后又退出（对用户是同一句"启动失败"，差别只记在这里）。
+    StartVerificationFailed {
+        bot_name: &'a str,
+        session_seen_at_first_check: bool,
     },
     /// FishingBot 日志目录里有意料之外的文件。
     UnexpectedGameLogFile { dir: &'a str, file_name: &'a str },

@@ -627,6 +627,13 @@ impl Text for ZhCn {
         )
     }
 
+    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String {
+        format!(
+            "已接受 /startall 请求；本次需要启动 {bot_count} 台，预计约 {}；完成后会返回完整结果",
+            expected_duration_text(expected_secs)
+        )
+    }
+
     fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
         format!("启动队列: 两次登录最小间隔 {interval_ms} 毫秒，每批最多 {batch_size} 台")
     }
@@ -725,20 +732,12 @@ impl Text for ZhCn {
         "成功停止"
     }
 
-    fn count_skipped_not_running(&self) -> &'static str {
-        "跳过 (原本未运行)"
-    }
-
     fn count_stop_failed(&self) -> &'static str {
         "停止失败"
     }
 
     fn stop_succeeded_line(&self, bot_name: &str) -> String {
         format!("机器人 {bot_name}: 已停止")
-    }
-
-    fn stop_skipped_not_running(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 原本未运行，无需停止")
     }
 
     fn stop_still_running(&self, bot_name: &str) -> String {
@@ -757,12 +756,8 @@ impl Text for ZhCn {
         format!("机器人 {bot_name}: 启动命令已发送，会话已出现")
     }
 
-    fn start_no_process(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 启动指令已发送，但进程不存在(通常是内存不足)")
-    }
-
-    fn start_exited_soon(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 会话启动后退出(常见原因是微软拒绝频繁登录或内存不足)")
+    fn start_failed(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 启动失败(常见原因是微软拒绝频繁登录或内存不足)")
     }
 
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
@@ -930,6 +925,22 @@ impl Text for ZhCn {
             LogText::DiscordClientEnded => "与 Discord 的连接已结束 (客户端正常返回)".to_string(),
             LogText::DiscordClientError { error } => format!("与 Discord 的连接发送错误: {error}"),
             LogText::ShutdownReportTitle => "进程退出报告".to_string(),
+            LogText::ShutdownSignalReportTitle => "收到退出信号，收尾结果".to_string(),
+            LogText::ShutdownReportNoticeFailed { guild_name, reason } => {
+                format!("向服务器 {guild_name} 发退出收尾报告失败: {reason}")
+            }
+            LogText::ShutdownReportNotified {
+                notified_guilds,
+                failed_guilds,
+            } => format!(
+                "退出收尾报告已发往 {notified_guilds} 个服务器(发送失败 {failed_guilds} 次)"
+            ),
+            LogText::ShutdownReportNoContext => {
+                "还没有可用的 Discord 上下文 (本次连接没握手成功)，退出收尾报告只写进程序日志".to_string()
+            }
+            LogText::ShutdownReportTimeout { seconds } => format!(
+                "退出收尾报告 {seconds} 秒内没发完，跳过剩余发送并退出 (下次启动不补发)"
+            ),
 
             // 机器人目录与房间
             LogText::BotRestartRequested { bot_name } => {
@@ -958,6 +969,17 @@ impl Text for ZhCn {
                 log_path,
             } => format!(
                 "尝试启动机器人 {bot_name} ， Screen 会话 ({session_name})，日志: {log_path}"
+            ),
+            LogText::StartVerificationFailed {
+                bot_name,
+                session_seen_at_first_check,
+            } => format!(
+                "机器人 {bot_name} 启动复核失败: {}",
+                if session_seen_at_first_check {
+                    "会话出现后又退出"
+                } else {
+                    "会话从未出现"
+                }
             ),
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "FishingBot 日志目录 {dir} 内存在意料之外的文件 '{file_name}' (若反复出现说明 FishingBot 更改了日志文件名，\
@@ -1035,6 +1057,15 @@ impl Text for ZhCn {
                 requirement,
             } => format!("配置项 {field} = {value} {}", requirement_text(requirement)),
         }
+    }
+}
+
+/// 把秒数说成人话（`/startall` 回执里的\"预计约 …\"）：`90` → `1 分 30 秒`。
+fn expected_duration_text(expected_secs: u64) -> String {
+    match (expected_secs / 60, expected_secs % 60) {
+        (0, secs) => format!("{secs} 秒"),
+        (minutes, 0) => format!("{minutes} 分"),
+        (minutes, secs) => format!("{minutes} 分 {secs} 秒"),
     }
 }
 

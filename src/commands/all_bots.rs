@@ -3,18 +3,18 @@
 use super::Error;
 use super::{Context, all_bots_manage};
 use minecraft_fishingbot_manager_for_discord::text;
-use minecraft_fishingbot_manager_for_discord::{AllBotsControlAction, handle_all_bots_control};
+use minecraft_fishingbot_manager_for_discord::{
+    AllBotsControlAction, handle_all_bots_control, handle_startall_notice,
+};
 
 /// Start every bot that has a token (admins only)
 #[poise::command(slash_command)]
 pub(crate) async fn startall(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
-    all_bots_manage(
-        ctx,
-        text::get().command_start_queued_notice("/startall"),
-        move || handle_all_bots_control(AllBotsControlAction::StartAll, caller_id),
-    )
+    all_bots_manage(ctx, handle_startall_notice(), move || {
+        handle_all_bots_control(AllBotsControlAction::StartAll, caller_id)
+    })
     .await
 }
 

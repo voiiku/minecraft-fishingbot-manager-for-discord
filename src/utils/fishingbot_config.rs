@@ -71,7 +71,7 @@ fn managed_values(
 ///
 /// 失败时 `Err` 是可直接 `log::error!` 出去的整句；调用点按"配置写错"处理（退出码 1）。
 pub fn regenerate_fishingbot_config() -> Result<(), String> {
-    let settings = config::get();
+    let settings = config::Config::get();
     let fishingbot_config_path = &settings.paths.fishingbot_config;
 
     remove_old_fishingbot_config(fishingbot_config_path)?;

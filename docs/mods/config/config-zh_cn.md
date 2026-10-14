@@ -1,7 +1,8 @@
 # 配置文件结构说明
 [English](config-en_us.md) | **简体中文**
 
-* 代码：`src/config.rs` 与 `src/config/{schema,parse,validate,template}.rs`
+* 代码：`src/config.rs`（运行时 `Config` 与取值接口）与 `src/config/{schema,parse,validate,template}.rs`
+  （各配置表与 `[paths]` 的文件形态、解析、校验、模板）
 * 文件：可执行文件同级目录下的 `minecraft-fishingbot-manager-for-discord.conf.toml`（文件名由
   `CONFIG_FILE_NAME` 固定，不可改名）
 * 刻意不看工作目录、不读环境变量：部署时把二进制与配置放在一起就不会错，systemd 之类的托管也不需要
@@ -10,22 +11,24 @@
 
 ## 1. 加载流程（启动最早期）
 
-1. `config::get_or_init()` 定位配置文件路径。
+1. `config::Config::get_or_init()` 定位配置文件路径。
 2. 文件不存在时，按仓库里的 `minecraft-fishingbot-manager-for-discord.conf.example.toml` 生成一份：写模板与
-   打印提示都在这一步里做，返回 `LoadOutcome::TemplateGenerated`，调用方据此正常退出，不进 Discord。
-3. 文件存在时读文本，`parse` 先把 TOML 解析成值树、递归去掉所有字符串值两头的空白，再用 Serde 的
-   `Deserialize` 实现把值映射到 `FileConfig`（这是全链路唯一一次清洗）；随后 `into_config` 展开路径并构造
-   运行时 `Config`。这一步只负责格式解析与结构转换，不负责所有配置规则。
+   打印提示都在这一步里做，然后就地以退出码 0 结束进程，不进 Discord。文件已存在则在终端提示找到的那份
+   配置文件路径再往下走（这一步日志系统还没装，所以证据只在终端；程序日志里那句"已加载配置: …"由
+   `init_process_log` 补）。
+3. 文件存在时读文本，`Config::from_toml_text` 先把 TOML 解析成值树、递归去掉所有字符串值两头的空白，再用
+   Serde 的 `Deserialize` 实现直接映射成运行时 `Config`（这是全链路唯一一次清洗）；其中 `[paths]` 那三个键
+   由 `Paths` 自己的反序列化实现展开成以 `base_dir` 为根的路径。这一步只负责格式解析与结构转换，不负责所有配置规则。
 4. `validate` 再检查字段取值、范围与运行环境（例如必填项、端口范围、目录和 JAR 是否存在）。
 5. 任何一步失败都以"配置项 + 字段名 + 要求"的形式报错退出，不带着错值跑起来。
 6. 通过后写入 `OnceLock`，只在启动时读一次并常驻内存。运行中改配置文件不影响已经在跑的进程，想让新
    配置生效就重启进程。
 
-字符串值两头的空白在 `parse` 里统一去掉：配置文件里手滑多敲的空格、缩进换行都不会带进代码，所以读配置的人
+字符串值两头的空白在 `Config::from_toml_text` 里统一去掉：配置文件里手滑多敲的空格、缩进换行都不会带进代码，所以读配置的人
 （`main.rs`、业务层这类入口）一律递原值，不再自己 `trim()`。真要保留两头的空白就写转义
 （TOML 里 `"\u0020"`）。
 
-反序列化依赖 `FileConfig` 及其字段类型上的 `#[derive(Deserialize)]`：Serde 按 TOML 表名和键名填充对应结构体字段，类型不符、缺少必需字段或出现未知字段时返回解析错误。代码里**没有任何默认值**：每张表、每个字段都必须在文件里显式写出，缺项或拼错都在启动时报错，而不是被静默兜底。路径字段由 `into_config` 转为以 `base_dir` 为根的运行时路径；业务取值规则仍由后续的 `validate` 负责。
+反序列化依赖 `Config` 及其字段类型上的 `#[derive(Deserialize)]`：Serde 按 TOML 表名和键名填充对应结构体字段，类型不符、缺少必需字段或出现未知字段时返回解析错误。代码里**没有任何默认值**：每张表、每个字段都必须在文件里显式写出，缺项或拼错都在启动时报错，而不是被静默兜底。路径字段由 `Paths` 自己的 `Deserialize` 实现转为以 `base_dir` 为根的运行时路径（`bots_dir` 由代码派生）；业务取值规则仍由后续的 `validate` 负责。
 
 配置读完后、做别的事之前，进程入口还会按 `[fishingbot]` **生成游戏侧配置**（FishingBot 的
 `conf.json`，路径来自 `paths.fishingbot_config_file_name`）：先删掉旧文件、再写一份新的。这一步失败按"配置写错"的同一
@@ -33,17 +36,20 @@
 
 ## 2. 对外接口
 
-* `get_or_init()`：取配置，也是进程入口的唯一入口。首次调用定位、读取、解析并校验，之后返回已装载的那一份；
-  返回 `Loaded(&Config)` 或 `TemplateGenerated`：后者表示模板已写好、提示已打印，调用方正常退出，此时配置
-  尚未装载，不要去调 `path()`。
-* `get()`：取已加载的 `Config`。
-* `path()`：取本次启动使用的配置文件路径。
-* `admins()`：取管理员名单（`get().admins` 的快捷方式）。
-* `install_dir()`：取部署目录（可执行文件所在目录）。配置与程序日志都在这里。
+都是 `Config` 上的关联函数（模块里没有游离的取值函数；运行时的 `Config` 就定义在本文件），进程入口因此只有一行
+`let settings = config::Config::get_or_init();`：
 
-`get()` 与 `path()` 在尚未装载时 panic，文案取自 `text::bootstrap::CONFIG_NOT_LOADED`（内部不变量消息，
-那时语言还没装，固定英文）：进程入口第一件事就是 `get_or_init()`，走到这里还 panic 说明调用顺序写错了。
-路径与内容放在同一个 `Settings` 里，所以"是否已装载"只有一个判断依据。
+* `Config::get_or_init()`：取配置，也是进程入口的唯一入口。首次调用定位、读取、解析并校验，之后返回已装载的
+  那一份 `&'static Config`；模板已生成（提示已打印）就就地以退出码 0 结束进程，配置不合法就报错并以退出码 1
+  结束进程 —— 两条失败路径都在函数里结束进程，所以返回值一定是可用配置，调用方不必再判结果。
+* `Config::get()`：取已加载的 `Config`。
+* `Config::config_file_path`：本次启动使用的配置文件路径（装载时按可执行文件位置算好，存在结构体字段里）。
+* `Config::admins()`：取管理员名单（`Config::get().admins` 的快捷方式）。
+* `Config::install_dir()`：取部署目录（可执行文件所在目录）。配置与程序日志都在这里。
+
+`Config::get()` 在尚未装载时 panic，文案取自 `text::bootstrap::CONFIG_NOT_LOADED`（内部不变量消息，那时
+语言还没装，固定英文）：进程入口第一件事就是 `Config::get_or_init()`，走到这里还 panic 说明调用顺序写错了。
+配置文件路径是 `Config` 的一个字段（装载时算一次），"是否已装载"仍只看那一个 `OnceLock<Config>`。
 
 ## 3. 表结构
 
@@ -217,7 +223,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 多套一层，而是为了让三个地方的名字完全一样：
 
 * 配置文件里的键：`[runtime]` 表下的 `logs_dir`；
-* 代码里读它的写法：`config::get().runtime.logs_dir`；
+* 代码里读它的写法：`config::Config::get().runtime.logs_dir`；
 * 启动校验的报错：`配置项 runtime.logs_dir 不能为空`。
 
 把结构体拍平成"只有具体字段的大结构体"之前，得先决定拿 TOML 的表怎么办，三条路都不划算：
@@ -232,9 +238,9 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 * 用宏生成"扁平视图"：能同时保住文件和结构体，但逐字段的文档注释会变成宏参数，`cargo doc` 里读不到
   现在这种说明，对这个"配置即文档"的项目不划算。
 
-所以结论是保持分表：`config::get()` 之后那一层点号是可以接受的成本，换来的正是"文件键名等于结构体
-路径等于校验报错"三者同名。另外"启动时读一次、之后直接取字段"这条本来就成立：`get_or_init()` 在最早期把
-配置写进 `OnceLock`，之后所有 `config::get()` 都是内存取值、没有 IO。
+所以结论是保持分表：`config::Config::get()` 之后那一层点号是可以接受的成本，换来的正是"文件键名等于结构体
+路径等于校验报错"三者同名。另外"启动时读一次、之后直接取字段"这条本来就成立：`Config::get_or_init()` 在最早期把
+配置写进 `OnceLock`，之后所有 `config::Config::get()` 都是内存取值、没有 IO。
 
 ## 8. 相关文档
 

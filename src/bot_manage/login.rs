@@ -104,7 +104,7 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
         let message = if is_bot_screen_running(session.bot_name()) {
             text::get().bot_login_prompt_missing(session.bot_name())
         } else {
-            text::get().start_exited_soon(session.bot_name())
+            text::get().start_failed(session.bot_name())
         };
         stop_login_session(&session);
         restore_replaced_token(session.replaced_token_path);
@@ -151,7 +151,7 @@ pub(crate) fn await_login(prompt: BotLoginPrompt) -> String {
         if !is_bot_screen_running(&bot_name) {
             // JAR 已退出，恢复旧凭据。
             restore_replaced_token(session.replaced_token_path);
-            return text::get().start_exited_soon(&bot_name);
+            return text::get().start_failed(&bot_name);
         }
 
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));

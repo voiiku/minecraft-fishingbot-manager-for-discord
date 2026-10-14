@@ -66,7 +66,7 @@ directive）。
 
 ## 5. 调用时机
 
-必须在装配 poise `Framework` 与任何日志之前调用，顺序见 `src/main.rs`（`config::get_or_init()`、
+必须在装配 poise `Framework` 与任何日志之前调用，顺序见 `src/main.rs`（`config::Config::get_or_init()`、
 `init_process_log`、装配 `Framework`/`Client` 并 `client.start()`）。配置没加载成功时还没有日志文件，那几条提示只出现在
 终端。不经 logger 的直写只剩三处：`src/config.rs` 的模板提示（stdout），以及日志自己出问题时的两条告警
 （`src/process_log.rs`：logger 装不上走 stdout；日志文件建不出来走 stderr，与日志同一个流，见第 4 节）。

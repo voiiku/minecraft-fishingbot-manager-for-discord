@@ -515,9 +515,9 @@ affect us). Three ways to end:
   its own once authorised, and `/show status` and `/stop` all keep working during it.
 * It reads `auth-could-not-get-refresh-token` -> Microsoft refused: stop the session (it would retry forever), put the
   old credential back, and reply with a failure that suggests trying again or using `/token`.
-* The session disappears early -> report "exited after starting" (reusing `start_exited_soon`). On a real machine the
-  typical cause is Microsoft deciding the requests are too frequent and returning an empty token, after which the JAR
-  ends the JVM itself.
+* The session disappears early -> report "failed to start" (reusing `start_failed`, the same sentence as a batch
+  start). On a real machine the typical cause is Microsoft deciding the requests are too frequent and returning an
+  empty token, after which the JAR ends the JVM itself.
 
 Timeout (10 minutes): check the credential once (the user may have finished in the last few seconds), and if it is not
 there, stop the session - the device code has expired and that JVM would only keep asking Microsoft for authorisation;
@@ -559,9 +559,11 @@ and only when it is still missing reply with the timeout and put the old credent
 * `/commandall <command>`: `commandall::send_command_to_all_bots(raw_bot_command_args)`, covering every running bot.
 
 None of these functions takes a `caller_id`: the routing layer `handle_all_bots_control` already stopped everyone else,
-so whoever reaches them is an admin. They also pick their own titles (`/stopall` uses the command title; the process
-shutdown path goes through `stopall::stop_all_bots_for_shutdown()` instead, which swaps in the log title because that
-report goes into the program log). For comparison: a single-bot command's permission is decided inside each business
+so whoever reaches them is an admin. They also pick their own titles (`/stopall` uses the command title; when the
+process receives an exit signal, `watchdog::Watchdog::exit_on_shutdown_signal()` assembles the same details on the spot
+and only swaps in the "shutdown signal received, wrap-up" title: that report goes into the program log and is also
+sent to every server's notice channel). For
+comparison: a single-bot command's permission is decided inside each business
 function by directory ownership, see
 [section 3](#3-single-bot-control-start-stop-restart-pause-unpause-command-log).
 
@@ -597,12 +599,19 @@ file missing, left as it is" rather than disappearing silently.
   missing") and does not count as a failure.
 * `/stopall`: `utils::stop_all_bot_sessions()` returns the raw details (it is itself the combination of
   `all_bot_dir_entries()`, grouping and stopping), and the report is assembled by this module's
-  `stopall::stop_all_bots()`; the process shutdown uses the same assembly through
-  `stopall::stop_all_bots_for_shutdown()`, with only the title different (the log title).
+  `stopall::stop_all_bots()`; it reports only successes and failures (its only count rows are "stopped" and "stop
+  failed"; bots that were not running are not listed, so `Report::skipped` is empty; the "scanned bot directories"
+  field is output only by `/show allbots`). When the process receives an exit signal, the wrap-up assembles the same
+  details on the spot inside `watchdog::Watchdog::exit_on_shutdown_signal()`, with the title swapped for "shutdown
+  signal received, wrap-up"; the report is written to the program log and also sent to every server's notice channel,
+  with a 30-second overall limit on that send (past it the send is dropped and the process exits; nothing is resent on
+  the next startup).
 * `/restartall`: only the running group of `all_bot_dir_entries()` is taken (a target that is not running is not a
   restart target); with none it replies `没有运行的机器人实例，无需重启`; otherwise it calls
   `utils::restart_bot_sessions` and then writes the running accounts, restart commands sent and restart failures with
-  `Report::set_counts` (a target without a token explains itself in the restart failure details).
+  `Report::set_counts` (a target without a token explains itself in the restart failure details). The report only has
+  successes and failures: the targets were picked by this command itself, so there is no "skipped" kind and
+  `Report::skipped` is empty.
 * `/commandall`: the command fragment is passed through as it is by the command layer, and here it is assembled into
   one command with `to_clean_bot_command` (the same convention as `/command`) before being injected one by one.
   `utils::all_running_bot_names()` comes from one `screen -list` snapshot, and a hit means it is running, so the
@@ -627,8 +636,8 @@ file missing, left as it is" rather than disappearing silently.
 ### 5.5 Troubleshooting failures
 
 The transient memory peak of a batch start is often higher than a cloud server's available memory, and a process killed
-by the OOM killer never shows up in `screen -list`, so the result says "the start command was sent but the process does
-not exist (usually due to insufficient memory)". What to do: lower the memory allowance in `runtime.java_opts`, raise
+by the OOM killer never shows up in `screen -list`, so the result says "Bot X: failed to start (usually because
+Microsoft refuses frequent logins, or out of memory)". What to do: lower the memory allowance in `runtime.java_opts`, raise
 `timing.settle_per_bot_ms` or `[startup_queue] login_interval_ms` (watching longer or signing in slower), or repeat the command later
 (JVM memory usage improves over time).
 
@@ -707,6 +716,8 @@ not exist (usually due to insufficient memory)". What to do: lower the memory al
 * Each bot lists its name, its owning user ID (only meaningful for `allbots`) and whether a token exists. The token is
   only reported as present or not (`BotTokenStatus`); its contents are not shown and its validity is not checked
   online.
+* The first row of `allbots` is the count row "scanned bot directories" (`count_scanned_dirs`, the number of entries
+  `all_bot_dir_entries()` returned): that field is output only here, never in the stop reports or the process wrap-up.
 * `allbots` shows every account without regard for permissions, so it is admin-level information; its own permission
   requirement is `RequiredPermission::Everyone` (anyone may use it), it is just that an ordinary user usually only
   looks at their own directory and uses `/show mybots`.

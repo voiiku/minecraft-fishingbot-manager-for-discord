@@ -175,7 +175,7 @@ the one or two fields it really uses, in two styles:
 * Taking parameters (the caller supplies the values, the function does not touch the config): used where the logic is
   heavy enough to deserve a unit test. `launch_command_line` with `LaunchCommandConfig` (assembling the launch
   command) and `target_logs_dir` (pure string and path assembly), for example.
-* Reading only the fields it needs (`config::get().table.field`): used for convenience functions with a line or two of
+* Reading only the fields it needs (`config::Config::get().table.field`): used for convenience functions with a line or two of
   logic. `session_name` reads `runtime.screen_prefix`; `create_bot_log_file` and `latest_log_path` read
   `runtime.logs_dir`; `BotTokenStatus::from_dir` reads `runtime.token_file`; `BotDirEntry::find_by_name` reads
   `paths.bots_dir`; `stop_bot_sessions` reads `timing.stop_grace_ms` and `timing.stop_settle_ms`; `Report::render`

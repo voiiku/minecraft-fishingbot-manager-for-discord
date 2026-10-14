@@ -88,14 +88,14 @@
    取值、校验数字、分发，原样透传（参数名以 `raw_` 起），谁真正要用就由谁清洗一次：机器人名走
    `ToCleanBotName::to_clean_bot_name`（`BotDirEntry` 构造条目时调用，非法名字返回 `Err` 而不是过
    滤），游戏内指令片段走 `utils::ToCleanBotCommand`。同一份文本全链路只清洗一次，第二处不该再出现
-   `trim()`。配置这一侧同理：字符串值由 `config::parse` 统一 trim 一次，读配置的人递原值。两条不变的
+   `trim()`。配置这一侧同理：字符串值由 `config::Config::from_toml_text` 统一 trim 一次，读配置的人递原值。两条不变的
    规矩：机器人名的口径唯一来源是 `utils::bot_name`；需要业务状态才能判的检查
    （Token 是否存在、会话在不在跑、权限与目录归属、`max_log_lines` 封顶）一律留在业务层。数字是命令层
    唯一的转换：`/log` 的行数在命令层解析并校验后转 `usize`，`/ping` 的端口同理，校验不过当场回用法提示
    （Discord 的整数 option 只有有符号 64 位，所以 option 声明成 `i64`）。
 8. 配置只在需要它的地方读，而且只读需要的那几个字段：逻辑重、值得单测的函数吃参数
    （`launch_command_line` 加 `LaunchCommandConfig`）；只有一两行逻辑的便利函数直接读
-   `config::get().表.字段`（例如 `session_name` 只读 `runtime.screen_prefix`、
+   `config::Config::get().表.字段`（例如 `session_name` 只读 `runtime.screen_prefix`、
    `BotTokenStatus::from_dir` 只读 `runtime.token_file`）；状态判定
    `BotDirEntry::connection_status()` 是这类做法里的重逻辑版本，关键词是全局固定的一份（一半在配置的
    `[keywords]` 与 `[command_echo]`，一半在语言表 `text` 的 `jar_*` 方法），所以它自己读配置与
@@ -213,8 +213,9 @@
   手打任意名字，归属与会话是否在跑照旧由各 `handle_*` 判。
 * utils 不拼报告，只给原始信息：流程函数返回明细（例如停止的 `StopOutcome`，自带 `into_report()` 与
   `to_failure_text()`），拼装这一步必须由上层显式调用。批量停止由
-  `all_bots_control::stopall::stop_all_bots()` 显式拼，进程收尾走同一份拼装的
-  `stop_all_bots_for_shutdown()`（只有标题不同：日志标题）。
+  `all_bots_control::stopall::stop_all_bots()` 显式拼，进程收尾在
+  `watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细（只有标题不同："收到退出信号，收尾结果"；
+  这份报告除了进日志，还会发到各服务器的通报频道（发送有 30 秒总时限，超时就跳过、不补发），而掉线与永久错误的收尾只进日志）。
 * 可见性，每个模块一个对外面：crate 的对外面只有 `lib.rs`（`pub fn handle_*`、`pub use` 的两个视图类型、
   `pub mod config`、`pub mod text`）；`utils` 与五个业务模块是同一形状，子模块私有 `mod`，父模块顶部的
   一份精选 `pub(crate) use` 就是它的面，所以 `lib.rs` 只认识 `crate::bot_control::start_bot` 这种路径
@@ -241,7 +242,7 @@
   方法），于是 `[i18n] language` 同时决定"我们说什么话"与"按哪种语言的 JAR 日志认重连"；`/pause` 与
   `/unpause` 的回显则由配置 `[command_echo]` 提供（补丁构建才有那两句，见 §2 第一条）。唯一固定英文的
   是配置还没读出来时的那些提示（`text::bootstrap`：配置文件
-  读不出来或解析不了、生成模板、可执行文件路径、`language` 写了个不认识的取值，还有 `config::get()` 的
+  读不出来或解析不了、生成模板、找到已存在的配置文件、可执行文件路径、`language` 写了个不认识的取值，还有 `config::Config::get()` 的
   `CONFIG_NOT_LOADED` 不变量消息；它们都是英文），因为那时无语言可选。语言表的兜底（`text::get()` 没装过
   语言时）用的是默认语言，也就是英语（`Language::default()` 一处定义；示例配置里写的 `language = "ENGLISH"` 与它一致，中文 jar
   就改成 `CHINESE_SIMPLIFIED`，两者互不影响）。
@@ -349,7 +350,7 @@ src/commands/               bot_control / bot_manage / token / log / all_bots /
 src/watchdog.rs             网关看门狗本体：时序字段 + 握手/探活/掉线记账 + 进程级单例 WATCHDOG（第 3 节）
 src/watchdog/               gateway（握手与探活判定 + 探活任务）/ lifecycle（进程收尾）
 src/process_log.rs          程序日志：终端 + <部署目录>/logs/时间戳.log
-src/config.rs               外置配置：get_or_init / get / path / admins / install_dir
+src/config.rs               外置配置：运行时结构 Config 与 Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
 src/config/                 schema / parse / validate / template
 src/text.rs                 文案入口：一个进程一种语言（`[i18n] language` 启动时选定一次）
 src/text/                   en_us（默认语言）/ zh_cn（两份一一对应，只换字面量）
@@ -382,7 +383,8 @@ src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_
 4. `/log` 用附件而不是截断：2000 字符装不下 100 行日志，截断后信息量损失太大；附件既能全量给出，又天然
    带上文件名。私密性由 `defer_ephemeral()` 加每条回复的显式 `.ephemeral(true)` 保证。
 5. 长指令分两条消息回复（`*all` 与单机器人 start、stop、restart）：先回一条回执（启动类回"已接受 … 请求"，
-   其余回"已开始执行 …"），跑完再回完整报告。
+   `/startall` 还会给出这次要启动几台与预计耗时，见 `lib::handle_startall_notice()`；其余回"已开始执行 …"），
+   跑完再回完整报告。
    这是 Discord 官方文档写明的 defer 行为（第一条替换占位、第二条起是新消息）。
 6. 游戏侧配置由本程序生成、模板随仓库走：FishingBot 只认 JSON、又没有逐项覆盖的命令行参数，所以
    `[fishingbot]` 当唯一真源，启动时"删旧文件 + 用模板当底覆盖我们那几个键"，写出来的一定是完整配置

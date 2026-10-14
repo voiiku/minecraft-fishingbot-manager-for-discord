@@ -29,7 +29,8 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 指令（四个 `*all` 与单机器人的 `start`、`stop`、`restart`）按两条发：
 
 1. 启动类指令（`/start`、`/restart`、`/startall`、`/restartall`）先
-   `ctx.say("已接受 /startall 请求；涉及启动的操作将由全局启动队列执行，完成后会返回完整结果")`；其他长指令回
+   `ctx.say("已接受 /startall 请求；本次需要启动 N 台，预计约 X 分 Y 秒；完成后会返回完整结果")`
+  （N 与预计耗时由 `lib::handle_startall_notice()` 按"有 Token 且未运行"的账号数与 `[startup_queue] login_interval_ms` 算出）；其他长指令回
    `已开始执行 …，执行完毕后会返回完整结果`。
 2. 跑完再 `ctx.say(<Report::render() 的结果>)`，这是真正的新消息。
 
@@ -435,7 +436,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   期间 `/show status`、`/stop` 全都照常有效。
 * 读到 `auth-could-not-get-refresh-token` → 被微软拒绝：停会话（它会一直重试）、放回旧凭据、回一条失败并
   提示可以重试或用 `/token`。
-* 会话提前消失 → 按"启动后退出"给结论（复用 `start_exited_soon`）。真机上的典型成因就是微软判定请求太频繁、
+* 会话提前消失 → 按"启动失败"给结论（复用 `start_failed`，与批量启动同一句话）。真机上的典型成因就是微软判定请求太频繁、
   返回空 token，JAR 自己结束 JVM。
 
 超时（10 分钟）：先看一次凭据（用户可能压着最后几秒完成），没有就停会话 —— 设备码已经过期，那个 JVM 只会
@@ -471,8 +472,9 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   机器人。
 
 这些函数都不接 `caller_id` 参数：权限在路由层 `handle_all_bots_control` 就拦下了，能进到这里的一定
-是管理员。标题也由它们自己取（`/stopall` 用指令标题；进程收尾那条另走
-`stopall::stop_all_bots_for_shutdown()`，把标题换成日志标题，那份报告进的是程序日志）。对照：单机器
+是管理员。标题也由它们自己取（`/stopall` 用指令标题；进程收到退出信号时收尾在
+`watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细，只把标题换成"收到退出信号，收尾结果"；
+那份报告进程序日志，此外还发到各服务器的通报频道）。对照：单机器
 人指令的权限在各业务函数内部按目录归属判定，见 [第 3 节](#3-单机器人控制startstoprestartpauseunpausecommandlog)。
 
 ### 5.2 名单口径
@@ -502,11 +504,15 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、启动失败）。没被启动的账号
   都进 `skipped` 明细（已在运行与缺 Token 两种原因各一条），不算失败。
 * `/stopall`：`utils::stop_all_bot_sessions()` 拿原始明细（它自己就是 `all_bot_dir_entries()` 加分组
-  加停止的组合），报告由本模块的 `stopall::stop_all_bots()` 拼；进程收尾走同一份拼装的
-  `stopall::stop_all_bots_for_shutdown()`，只有标题不同（日志标题）。
+  加停止的组合），报告由本模块的 `stopall::stop_all_bots()` 拼，只报成功与失败（计数行只有"成功停止"与
+  "停止失败"，原本未运行的机器人不进明细，`Report::skipped` 为空；"扫描机器人目录"这个字段只由
+  `/show allbots` 输出）。进程收到退出信号时，收尾在
+  `watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细，只是标题换成"收到退出信号，收尾结果"：
+  报告先写程序日志，再发到各服务器的通报频道（发送有 30 秒总时限，超时就跳过并退出，下次启动不补发）。
 * `/restartall`：`all_bot_dir_entries()` 里只取在运行的那一组（未运行的不算重启对象）；没有时直接回
   `没有运行的机器人实例，无需重启`；否则调 `utils::restart_bot_sessions`，再用 `Report::set_counts`
   写运行中账号、已发送重启命令、重启失败（缺 Token 的目标会在重启失败明细里说明原因）。
+  报告只报成功与失败：重启目标是它自己选定的，没有"跳过"这一类，`Report::skipped` 为空。
 * `/commandall`：指令片段由命令层原样透传，这里用 `to_clean_bot_command` 拼成一条指令（与 `/command`
   同一口径），再逐条注入。`utils::all_running_bot_names()` 来自一次 `screen -list` 快照，命中即运行
   中，因此这里直接逐条注入，不再逐个机器人重复鉴权与探测会话；逐条统计成功数，失败的原文放进
@@ -528,7 +534,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 ### 5.5 失败排查
 
 批量启动的瞬时内存峰值常高于云服务器可用内存，被 OOM 杀掉的进程不会出现在 `screen -list` 里，因此
-结果里会写"启动指令已发送，但进程不存在（通常是内存不足）"。处理方式：调小 `runtime.java_opts` 的
+结果里会写"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。处理方式：调小 `runtime.java_opts` 的
 内存配额、调大 `timing.settle_per_bot_ms` 或 `[startup_queue] login_interval_ms`（等得更久或登录更慢），或稍后重复
 一次命令（JVM 内存占用会随时间优化）。
 
@@ -596,6 +602,8 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   `all_bot_dir_entries()`。
 * 每台列出机器人名、归属用户 ID（`allbots` 才有意义）、Token 是否存在。Token 只报在与不在
   （`BotTokenStatus`），不报内容、也不联网校验真实性。
+* `allbots` 的第一行是计数行「扫描机器人目录」（`count_scanned_dirs`，值是 `all_bot_dir_entries()` 的
+  条数）：这个字段只由它输出，停止类报告与进程退出收尾都不带它。
 * `allbots` 是不分权限地展示全部账号，所以它是管理员视角的信息；它本身的权限要求是
   `RequiredPermission::Everyone`（谁都能用），只是普通用户通常只看自己的目录，用 `/show mybots` 即可。
 

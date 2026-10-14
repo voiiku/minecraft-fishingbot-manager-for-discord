@@ -303,6 +303,8 @@ pub trait Text: Send + Sync {
     fn command_unexpected_failure(&self) -> &'static str;
     /// 启动请求的第一条消息：明确说明请求已进入全局启动队列。
     fn command_start_queued_notice(&self, command_tag: &str) -> String;
+    /// `/startall` 的第一条消息：请求已进入队列，并给出这次要启动几台与预计耗时。
+    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String;
     /// `/startall` 报告中的启动队列批次与登录间隔设置。
     fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String;
     /// `/log`：附件那一行的正文。
@@ -356,14 +358,10 @@ pub trait Text: Send + Sync {
     fn count_scanned_dirs(&self) -> &'static str;
     /// 计数行标签：成功停止。
     fn count_stopped(&self) -> &'static str;
-    /// 计数行标签：跳过（原本未运行）。
-    fn count_skipped_not_running(&self) -> &'static str;
     /// 计数行标签：停止失败。
     fn count_stop_failed(&self) -> &'static str;
     /// 停止成功明细；`forced` 表示是强杀才停下的。
     fn stop_succeeded_line(&self, bot_name: &str) -> String;
-    /// 停止跳过明细：原本就没在跑。
-    fn stop_skipped_not_running(&self, bot_name: &str) -> String;
     /// 停止失败明细：收尾后会话还在。
     fn stop_still_running(&self, bot_name: &str) -> String;
     /// 启动跳过明细：缺 Token，未拉起。
@@ -372,10 +370,9 @@ pub trait Text: Send + Sync {
     fn start_log_file_failed(&self, bot_name: &str) -> String;
     /// 启动成功明细：命令已发送、会话已出现。
     fn start_command_sent(&self, bot_name: &str) -> String;
-    /// 启动失败明细：命令发了但进程不在（多半是内存不足）。
-    fn start_no_process(&self, bot_name: &str) -> String;
-    /// 启动失败明细：会话起来过，但复核第二遍时已经没了（启动后一两秒就自己退了）。
-    fn start_exited_soon(&self, bot_name: &str) -> String;
+    /// 启动失败明细：拉起之后会话就没了（要么从未出现，要么复核时已经退出）；
+    /// 常见原因是微软拒绝频繁登录（`login_with_xbox` 限流）或内存不足。
+    fn start_failed(&self, bot_name: &str) -> String;
     /// 重启失败明细：缺 Token，已保持原状。
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String;
     /// `/restart` 被拒：目标当前不在运行（要启动请用 `/start`）。
@@ -442,7 +439,7 @@ pub fn all_languages() -> &'static [&'static dyn Text] {
     &ALL_LANGUAGES
 }
 
-/// 当前语言的文案（进程入口在 [`crate::config::get_or_init`] 里用 [`install`] 选定一次）。
+/// 当前语言的文案（进程入口在 [`crate::config::Config::get_or_init`] 里用 [`install`] 选定一次）。
 ///
 /// 没装过语言时回落到默认语言（英语）：单元测试因此不必每个都装一次语言
 ///（生产路径上 `install()` 一定先跑过），而现有测试断言里的英文正是以默认语言为基准的。
@@ -617,6 +614,18 @@ mod tests {
         assert_eq!(
             en_us::EN_US.command_start_queued_notice("/start duck"),
             "Request accepted: /start duck. Any start operation will use the global queue. The complete result will follow in a separate message."
+        );
+        assert_eq!(
+            zh_cn::ZH_CN.command_startall_queued_notice(7, 125),
+            "已接受 /startall 请求；本次需要启动 7 台，预计约 2 分 5 秒；完成后会返回完整结果"
+        );
+        assert_eq!(
+            zh_cn::ZH_CN.command_startall_queued_notice(0, 0),
+            "已接受 /startall 请求；本次需要启动 0 台，预计约 0 秒；完成后会返回完整结果"
+        );
+        assert_eq!(
+            en_us::EN_US.command_startall_queued_notice(7, 125),
+            "Request accepted: /startall. 7 bots to start, about 2m 5s; the complete result will follow in a separate message."
         );
         assert!(
             zh_cn::ZH_CN

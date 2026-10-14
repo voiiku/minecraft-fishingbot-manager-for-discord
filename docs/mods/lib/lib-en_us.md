@@ -15,8 +15,8 @@
 * Reports are assembled by the caller: utils returns raw outcomes only (stopping gives a `StopOutcome`, for
   example, which carries `into_report()` and `to_failure_text()`), and `into_report()` has to be called explicitly -
   utils never hands you a finished `Report`. The batch stop is assembled explicitly in
-  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown path reuses that same assembly through
-  `stop_all_bots_for_shutdown()` (only the title differs).
+  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
+  `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs).
 * Visibility, one public face per module: the crate's public face is `lib.rs` alone (`pub fn handle_*`, the two
   view types re-exported with `pub use` - `BotLogView` and `FishingbotConfigView` - plus `pub mod config` and
   `pub mod text`). The five business modules below and `utils` have the same shape: submodules are private `mod`s,
@@ -98,11 +98,12 @@ layer only re-exports them for `main.rs`):
 
 * `WATCHDOG.get_or_init()`: fetch the process-wide watchdog (the first call builds it from the config `[timing]`,
   later calls return that same one; the entry point and the event callbacks both go through it). Call it after
-  `config::get_or_init()`: the first call reads the config. `Watchdog::new(...)` takes explicit
+  `config::Config::get_or_init()`: the first call reads the config. `Watchdog::new(...)` takes explicit
   timings and is for tests only.
 * `watchdog.shutdown_all_bots()`: stop every running bot session (without exiting the process).
 * `watchdog.exit_on_shutdown_signal()`: the cleanup after SIGTERM / Ctrl+C (the entry point calls it when a signal
-  arrives): log it, stop every bot, exit with code 0 (systemd will not restart it).
+  arrives): log it, stop every bot, send the wrap-up report to every server's notice channel (when this connection
+  never handshaked only the log is written), exit with code 0 (systemd will not restart it).
 * `watchdog.exit_on_permanent_failure(reason)`: stop every bot and exit the process with code 1 (`reason` goes into
   the program log). Only for a wrong config (an invalid token, the bot was not invited to the server): exit code 1 is
   this project's deliberate-failure code, and `RestartPreventExitStatus=1` in the systemd unit stops it from being
@@ -117,6 +118,9 @@ layer only re-exports them for `main.rs`):
   a shutdown signal exits the process.
 * `watchdog.wait_before_reconnect()`: wait one judging window before rebuilding the connection; a shutdown signal
   during that wait exits the process.
+* `watchdog.remember_notice_context(ctx)`: the entry point records the current context on every successful handshake
+  (`Ready` / `Resume`); the exit-signal wrap-up uses it to send the channel message (a disconnect wrap-up sends no
+  channel message, so it does not need it).
 * `watchdog.notify_reconnect_success(ctx)`: after an outage, when `Ready` / `Resume` arrives again, send one notice to
   every server this bot is in; does nothing when there was no outage.
 

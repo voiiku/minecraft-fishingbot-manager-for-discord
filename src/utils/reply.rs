@@ -117,7 +117,7 @@ impl Report {
         let reply_text = blocks.join("\n\n");
 
         // 6. 截断逻辑。
-        let max_utf16_units = config::get().runtime.max_reply_chars;
+        let max_utf16_units = config::Config::get().runtime.max_reply_chars;
         if reply_text.utf16_len() <= max_utf16_units {
             return reply_text;
         }

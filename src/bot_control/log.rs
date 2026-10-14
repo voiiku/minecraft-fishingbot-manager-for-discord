@@ -26,7 +26,7 @@ pub(crate) fn bot_log_view(
         return Err(text::get().bot_log_zero_lines().to_string());
     }
     // 限制读取行数。
-    let target_line_count = line_count.min(config::get().runtime.max_log_lines);
+    let target_line_count = line_count.min(config::Config::get().runtime.max_log_lines);
 
     // 只读最新日志。
     let Some(target_log_path) = latest_log_path(&bot_dir_entry.bot_dir_path) else {

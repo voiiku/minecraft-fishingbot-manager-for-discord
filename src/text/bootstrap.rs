@@ -2,10 +2,10 @@
 
 use super::Language;
 
-/// 配置还没装载就取用（`config::get()`、`config::path()`）：进程入口的调用顺序写错了，不是部署者的配置问题。
+/// 配置还没装载就取用（`config::Config::get()`）：进程入口的调用顺序写错了，不是部署者的配置问题。
 ///
 /// 内部不变量消息，只有代码写错才会出现；那时没有语言可选，固定英文。
-pub const CONFIG_NOT_LOADED: &str = "config not loaded yet: call minecraft_fishingbot_manager_for_discord::config::get_or_init() \
+pub const CONFIG_NOT_LOADED: &str = "config not loaded yet: call minecraft_fishingbot_manager_for_discord::config::Config::get_or_init() \
      at the process entry point before using any other API";
 
 /// 首次运行：模板已生成，提示改完再启动。
@@ -14,6 +14,11 @@ pub fn config_template_created(path: &str) -> String {
         "No configuration file was found. A template was created at {path}.\n\
          Edit the template and restart the program."
     )
+}
+
+/// 配置文件已存在：提示一句找到的那份路径，随后读取并校验。
+pub fn config_file_found(path: &str) -> String {
+    format!("Found the existing configuration file {path}. Reading and validating it.")
 }
 
 /// 读配置文件失败。
@@ -93,11 +98,18 @@ mod tests {
         assert!(message.contains("restart the program"), "{message}");
     }
 
+    /// The existing-file note names the file it is about to read.
+    #[test]
+    fn found_file_note_names_the_path() {
+        let message = config_file_found("/opt/fishing/x.conf.toml");
+        assert!(message.contains("/opt/fishing/x.conf.toml"), "{message}");
+    }
+
     /// The invariant message names the entry point to call, and stays English (no language is installed then).
     #[test]
     fn not_loaded_message_names_the_entry_point() {
         assert!(
-            CONFIG_NOT_LOADED.contains("config::get_or_init()"),
+            CONFIG_NOT_LOADED.contains("config::Config::get_or_init()"),
             "{CONFIG_NOT_LOADED}"
         );
         assert!(

@@ -11,7 +11,7 @@ use crate::utils::Report;
 
 /// 探测游戏服务器；未指定目标时使用配置默认值。
 pub(crate) async fn ping_report(host: Option<&str>, port: Option<u16>) -> Result<String, String> {
-    let ping_config = &config::get().ping;
+    let ping_config = &config::Config::get().ping;
     let target_host = host.unwrap_or(ping_config.default_ping_host.as_str());
     let target_port = port.unwrap_or(ping_config.default_ping_port);
     let timeout = Duration::from_millis(ping_config.timeout_ms);

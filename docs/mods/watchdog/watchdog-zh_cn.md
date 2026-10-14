@@ -51,8 +51,9 @@ serenity 0.12.5 的 `ShardMessenger`（也就是 `ctx.shard`）只暴露 `shutdo
 
 判定在 `gateway.rs`，收尾与重建在 `src/watchdog/lifecycle.rs`：判定侧只负责判定与叫醒，看得见的动作
 （停机、记账、写日志、退进程）都在进程入口那一侧做——入口那侧的动作是 `wait_for_attempt()`（等这一次尝试的
-结束，并做掉线收尾）、`wait_before_reconnect()`（等一个判定窗口）与 `exit_on_shutdown_signal()`（收到退出信号后
-停机并以退出码 0 退出）。
+结束，并做掉线收尾）、`wait_before_reconnect()`（等一个判定窗口）与 `exit_on_shutdown_signal()`（收到退出信号后就地
+拼一份与 `/stopall` 同口径的收尾明细，写进程序日志并发到各服务器的通报频道，标题是"收到退出信号，收尾结果"，
+然后以退出码 0 退出）。
 
 1. 判定侧：判定掉线 → `request_reconnect(reason)`，把原因放在看门狗身上并叫醒进程入口（一个 `tokio::Notify`）；
    它本身不动机器人。
@@ -93,6 +94,16 @@ serenity 0.12.5 的 `ShardMessenger`（也就是 `ctx.shard`）只暴露 `shutdo
 就发 `/startall`"。落点是该服务器的系统频道，没有就用它的第一个文字频道；一个服务器只发一条，某个
 服务器发不出去只留一条告警，不影响其它服务器。这条通报同时也写进程序日志
 （`ReconnectedAfterOffline`：发往几个服务器、失败几处）。
+
+### 收到退出信号时的收尾报告
+
+`exit_on_shutdown_signal()` 就地拼出的那份与 `/stopall` 同口径的明细先写进程序日志，再按同一条落点规则
+（系统频道，没有就用第一个文字频道）发到各服务器（`ShutdownReportNotified`：发往几个服务器、失败几处；
+本次连接没握手成功就只写日志，记 `ShutdownReportNoContext`）。掉线与永久错误那两条收尾不发频道：那时连接
+已经不可用，发也发不出去。
+
+发送有 30 秒总时限（`SHUTDOWN_REPORT_TIMEOUT`）：到点还没发完就不再继续（记 `ShutdownReportTimeout`）并照常
+退出；已发出的不受影响，这份报告不落盘，下次启动也不补发。
 
 ## 5. 常见排查
 

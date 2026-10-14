@@ -145,7 +145,7 @@
 
 * 吃参数（值由调用方给，函数不碰配置）：用在逻辑重、值得单测的地方。例如 `launch_command_line` 与
   `LaunchCommandConfig`（启动命令拼接）、`target_logs_dir`（纯拼串拼路径）。
-* 只读它需要的字段（`config::get().表.字段`）：用在只有一两行逻辑的便利函数。例如 `session_name` 读
+* 只读它需要的字段（`config::Config::get().表.字段`）：用在只有一两行逻辑的便利函数。例如 `session_name` 读
   `runtime.screen_prefix`；`create_bot_log_file` 与 `latest_log_path` 读 `runtime.logs_dir`；
   `BotTokenStatus::from_dir` 读 `runtime.token_file`；`BotDirEntry::find_by_name` 读 `paths.bots_dir`；
   `stop_bot_sessions` 读 `timing.stop_grace_ms` 与 `timing.stop_settle_ms`；`Report::render`

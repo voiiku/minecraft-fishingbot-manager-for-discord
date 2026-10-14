@@ -114,7 +114,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    `ToCleanBotName::to_clean_bot_name` (called when `BotDirEntry` builds an entry; an illegal name returns `Err`
    rather than being filtered out) and in-game command fragments go through `utils::ToCleanBotCommand`. The same text
    is cleaned only once in the whole chain, and a second `trim()` must not appear anywhere. The config side follows the
-   same rule: `config::parse` trims string values once, and config readers pass the value as-is. Two rules never
+   same rule: `config::Config::from_toml_text` trims string values once, and config readers pass the value as-is. Two rules never
    change:
    the single source of truth for bot names is `utils::bot_name`; checks that need business state (whether a token
    exists, whether a session is running, permissions and directory ownership, the `max_log_lines` cap) always stay in
@@ -124,7 +124,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    declared as `i64`).
 8. Read configuration only where it is needed, and only the few fields that are needed: functions with heavy logic
    that deserve a unit test take parameters (`launch_command_line` takes a `LaunchCommandConfig`); convenience
-   functions with only one or two lines of logic read `config::get().<table>.<field>` directly (for example
+   functions with only one or two lines of logic read `config::Config::get().<table>.<field>` directly (for example
    `session_name` only reads `runtime.screen_prefix`, and `BotTokenStatus::from_dir` only reads `runtime.token_file`);
    the state judgement `BotDirEntry::connection_status()` is the heavy version of that approach, its keywords are one
    globally fixed set (half in the `[keywords]` and `[command_echo]` configuration, half in the `jar_*` methods of the
@@ -186,7 +186,8 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     documentation): the first replaces the "thinking" placeholder and only the second is a new message. Long commands
     (the four `*all` ones and the single-bot start, stop and restart) are therefore sent as two messages: first an
     "executing /startall now, the full result follows when it finishes" progress line, so the user sees progress
-    immediately, and after it finishes the full report from `Report::render()`.
+    immediately, and after it finishes the full report from `Report::render()`. `/startall`'s first reply also states
+    how many bots will be started and the expected duration, see `lib::handle_startall_notice()`.
     The second reply is sent as a new message under Discord's defer behaviour; re-check this in a live deployment if
     changing the response flow.
   * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window. When a
@@ -289,8 +290,10 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 * utils does not assemble reports, it only provides raw information: flow functions return details (for example a
   stop's `StopOutcome`, which brings its own `into_report()` and `to_failure_text()`), and assembling is a step the
   upper layer has to call explicitly. Bulk stopping is assembled explicitly by
-  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown uses the same assembly through
-  `stop_all_bots_for_shutdown()` (only the title differs: the log titles).
+  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
+  `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs: "shutdown signal received, wrap-up"; that
+  report reaches every server's notice channel as well as the log, within a 30-second overall limit past which the
+  send is dropped and not retried, while the disconnect and permanent-failure wrap-ups only reach the log).
 * Visibility, one public face per module: the crate's outside face is only `lib.rs` (`pub fn handle_*`, the two view
   types it re-exports with `pub use`, `pub mod config`, `pub mod text`); `utils` and the five business modules have the
   same shape - their submodules are private `mod`s and one curated `pub(crate) use` block at the top of the parent
@@ -328,8 +331,8 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   language's JAR log a reconnect is matched against"; the echoes of `/pause` and `/unpause` come from the
   `[command_echo]` configuration (only the patched build has those two lines, see the first item of section 2). The only
   fixed English is the hints printed before the configuration has been read (`text::bootstrap`: the configuration file
-  cannot be read or parsed, template generation, the executable path, an unknown `language` value, and the
-  `CONFIG_NOT_LOADED` invariant message of `config::get()`; all of them are English), because no language can be
+  cannot be read or parsed, template generation, an existing configuration file having been found, the executable path, an unknown `language` value, and the
+  `CONFIG_NOT_LOADED` invariant message of `config::Config::get()`; all of them are English), because no language can be
   chosen at that point. When `text::get()` has no
   language installed, the fallback is the default language, which is English (defined in one place,
   `Language::default()`; the `language = "ENGLISH"` written in the example configuration matches it, and a Chinese
@@ -463,7 +466,7 @@ src/commands/               bot_control / bot_manage / token / log / all_bots /
 src/watchdog.rs             the gateway watchdog itself: the timing fields, the handshake/probe/offline bookkeeping and the process-wide singleton WATCHDOG (section 3)
 src/watchdog/               gateway (handshake/probe judgement + probe task) / lifecycle (process teardown)
 src/process_log.rs          program log: terminal + <deployment dir>/logs/<timestamp>.log
-src/config.rs               external configuration: get_or_init / get / path / admins / install_dir
+src/config.rs               external configuration: the runtime Config plus Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
 src/config/                 schema / parse / validate / template
 src/text.rs                 text entry: one language per process (chosen once at start-up from `[i18n] language`)
 src/text/                   en_us (default language) / zh_cn (the two correspond one to one, only literals differ)

@@ -71,7 +71,7 @@ Reconnect messages and the replies to `/pause` and `/unpause` are fixed JAR text
   queue. The shipped example config leaves at least 20 seconds between two sign-ins
   (`[startup_queue] login_interval_ms`); tune `max_batch_size` and `login_interval_ms` as needed. See section 12 for the
   mechanism, how the real gap between two sign-ins is computed, and the recommended values.
-* The transient memory peak during a batch start may exceed the server’s available memory. A process killed this way will not appear in `screen -list`, so the result may say: “The start command was sent, but the process does not exist (usually due to insufficient memory).” To mitigate this, reduce the memory allocation in `runtime.java_opts`, increase `timing.settle_per_bot_ms` and `[startup_queue] login_interval_ms`, or retry later (JVM memory usage decreases over time).
+* The transient memory peak during a batch start may exceed the server’s available memory. A process killed this way will not appear in `screen -list`, so the result may say: “Bot X: failed to start (usually because Microsoft refuses frequent logins, or out of memory)”. To mitigate this, reduce the memory allocation in `runtime.java_opts`, increase `timing.settle_per_bot_ms` and `[startup_queue] login_interval_ms`, or retry later (JVM memory usage decreases over time).
 
 ## 12. The same bot fails to start every time (Microsoft sign-in rate limit)
 

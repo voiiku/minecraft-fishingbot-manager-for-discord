@@ -17,7 +17,7 @@ pub struct FishingbotConfigView {
 
 /// 读取由本程序生成的共享 FishingBot 配置。
 pub(crate) fn fishingbot_config_view() -> Result<FishingbotConfigView, String> {
-    let fishingbot_config_path = &config::get().paths.fishingbot_config;
+    let fishingbot_config_path = &config::Config::get().paths.fishingbot_config;
 
     let content = std::fs::read_to_string(fishingbot_config_path).map_err(|e| {
         text::get().botconfig_read_failed(

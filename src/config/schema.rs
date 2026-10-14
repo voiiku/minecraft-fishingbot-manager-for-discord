@@ -6,39 +6,6 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-/// 解析并校验后的配置，字段顺序与示例配置一致。
-#[derive(Debug)]
-pub struct Config {
-    /// Discord bot 的连接与身份信息（唯一凭据，必填）。
-    pub discord: DiscordConfig,
-    /// 磁盘路径，相对路径已按配置文件所在目录展开。
-    pub paths: Paths,
-    /// 游戏侧配置（FishingBot 的 `config.json`）里由本项目管理的键：启动时据此生成那份文件。
-    pub fishingbot: FishingBotConfig,
-    /// 管理员名单（Discord 用户 ID → 名字）。
-    pub admins: Admins,
-    /// 判断机器人状态用的日志关键词。
-    pub keywords: KeywordsConfig,
-    /// `/pause`、`/unpause` 的确认回显与检查参数。
-    pub command_echo: CommandEchoConfig,
-    /// 程序运行使用的语言（面向 Discord 的文案）。
-    pub i18n: I18nConfig,
-    /// 机器人运行时参数。
-    pub runtime: RuntimeConfig,
-    /// 启动队列的批次与冷却策略。
-    pub startup_queue: StartupQueueConfig,
-    /// 单批内启动错峰、会话复核、停止与看门狗时序参数。
-    pub timing: TimingConfig,
-    /// FishingBot 原始日志配置。
-    pub raw_game_logs: RawGameLogsConfig,
-    /// `/ping` 默认目标。
-    pub ping: PingConfig,
-    /// 程序日志的级别开关。
-    pub log: LogConfig,
-    /// 可自定义的提示文案。
-    pub text: TextConfig,
-}
-
 /// `/ping` 的默认目标与超时配置。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,7 +88,7 @@ pub struct RawGameLogsConfig {
     pub discard_path: String,
 }
 
-/// 展开后的文件路径。
+/// 展开后的文件路径：文件里的 `[paths]` 表写一个绝对 `base_dir` 加两个相对名，装载时展开成这里的绝对路径。
 #[derive(Debug)]
 pub struct Paths {
     /// 数据根目录：机器人目录、jar 与游戏配置的公共父目录。
@@ -248,71 +215,41 @@ pub struct TextConfig {
     pub help: String,
 }
 
-// ============ 配置文件结构（仅供 parse 使用） ============
-
-/// 配置文件结构，字段顺序与示例配置和 [`Config`] 一致。
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct FileConfig {
-    pub(super) discord: DiscordConfig,
-    pub(super) paths: FilePaths,
-    pub(super) fishingbot: FishingBotConfig,
-    pub(super) admins: Admins,
-    pub(super) keywords: KeywordsConfig,
-    pub(super) command_echo: CommandEchoConfig,
-    pub(super) i18n: I18nConfig,
-    pub(super) runtime: RuntimeConfig,
-    pub(super) startup_queue: StartupQueueConfig,
-    pub(super) timing: TimingConfig,
-    pub(super) raw_game_logs: RawGameLogsConfig,
-    pub(super) ping: PingConfig,
-    pub(super) log: LogConfig,
-    pub(super) text: TextConfig,
-}
-
-/// 配置文件中的路径字段。
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct FilePaths {
-    pub(super) base_dir: PathBuf,
-    pub(super) jar: PathBuf,
-    pub(super) fishingbot_config_file_name: PathBuf,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     /// 示例配置必须符合当前 schema。
     #[test]
     fn example_config_matches_schema() {
         let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
-        let file: FileConfig = toml::from_str(text).expect(
+        let config = Config::from_toml_text(text).expect(
             "minecraft-fishingbot-manager-for-discord.conf.example.toml 与当前配置 schema 不一致，请同步更新示例文件",
         );
 
         // 示例配置字段必须齐全。
-        assert!(!file.ping.default_ping_host.trim().is_empty());
-        assert!(file.ping.default_ping_port > 0);
-        assert!(file.ping.timeout_ms > 0);
-        assert!(!file.runtime.screen_prefix.trim().is_empty());
-        assert!(file.timing.watchdog_window_ms > 0);
-        assert!(file.timing.settle_per_bot_ms > 0);
+        assert!(!config.ping.default_ping_host.trim().is_empty());
+        assert!(config.ping.default_ping_port > 0);
+        assert!(config.ping.timeout_ms > 0);
+        assert!(!config.runtime.screen_prefix.trim().is_empty());
+        assert!(config.timing.watchdog_window_ms > 0);
+        assert!(config.timing.settle_per_bot_ms > 0);
         // 探活间隔与首次握手超时由判定窗口派生：一个窗口里至少能探一次，握手超时覆盖一整轮。
-        assert!(file.timing.probe_interval() > Duration::ZERO);
-        assert!(file.timing.probe_interval() <= file.timing.watchdog_window());
+        assert!(config.timing.probe_interval() > Duration::ZERO);
+        assert!(config.timing.probe_interval() <= config.timing.watchdog_window());
         assert_eq!(
-            file.timing.first_handshake_timeout(),
-            file.timing.watchdog_window() * 2
+            config.timing.first_handshake_timeout(),
+            config.timing.watchdog_window() * 2
         );
-        let startup_queue = &file.startup_queue;
+        let startup_queue = &config.startup_queue;
         assert!(startup_queue.max_batch_size > 0);
         assert!(startup_queue.login_interval_ms > 0);
         assert!(startup_queue.max_pending_requests > 0);
-        assert!(!file.command_echo.pause_echo.trim().is_empty());
-        assert!(!file.command_echo.unpause_echo.trim().is_empty());
-        assert!(file.command_echo.wait_ms > 0);
-        assert!(file.command_echo.scan_lines > 0);
+        assert!(!config.command_echo.pause_echo.trim().is_empty());
+        assert!(!config.command_echo.unpause_echo.trim().is_empty());
+        assert!(config.command_echo.wait_ms > 0);
+        assert!(config.command_echo.scan_lines > 0);
         // 必填表必须包含在示例配置中。
         assert!(text.contains("[discord]"));
         assert!(text.contains("[admins]"));
@@ -320,7 +257,7 @@ mod tests {
         assert!(text.contains("[command_echo]"));
         assert!(text.contains("[startup_queue]"));
         // 帮助文本应不为空。
-        assert!(!file.text.help.trim().is_empty());
+        assert!(!config.text.help.trim().is_empty());
     }
 
     /// 示例配置中的字段都应记录在配置文档中。
@@ -415,7 +352,7 @@ host = "example.com"
 port = 25565
 "#;
 
-        assert!(toml::from_str::<FileConfig>(text).is_err());
+        assert!(toml::from_str::<Config>(text).is_err());
     }
 
     /// 字段名拼错时必须报错（`deny_unknown_fields`）。
@@ -424,7 +361,7 @@ port = 25565
         let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml")
             .replace("[runtime]", "[runtime]\nunknown_field = 1");
 
-        assert!(toml::from_str::<FileConfig>(&text).is_err());
+        assert!(toml::from_str::<Config>(&text).is_err());
     }
 
     /// 造一个绝对路径：本项目只跑在 Linux 上，加个 `/` 就行。
@@ -432,17 +369,29 @@ port = 25565
         PathBuf::from(format!("/{path}"))
     }
 
+    /// 按配置文件里的写法拼一张 `[paths]` 表再反序列化：与真实装载走同一条路。
+    fn read_paths(
+        base_dir: &str,
+        jar: &str,
+        fishingbot_config_file_name: &str,
+    ) -> Result<Paths, String> {
+        let text = format!(
+            "base_dir = {base_dir:?}\njar = {jar:?}\nfishingbot_config_file_name = {fishingbot_config_file_name:?}\n"
+        );
+
+        toml::from_str(&text).map_err(|error| error.to_string())
+    }
+
     /// `base_dir` 必须是绝对路径、`jar` 与 `fishingbot_config_file_name` 必须是相对路径（相对
     /// `base_dir`）；派生出来的 `bots_dir` 一定在 `base_dir` 之下。
     #[test]
     fn paths_follow_the_absolute_relative_rule() {
         let base_dir = absolute("srv/fishbot/data");
-        let paths = FilePaths {
-            base_dir: base_dir.clone(),
-            jar: PathBuf::from("FishingBot.jar"),
-            fishingbot_config_file_name: PathBuf::from("config.json"),
-        }
-        .into_paths()
+        let paths = read_paths(
+            &base_dir.display().to_string(),
+            "FishingBot.jar",
+            "config.json",
+        )
         .expect("符合规则的路径应当通过");
 
         assert_eq!(paths.base_dir, base_dir);
@@ -458,13 +407,8 @@ port = 25565
     /// 相对路径的 `base_dir` 会被拒绝（提示写绝对路径）。
     #[test]
     fn relative_base_dir_is_rejected() {
-        let err = FilePaths {
-            base_dir: PathBuf::from("fishingbots"),
-            jar: PathBuf::from("FishingBot.jar"),
-            fishingbot_config_file_name: PathBuf::from("config.json"),
-        }
-        .into_paths()
-        .expect_err("相对 base_dir 应当报错");
+        let err = read_paths("fishingbots", "FishingBot.jar", "config.json")
+            .expect_err("相对 base_dir 应当报错");
 
         // 措辞断言钉默认语言（英语）的片段（默认语言是 `Language::default()`，见 `docs/mods/i18n/i18n-zh_cn.md`）。
         assert!(
@@ -476,14 +420,13 @@ port = 25565
     /// 绝对路径的 `jar` / `fishingbot_config_file_name` 会被拒绝。
     #[test]
     fn absolute_jar_or_fishingbot_config_is_rejected() {
-        let base_dir = absolute("srv/fishbot/data");
+        let base_dir = absolute("srv/fishbot/data").display().to_string();
 
-        let err = FilePaths {
-            base_dir: base_dir.clone(),
-            jar: absolute("opt/FishingBot.jar"),
-            fishingbot_config_file_name: PathBuf::from("config.json"),
-        }
-        .into_paths()
+        let err = read_paths(
+            &base_dir,
+            &absolute("opt/FishingBot.jar").display().to_string(),
+            "config.json",
+        )
         .expect_err("绝对 jar 应当报错");
         // 措辞断言同 `relative_base_dir_is_rejected`：钉默认语言（英语）的片段。
         assert!(
@@ -491,12 +434,11 @@ port = 25565
             "报错应说明要写相对路径: {err}"
         );
 
-        let err = FilePaths {
-            base_dir,
-            jar: PathBuf::from("FishingBot.jar"),
-            fishingbot_config_file_name: absolute("etc/config.json"),
-        }
-        .into_paths()
+        let err = read_paths(
+            &base_dir,
+            "FishingBot.jar",
+            &absolute("etc/config.json").display().to_string(),
+        )
         .expect_err("绝对 fishingbot_config_file_name 应当报错");
         assert!(
             err.contains("fishingbot_config_file_name"),

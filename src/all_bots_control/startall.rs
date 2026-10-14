@@ -50,8 +50,8 @@ pub(crate) fn start_all_bots() -> Result<String, String> {
     ]);
 
     report.basics.push(i18n_text.command_start_queue_summary(
-        crate::config::get().startup_queue.max_batch_size,
-        crate::config::get().startup_queue.login_interval_ms,
+        crate::config::Config::get().startup_queue.max_batch_size,
+        crate::config::Config::get().startup_queue.login_interval_ms,
     ));
 
     // 分别列出已运行和缺少 Token 的账号。
@@ -65,4 +65,35 @@ pub(crate) fn start_all_bots() -> Result<String, String> {
     );
 
     Ok(report.render())
+}
+
+/// `/startall` 的第一次回复，包含预计时间。
+/// 失败时回复通用回执。
+pub(crate) fn planned_startall_notice() -> String {
+    let i18n_text = text::get();
+    let Ok(all_bot_entries) = all_bot_dir_entries() else {
+        return i18n_text.command_start_queued_notice("/startall");
+    };
+
+    let (token_ready_bot_entries, _) = split_bot_entries_by_token_status(&all_bot_entries);
+    let (_, not_running_bot_entries) = split_bot_entries_by_is_running(&token_ready_bot_entries);
+    let bot_count = not_running_bot_entries.len();
+
+    i18n_text.command_startall_queued_notice(bot_count, expected_start_duration_secs(bot_count))
+}
+
+/// 预计耗时
+/// 整条请求分批登录（两次登录之间至少隔 `login_interval_ms`），最后一次登录之后还要复核两遍。
+fn expected_start_duration_secs(bot_count: usize) -> u64 {
+    if bot_count == 0 {
+        return 0;
+    }
+
+    let startup_queue = &crate::config::Config::get().startup_queue;
+    let settle_per_bot_ms = crate::config::Config::get().timing.settle_per_bot_ms;
+    let last_batch_size = bot_count.min(startup_queue.max_batch_size.max(1)) as u64;
+    let total_ms = (bot_count as u64 - 1).saturating_mul(startup_queue.login_interval_ms)
+        + 2 * settle_per_bot_ms * last_batch_size;
+
+    total_ms.div_ceil(1_000)
 }

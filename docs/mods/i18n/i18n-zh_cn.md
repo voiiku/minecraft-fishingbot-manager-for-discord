@@ -106,11 +106,11 @@
   就是生成出来的 `conf.json` 里 `misc.language` 的取值（同一个值，不是映射过去的，见
   [config.md 第 3.2 节](../config/config-zh_cn.md)），于是 jar 跟着说同一种话，两处不会再对不上。
 * 装语言的时机决定了哪几条消息只能用引导期英文：
-  1. `config::get_or_init()` 解析成功之后立刻 `install()` 一次，于是配置校验报错也是配置语言；
+  1. `config::Config::get_or_init()` 解析成功之后立刻 `install()` 一次，于是配置校验报错也是配置语言；
   2. `main.rs` 不再重复装。语言在第 1 步就装好了，所以 `init_process_log()` 起程序日志也是配置
      语言。入口那边刻意不写第二次 `install()`，因为写了也不生效，只会让"语言在哪选定"变得含糊；
   3. 第 1 步之前发出去的提示一律固定英文：配置文件不存在、读失败、解析失败，生成模板失败，可执行文件
-     路径定位不到，`[i18n] language` 自己写错，以及配置没装载就调 `config::get()` 时那句 `expect`
+     路径定位不到，`[i18n] language` 自己写错，以及配置没装载就调 `config::Config::get()` 时那句 `expect`
      （`bootstrap::CONFIG_NOT_LOADED`）。那时无语言可选，英文是最中立的回退。它们统一收在
      `crate::text::bootstrap`（与语言表并列，但不实现 `Text`）。判断标准只有一条：这条提示是不是配置
      还没读成功的产物。
@@ -162,21 +162,21 @@
 
 按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言。
 
-`Text` 目前有 153 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 67 个变体与
-`ConfigRequirement` 的 21 个变体，全部都有调用点。可以这样自查（第一条先用 `sed` 切出 `pub trait Text`
+`Text` 目前有 151 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 74 个变体与
+`ConfigRequirement` 的 20 个变体，全部都有调用点。可以这样自查（第一条先用 `sed` 切出 `pub trait Text`
 到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——`command_log_attachment_body` 就是这么
 写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。后两条分别数两个枚举的变体数，`match`
 是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 153
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 151
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
-grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 67
-grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 21
+grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 74
+grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 20
 ```
 
-英文实现 `src/text/en_us.rs` 与中文一一齐备（153 个方法、27 条指令说明、67 与 21 个枚举变体，一个不
+英文实现 `src/text/en_us.rs` 与中文一一齐备（151 个方法、27 条指令说明、74 与 20 个枚举变体，一个不
 少：漏方法或漏 `match` 分支都编译不过，漏指令说明测试失败）。要确认英文确实上得来，把配置改成
 `language = "ENGLISH"` 跑一次；单测里有 `text::tests::english_impl_is_english` 直接按英文实现断言（它
 不调 `install`，因为 `OnceLock` 是进程级的，装了会影响并发跑的其它用例）。

@@ -18,7 +18,8 @@ mod test_support;
 
 // 业务函数统一从父模块导入；子模块保持私有。
 use crate::all_bots_control::{
-    restart_all_bots, send_command_to_all_bots, start_all_bots, stop_all_bots,
+    planned_startall_notice, restart_all_bots, send_command_to_all_bots, start_all_bots,
+    stop_all_bots,
 };
 use crate::bot_control::{
     bot_log_view, pause_fishing, restart_bot, send_command_to_bot, start_bot, stop_bot,
@@ -234,6 +235,13 @@ pub fn handle_bot_control(
             send_command_to_bot(&bot_dir_entry, raw_bot_command_args).to_reply_text()
         }
     }
+}
+
+/// 处理管理员批量指令。
+/// `/startall` 的第一条回执：这次要启动几台、预计多久。权限：所有人可用（真正的启动在
+/// [`handle_all_bots_control`] 里检查管理员权限）。
+pub fn handle_startall_notice() -> String {
+    planned_startall_notice()
 }
 
 /// 处理管理员批量指令。

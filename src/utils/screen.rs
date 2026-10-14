@@ -16,7 +16,7 @@ pub fn session_name(raw_bot_name: &str) -> Result<String, String> {
 
     Ok(format!(
         "{}{clean_bot_name}",
-        config::get().runtime.screen_prefix
+        config::Config::get().runtime.screen_prefix
     ))
 }
 
