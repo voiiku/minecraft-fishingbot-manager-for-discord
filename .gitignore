@@ -1,2 +1,5 @@
 # Build output and local release bundles (anywhere inside this repository).
 target/
+
+# Released binary copied to the workspace root by the release steps (CI only builds it inside a runner).
+minecraft-fishingbot-manager-for-discord-*-linux-x86_64-musl

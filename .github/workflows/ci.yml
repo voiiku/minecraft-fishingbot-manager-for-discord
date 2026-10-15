@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   test:
-    name: Format, test, and lint (Linux x86_64 musl)
+    name: Format, test, lint, and check third-party notices (Linux x86_64 musl)
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -43,3 +43,28 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      # 版本必须和 release.yml 中一致，否则两边生成的第三方许可证清单会有差异。
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+
+      # 清单列出的是本版本依赖的许可证。
+      # 只比较内容，忽略格式差异。
+      - name: Check third-party notices
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          normalize() { tr -s '[:space:]' ' ' < "$1" | sed -e 's/ *$//'; }
+
+          cargo fetch --locked
+          cargo about generate about.hbs -o /tmp/THIRD-PARTY-NOTICES.html
+
+          if ! diff <(normalize THIRD-PARTY-NOTICES.html) <(normalize /tmp/THIRD-PARTY-NOTICES.html); then
+            echo "::error::THIRD-PARTY-NOTICES.html 与当前 Cargo.lock 不一致：本地跑 cargo notices 后提交这个文件。" >&2
+            exit 1
+          fi
+
+          echo "THIRD-PARTY-NOTICES.html 与当前依赖一致。"

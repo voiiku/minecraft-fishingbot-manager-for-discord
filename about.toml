@@ -13,3 +13,7 @@ accepted = [
     "Unlicense",
     "Zlib",
 ]
+
+# 本项目不再列进清单。
+[private]
+ignore = true

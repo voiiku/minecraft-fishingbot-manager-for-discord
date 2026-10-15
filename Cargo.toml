@@ -4,6 +4,7 @@ version = "0.2.1"
 edition = "2024"
 description = "Manage Minecraft FishingBot instances through Discord commands"
 license = "MIT"
+publish = false
 readme = "README.md"
 repository = "https://github.com/voiiku/minecraft-fishingbot-manager-for-discord"
 homepage = "https://github.com/voiiku/minecraft-fishingbot-manager-for-discord"
