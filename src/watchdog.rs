@@ -29,14 +29,13 @@ pub struct Watchdog {
     unhealthy_since: Mutex<Option<Instant>>,
     /// 进程内是否曾握手，用于只记录一次就绪日志。
     ever_handshaken: AtomicBool,
-    /// 掉线后唤醒进程入口的信号（进程入口会用select!异步等待，谁先到就处理谁）。
+    /// 掉线后唤醒进程入口的信号。
     reconnect_signal: tokio::sync::Notify,
     /// 本次掉线的原因与时刻。
     offline_since: Mutex<Option<(String, std::time::SystemTime)>>,
     /// 判定侧交给进程入口的掉线原因：入口收尾时取走（见 [`Watchdog::request_reconnect`]）。
     pending_disconnect_reason: Mutex<Option<String>>,
-    /// 最近一次握手时拿到的 Discord 上下文：收到退出信号时的收尾靠它把结果发到各服务器
-    /// （掉线与永久错误那两条收尾不发：那时连接已经不可用）。
+    /// 最近一次握手时拿到的 Discord 上下文：退出信号收尾靠它把报告发到各服务器。
     notice_ctx: Mutex<Option<serenity::Context>>,
 }
 
@@ -44,8 +43,7 @@ pub struct Watchdog {
 pub static WATCHDOG: WatchdogSlot = WatchdogSlot::new();
 
 /// 进程级单例的槽位：`get_or_init()` 取同一份（首次调用按配置建）。
-///
-/// 事件回调只收函数指针、捕获不了闭包，所以它们只能走这个入口，没法把引用传进闭包。
+/// 事件回调只收函数指针、捕获不了闭包，所以只能走这个入口。
 #[derive(Debug, Default)]
 pub struct WatchdogSlot(OnceLock<Watchdog>);
 
@@ -56,9 +54,7 @@ impl WatchdogSlot {
     }
 
     /// 取进程内唯一的那一份看门狗：首次调用按配置 `[timing]` 建，之后拿到的都是它。
-    ///
-    /// 只在 `static` 上调用：要交出 `'static` 的那一份，槽位自己得活满整个进程。
-    /// 另外要在 `config::Config::get_or_init()` 之后调：首次调用会读配置。
+    /// 只在 `static` 上调用（要交出 `'static` 的那一份），并在 `config::Config::get_or_init()` 之后调。
     pub fn get_or_init(&'static self) -> &'static Watchdog {
         self.0.get_or_init(|| Watchdog::from_config(Instant::now()))
     }

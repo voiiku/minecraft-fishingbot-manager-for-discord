@@ -1,5 +1,5 @@
-//! 看门狗关于网络状态判断逻辑的实现。
-//! 判定的 `GatewayState` 四态属本模块内部细节，不对调用方公开：外部只管喂事件（`note_*`）与等重连信号。
+//! 看门狗的网络状态判定与 REST 探活：`GatewayState` 四态是模块内部细节。
+//! 外部只管喂事件（`record_*`）与等重连信号。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +11,7 @@ use crate::text;
 
 use super::Watchdog;
 
-/// 四种网络状态（调用方无需关心）。
+/// 四种网络状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GatewayState {
     /// 已握手，且探活未在连续失败。
@@ -53,7 +53,7 @@ impl Watchdog {
             .expect("尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用") = None;
     }
 
-    /// 当已经成功握手时，使用此函数记录最新握手时间并清除探活失败计时。
+    /// 握手成功：记录最新握手时刻，并清掉探活失败计时。
     pub fn record_handshake_success(&self, now: Instant) {
         *self
             .last_handshake
@@ -65,12 +65,12 @@ impl Watchdog {
             .expect("尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用") = None;
     }
 
-    /// 判断这是否是进程内第一次成功握手
+    /// 这一次是不是进程内第一次成功握手。
     pub fn is_first_handshake(&self) -> bool {
         !self.ever_handshaken.swap(true, Ordering::Relaxed)
     }
 
-    /// 当探活成功时调用，清除失败的计时，此时外部需要判定网络状态时就随之回到 `Alive`。
+    /// 探活成功：清掉失败计时，状态随之回到 `Alive`。
     pub fn clear_probe_failures(&self) {
         *self
             .unhealthy_since
@@ -88,13 +88,13 @@ impl Watchdog {
 
     /// 根据当前时刻判定网络状态（时序取自 [`Watchdog`] 的字段）。
     fn state(&self, now: Instant) -> GatewayState {
-        // 检查是否已经握手？
+        // 先看有没有握过手。
         let handshaken = self
             .last_handshake
             .lock()
             .expect("尝试判定网络状态时，看门狗的 last_handshake 字段的互斥锁被占用")
             .is_some();
-        // 如果没有握手，就推断出目前的连接状态是从未握手，还是正在等待下一次探活。
+        // 没握手时还要分：超过首次握手超时判 NeverReady，否则还在 Waiting。
         if !handshaken {
             // 首次握手超时的截止点：本次尝试开始 + 首次握手超时。
             let timeout = *self
@@ -113,7 +113,7 @@ impl Watchdog {
             .unhealthy_since
             .lock()
             .expect("尝试判定网络状态时，看门狗的 unhealthy_since 字段的互斥锁被占用");
-        // 如果从连续第一次探活失败的起始时间到现在已经大于允许的窗口时间，就认为断联了，否则认为暂时还有连接（可能是网络波动导致某一次探活失败）。
+        // 失败累计满一个窗口才判断联；没满就是网络波动。
         match unhealthy_since {
             Some(unhealthy_since) if now.duration_since(unhealthy_since) >= self.window => {
                 GatewayState::Unreachable
@@ -154,7 +154,7 @@ impl Watchdog {
                         self.record_probe_failure_start(Instant::now());
                     }
                 }
-                // 如果看门狗判定当前状态是掉线，就请求重建连接（本任务随后结束，主循环会拉一个新的探活任务）。
+                // 判定掉线就请求重建连接（本任务结束，主循环会再拉一个探活任务）。
                 if let Some(reason) = self.state(Instant::now()).lost_log_text() {
                     self.request_reconnect(text::get().log_text(reason));
                     return;
@@ -200,9 +200,7 @@ mod tests {
         );
     }
 
-    /// "看门狗已就绪"每进程只报一次：`is_first_handshake` 第一次返回 `true`，之后（含重连后再握手）都是 `false`。
-    ///
-    /// 这条提示说的是"判定窗口按配置生效"，重建连接时不必重报。
+    /// "看门狗已就绪"每进程只报一次：`is_first_handshake` 只在首次返回 `true`。
     #[test]
     fn only_the_first_handshake_reports_ready() {
         let (watchdog, started) = watchdog_at_start();
@@ -258,7 +256,7 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Unreachable);
     }
 
-    /// 判定是可逆的：探活恢复后立刻回到 Alive，不是判一次就再也回不来。
+    /// 判定可逆：探活恢复后立刻回到 Alive。
     #[test]
     fn recovered_probe_revives_the_watchdog() {
         let (watchdog, started) = watchdog_at_start();
@@ -285,9 +283,7 @@ mod tests {
     }
 
     /// 开始新的一次尝试：首次握手超时从此刻重新算，上一轮的握手与失败记账一起清掉。
-    ///
-    /// 不重置的话，重连一上来就被判 `NeverReady`（超时起点还停在进程启动那一刻），
-    /// 那正是"每窗口重连一次、永远连不上"的死循环。
+    /// 不重置的话，重连一上来就会被判 `NeverReady`（超时起点还停在进程启动那一刻）。
     #[test]
     fn beginning_a_new_attempt_restarts_the_timeout() {
         let (watchdog, started) = watchdog_at_start();

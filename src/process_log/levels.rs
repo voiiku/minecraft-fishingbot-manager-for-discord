@@ -20,8 +20,6 @@ pub(super) struct LogLevels {
 
 impl LogLevels {
     /// 按配置里的 `[log] debug` 算两档上限。
-    ///
-    /// 要在 `config::Config::get_or_init()` 之后调：这里会读配置。
     pub(super) fn from_config() -> Self {
         Self::new(config::Config::get().log.debug)
     }

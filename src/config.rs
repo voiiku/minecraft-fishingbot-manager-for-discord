@@ -26,14 +26,14 @@ use schema::{LogConfig, RawGameLogsConfig};
 /// 配置文件名，位于可执行文件的同级目录。
 pub const CONFIG_FILE_NAME: &str = "minecraft-fishingbot-manager-for-discord.conf.toml";
 
-/// 解析并校验后的配置，字段顺序与示例配置一致（`config_file_path` 除外，他不在配置中，由初始化时算出来）。
+/// 解析并校验后的配置，字段顺序与示例配置一致（`config_file_path` 除外，他由初始化时计算）。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// 本次启动使用的配置文件路径：部署目录下，装载时按可执行文件位置算出来。
+    /// 本次启动使用的配置文件的路径，装载时按可执行文件位置推算。
     #[serde(skip, default = "default_config_file_path")]
     pub config_file_path: PathBuf,
-    /// Discord bot 的连接与身份信息（唯一凭据，必填）。
+    /// Discord bot 信息。
     pub discord: DiscordConfig,
     /// 磁盘路径，相对路径已按配置文件所在目录展开。
     pub paths: Paths,
@@ -63,7 +63,7 @@ pub struct Config {
     pub text: TextConfig,
 }
 
-/// `config_file_path` 的值，按可执行文件位置推导（取不到就留空，装载会以错误退出）。
+/// `config_file_path` 的值，按可执行文件位置推导（取不到就留空，装载配置时会以错误退出）。
 fn default_config_file_path() -> PathBuf {
     Config::install_dir().map_or_else(|_| PathBuf::new(), |dir| dir.join(CONFIG_FILE_NAME))
 }

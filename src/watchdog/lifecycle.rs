@@ -8,17 +8,17 @@ use crate::text;
 
 use super::Watchdog;
 
-/// 退出信号收尾把报告发到各服务器的总时限：到点还没发完就不再发（已发出的不受影响）、直接退出；
-/// 这份报告不落盘，下次启动也不补发。
+/// 退出信号收尾把报告发到各服务器的总时限
 const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 这一次尝试是怎么结束的（仅本模块内部用）：只有尝试结束了才有它；正常运行时三个分支谁都不发生，
-/// [`Watchdog::wait_for_attempt`] 会一直挂着。变体名说明"是谁结束了它"。
+/// 这一次尝试的结束原因
+/// 正常运行时三个分支都不发生
+/// [`Watchdog::wait_for_attempt`] 会一直等待此结束原因。
 enum AttemptEnding {
-    /// `client.start()` 返回了：客户端被关停，或 shard 启动失败与 token / Intent 非法这类致命错误。
-    /// 普通掉线不会让它返回（serenity 自己重连），掉线由看门狗判定后走下面的 `WatchdogSawDisconnect`。
+    /// `client.start()` 返回了：客户端被关停，或 token / Intent 非法这类致命错误。
+    /// 普通掉线不会让它返回（serenity 自己重连），掉线由看门狗判定。
     ClientReturned(Result<(), serenity::Error>),
-    /// 看门狗判定掉线（探活连续失败达到判定窗口，或首次握手超时）：原因由判定侧交过来，收尾在下面做。
+    /// 看门狗判定掉线（探活连续失败满窗口，或首次握手超时）：原因由判定侧交过来。
     WatchdogSawDisconnect,
     /// 收到退出信号（SIGTERM / Ctrl+C）：退出进程。
     ShutdownSignal,
@@ -50,7 +50,7 @@ impl Watchdog {
         &self.reconnect_signal
     }
 
-    /// 在认定掉线时被调用以停止全部机器人并记录掉线原因与时刻（重连成功后的通报）。
+    /// 认定掉线时停掉全部机器人，并记下掉线原因与时刻（重连成功后通报用）。
     fn stop_all_bots_on_disconnect(&self, reason: String) {
         log::warn!("{reason}");
         log::info!("{}", self.shutdown_all_bots());
@@ -61,8 +61,7 @@ impl Watchdog {
             Some((reason, std::time::SystemTime::now()));
     }
 
-    /// 判定掉线的一方（看门狗判定侧、入口自己的装配错误出口）用它把原因交给进程入口并叫醒入口：
-    /// 收尾（停机、记账、写日志）与重建连接都由入口的 [`Watchdog::wait_for_attempt`] 做，这里不动机器人。
+    /// 判定掉线的一方把原因交给进程入口并叫醒它：收尾与重建连接都由入口的 [`Watchdog::wait_for_attempt`] 做。
     pub fn request_reconnect(&self, reason: String) {
         *self
             .pending_disconnect_reason
@@ -73,7 +72,7 @@ impl Watchdog {
         self.reconnect_signal().notify_one();
     }
 
-    /// 取走判定侧交给入口的掉线原因；取不到说明这次唤醒是迟到的（收尾已经在上一轮做过）。
+    /// 取走判定侧交来的掉线原因；取不到说明是迟到的唤醒（上一轮已收尾）。
     fn take_pending_disconnect_reason(&self) -> Option<String> {
         self.pending_disconnect_reason
             .lock()
@@ -98,8 +97,7 @@ impl Watchdog {
         };
         log::info!("{report}");
 
-        // 只有这一条收尾发频道：掉线与永久错误那两条收尾只写日志，那时连接已经不可用，发也发不出去。
-        // 发送有总时限：超时就跳过，不让退出卡在这里（详情见 SHUTDOWN_REPORT_TIMEOUT）。
+        // 只有这一条收尾发频道（另两条收尾时连接已不可用）；发送有总时限（见 SHUTDOWN_REPORT_TIMEOUT）。
         if tokio::time::timeout(SHUTDOWN_REPORT_TIMEOUT, self.send_shutdown_report(&report))
             .await
             .is_err()
@@ -115,7 +113,7 @@ impl Watchdog {
         std::process::exit(0);
     }
 
-    /// 把收尾报告发到本机器人所在每个服务器的通报频道：没握手过就只写日志，发不出去的服务器只留一条告警。
+    /// 把收尾报告发到每个服务器的通报频道；没握手过只写日志，发不出去的留一条告警。
     async fn send_shutdown_report(&self, report: &str) {
         let ctx = self
             .notice_ctx
@@ -166,10 +164,8 @@ impl Watchdog {
         );
     }
 
-    /// 等这一次尝试结束，并按结束方式收尾（正常运行时它一直不返回：`client.start()` 没返回、看门狗没判
-    /// 掉线、也没有退出信号，也就是连接一切正常）。两条掉线路径都在这里停机：
-    /// 客户端自己返回（被关停或致命错误）就掉线收尾；看门狗判定掉线就取来判定侧交的原因再收尾；
-    /// 收到退出信号就退出进程。
+    /// 等这一次尝试结束（正常运行时一直不返回），并按结束方式收尾：
+    /// 客户端返回或被判定掉线都停机收尾，收到退出信号就退出进程。
     pub async fn wait_for_attempt(&self, client: &mut serenity::Client) {
         let ending = tokio::select! {
             result = client.start() => AttemptEnding::ClientReturned(result),
@@ -206,7 +202,7 @@ impl Watchdog {
         }
     }
 
-    /// 记下本机器人当前可用的 Discord 上下文（每次握手成功后由入口交过来）：收到退出信号时的收尾用它发频道消息。
+    /// 记下本机器人当前的 Discord 上下文（每次握手成功后由入口交过来），退出收尾用它发频道消息。
     pub fn remember_notice_context(&self, ctx: &serenity::Context) {
         *self
             .notice_ctx
