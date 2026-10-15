@@ -131,7 +131,7 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
 * When the language is installed decides which messages can only be bootstrap English:
   1. `config::Config::get_or_init()` installs once right after parsing succeeds, so config validation errors are in the configured
      language too;
-  2. `main.rs` does not install a second time. The language is already installed in step 1, so `init_process_log()`
+  2. `main.rs` does not install a second time. The language is already installed in step 1, so `ProcessLog::get_or_init()`
      starting the program log also uses the configured language. The entry point deliberately omits a second
      `install()`, because it would have no effect and would only blur "where is the language chosen";
   3. Anything sent before step 1 is fixed English: the config file is missing, cannot be read or fails to parse, the

@@ -27,10 +27,7 @@ FishingBot.jar’s own raw log is directed at `/dev/null` and discarded, so on d
 
 ## 4. The program log file contains no framework (serenity, poise) logs
 
-By default, framework logs are recorded at `WARN` and `ERROR` only. The frameworks emit a large amount of repetitive `INFO` output with each heartbeat. Set `[log] debug` to `true` in the config and restart this program to enable it.
-
-Alternatively, start the program temporarily with `RUST_LOG=debug ./minecraft-fishingbot-manager-for-discord`.
-`RUST_LOG` takes precedence over the config setting.
+By default, framework logs are recorded at `WARN` and `ERROR` only. The frameworks emit a large amount of repetitive `INFO` output with each heartbeat. Set `[log] debug` to `true` in the config and restart this program to enable it (the level comes from that one config line; no environment variable can override it, so there is no way to widen it temporarily).
 
 ## 5. The program log says `Discord initialization failed: Missing Access`, and the process exits right after connecting to Discord
 

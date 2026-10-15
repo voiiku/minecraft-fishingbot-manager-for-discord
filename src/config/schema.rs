@@ -26,7 +26,7 @@ pub struct DiscordConfig {
     pub token: String,
 }
 
-/// 程序日志级别；`RUST_LOG` 优先于此配置。
+/// 程序日志级别。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LogConfig {

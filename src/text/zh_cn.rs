@@ -824,9 +824,9 @@ impl Text for ZhCn {
             LogText::ProcessLogInstallFailed { reason } => {
                 format!("日志初始化失败： {reason}")
             }
-            LogText::RustLogInvalidLevel { raw, fallback } => format!(
-                "RUST_LOG='{raw}' 不是单个级别词 (off/error/warn/info/debug/trace)，已按 {fallback} 处理"
-            ),
+            LogText::ProcessLogAlreadyInstalled => {
+                "日志已经装过一次，本次保留已装的日志系统。".to_string()
+            }
 
             // 进程入口与看门狗
             LogText::ConfigLoaded { path } => format!("已加载配置: {path}"),

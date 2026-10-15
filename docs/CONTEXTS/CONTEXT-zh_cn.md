@@ -49,7 +49,7 @@
    `Http`，poise 的 `Framework`、`#[poise::command]`、`FrameworkOptions`、`ctx.say` 与 `ctx.defer*`。
    不用：框架自己的日志通道，日志一律走我们自己的 `process_log.rs`（自实现 `log::Log`）。poise 依赖
    `tracing` 时开着它的 `log` 特性，框架日志会转成 `log` 记录进到这条通道；实机运行已确认日志会写入程序日志。
-   配置只有 `minecraft-fishingbot-manager-for-discord.conf.toml` 一份（不用环境变量，`RUST_LOG` 除外）。
+   配置只有 `minecraft-fishingbot-manager-for-discord.conf.toml` 一份（完全不用环境变量）。
 2. 尽可能避免向部署目录之外写文件。所有生成的文件都在部署目录（可执行文件所在目录：配置、程序日志
    `logs/`）或机器人目录（`paths.base_dir/bots/Discord用户ID/机器人名`）里。这一条现在没有例外：框架
    不写状态文件、也不看工作目录。

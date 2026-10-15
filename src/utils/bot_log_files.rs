@@ -41,11 +41,9 @@ fn is_bot_log_file(file_name: &str) -> bool {
     parts.next().is_none()
 }
 
-/// 本项目内日志命名的唯一规范：在 `dir` 下新建一份时间戳命名（本地时间 `年-月-日-时-分-秒.log`）的日志文件，并写入首行 `first_line`，返回路径与可写句柄。
-/// 机器人日志（[`create_bot_log_file`]）与程序日志（`src/process_log.rs`）共用它，
-/// 句柄的写入位置在首行之后，拿到的调用方可以接着往后写（程序日志就是这么用的）；
-/// 机器人日志由会话里的 `tee -a` 往里追加，用不到句柄，直接丢弃。
-/// 父目录不存在会一并创建（`create_dir_all`）。
+/// 创建以时间戳命名的日志文件（日志命名规范），并写入首行 `first_line`，返回路径与可写句柄。
+/// 机器人日志（[`create_bot_log_file`]）与程序日志（`src/process_log.rs`）共用它
+/// 句柄的写入位置在首行之后，父目录不存在会一并创建（`create_dir_all`）。
 pub fn create_timestamped_log_file(
     dir: &Path,
     first_line: &str,

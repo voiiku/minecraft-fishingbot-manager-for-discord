@@ -215,7 +215,7 @@
 
 ### 7.2 程序日志：终端与文件各一份
 
-`src/process_log.rs` 装的 logger（`init_process_log`，进程入口在装配框架之前调用）把框架与库里的
+`src/process_log.rs` 装的 logger（`ProcessLog::get_or_init`，进程入口在装配框架之前调用）把框架与库里的
 `log::*` 同时写两处：
 
 * 终端（stderr）：`journalctl -u minecraft-fishingbot-manager-for-discord`，或前台输出。用途是实时看，
@@ -226,13 +226,12 @@
 
 * 命名与机器人日志同一套（都出自 `create_timestamped_log_file`），每条记录形如
   `[2026-09-28 15:30:12] [INFO] …`，纯文本、不带颜色，所以文件干净。
-* 级别：`RUST_LOG` 优先（只认单个级别词，例如 `debug`），未设置时按配置的 `[log] debug`（`false` 时本
-  项目 `info` 起、框架 `warn` 起；`true` 时两边都 `debug`）。框架自带的过滤支持 `模块=级别` 这类
-  directive，本项目刻意只保留一个级别的口径。
+* 级别只看配置的 `[log] debug`（`false` 时本项目 `info` 起、框架 `warn` 起；`true` 时两边都 `debug`），
+  没有环境变量、也没有第二个开关。框架自带的过滤支持 `模块=级别` 这类 directive，本项目刻意只保留一个
+  级别的口径。
 * 本项目自己的诊断信息也走 `log`（不再用 `println!`），所以终端与日志文件是同一份完整内容。例外只有
-  日志自己出问题时的两条告警（logger 装不上、日志文件建不出来），那时 logger 还不能用。
-* 日志文件建不出来（部署目录不可写）不致命：只在终端留一条告警，不会让机器人跑不起来。这条告警在全局
-  级别严于 `WARN`（`RUST_LOG=error` 或 `off`）时直写终端，不会被级别过滤掉。
+  logger 装不上那一条说明（那时日志系统还不能用，只能直写终端）。
+* 日志文件建不出来（部署目录不可写）不致命：只在终端留一条告警，不会让机器人跑不起来。
 
 ## 8. 相关文档
 

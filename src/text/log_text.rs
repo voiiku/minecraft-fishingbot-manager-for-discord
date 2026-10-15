@@ -12,8 +12,8 @@ pub enum LogText<'a> {
     ProcessLogPath { path: &'a str },
     /// 装 logger 失败，本次只能输出到终端。
     ProcessLogInstallFailed { reason: &'a str },
-    /// `RUST_LOG` 写了个不认识的值，按回落级别处理。
-    RustLogInvalidLevel { raw: &'a str, fallback: &'a str },
+    /// 日志已经装过一次，本次保留已装的 logger。
+    ProcessLogAlreadyInstalled,
 
     // ============ 进程入口与看门狗（`main.rs` / `watchdog.rs`） ============
     /// 配置加载成功。

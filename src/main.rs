@@ -7,7 +7,7 @@
 //!    解析、校验与安装语言都在里面做；配置文件不存在时它写好模板并打印提示，进程正常退出（退出码 0）；
 //!    当某项配置不合法，它就带着字段名报错、以退出码 1 结束进程；
 //!    当配置解析成功后，语言会被立刻安装，此后的报错与日志都跟随配置语言（在语言成功安装前，默认使用英语报错/提示）
-//! 2. `init_process_log()`：创建本次进程日志，并向终端与 `<部署目录>/logs/时间戳.log` 实时写入日志信息，日志创建完成后立刻写入进程信息；
+//! 2. `ProcessLog::get_or_init()`：创建本次进程日志，并向终端与 `<部署目录>/logs/时间戳.log` 实时写入日志信息，日志创建完成后立刻写入进程信息；
 //! 3. `WATCHDOG.get_or_init()`：显式获取并自动初始化进程内唯一的看门狗
 //! 4. `regenerate_fishingbot_config()`：生成钓鱼机器人的配置，失败是永久错误，以退出码 1 退出；
 //! 5. `wait_for_attempt()` 等这一次尝试结束（正常运行时它一直挂着、不返回），三个结束方式：
@@ -28,18 +28,18 @@ use poise::serenity_prelude as serenity;
 use commands::{Data, Error, register_commands};
 use minecraft_fishingbot_manager_for_discord::config;
 use minecraft_fishingbot_manager_for_discord::{
-    WATCHDOG, Watchdog, init_process_log, regenerate_fishingbot_config, text,
+    ProcessLog, WATCHDOG, Watchdog, regenerate_fishingbot_config, text,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 获取配置
-    // 没有配置文件时将生成模板、打印提示后退出。
+    // 没有配置文件时将生成模板、打印提示后以 0 退出。
     // 配置不合法时报错并以退出码 1 退出。
     let settings = config::Config::get_or_init();
-    // 2. 初始化本次运行的程序日志。
-    // 失败时不影响程序运行，输出终端警告，日志级别由配置文件中的 `[log] debug` 决定。
-    init_process_log(settings.log.debug);
+    // 2. 初始化本次运行的程序日志（进程内唯一，首次调用建日志文件并装上 logger）。
+    // 失败时不影响程序运行，输出终端警告；级别由配置文件中的 `[log] debug` 决定。
+    let _ = ProcessLog::get_or_init();
 
     // 3. 初始化看门狗，进程内唯一，不存在就创建。
     // 所有关于程序状态、信息获取与对不同生命周期的处理逻辑都通过看门狗进行。

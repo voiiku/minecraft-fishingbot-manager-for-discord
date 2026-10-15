@@ -16,7 +16,7 @@
    `minecraft-fishingbot-manager-for-discord.conf.example.toml`: writing the template and printing the note both happen
    inside this call, and the process then exits right there with code 0, without touching Discord. When the file does
    exist, the path it found is printed to the terminal before continuing (no logger is installed at this point, so the
-   terminal is the only place; the `config loaded: ...` line in the program log comes from `init_process_log`).
+   terminal is the only place; the `config loaded: ...` line in the program log comes from `ProcessLog::get_or_init`).
 3. When the file exists, its text is read. `Config::from_toml_text` parses the TOML into a value tree, recursively trims
    every string value and maps the result straight into the runtime `Config` with Serde's `Deserialize` implementation
    (the only cleanup in the whole chain); the three keys of `[paths]` are expanded into paths rooted at `base_dir` by
@@ -130,7 +130,7 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
   is called without arguments.
 * `[log]`: `debug`. The level switch of the program log. With `false` (the default) our own records start at `INFO`
   and third-party crates (serenity, poise) at `WARN`; with `true` both go down to `DEBUG` (turning debug on means
-  hearing everything). The `RUST_LOG` environment variable wins and drives both levels; details in
+  hearing everything). This is the only level switch (environment variables are no longer read); details in
   [process-log-en_us.md](../process-log/process-log-en_us.md).
 * `[text]`: `help`. The full output of `/help` (a multi-line string, so the wording can be changed without a
   rebuild).
@@ -215,9 +215,8 @@ matching language too.
   so changing this line and restarting is enough.
 * `[log] debug` is "do we also listen to the frameworks". With `false` (the default) our own records start at `INFO`
   and third-party crates (serenity, poise) at `WARN`, because they print `INFO` on every heartbeat and would drown the
-  important lines (startup, commands, replies); with `true` both go down to `DEBUG`. To watch for a moment, or to see
-  the frameworks' `TRACE`, set the `RUST_LOG` environment variable (it wins, and both this project and the third-party
-  crates follow it).
+  important lines (startup, commands, replies); with `true` both go down to `DEBUG` (turning debug on means hearing
+  everything; `TRACE`, which is finer than `DEBUG`, is out of reach).
 * `[fishingbot]`: the whole table has defaults (the same as the template shipped with the repository), and anything
   wrong is reported at startup with the field named - because a wrong value only makes the jar **run quietly with its
   defaults** (measured: an unknown enum value falls back silently, an unrecognised version is probed by the jar

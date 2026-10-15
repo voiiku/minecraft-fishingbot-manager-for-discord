@@ -43,7 +43,7 @@ pub use watchdog::{WATCHDOG, Watchdog, WatchdogSlot};
 
 pub use bot_control::BotLogView;
 pub use bot_manage::BotLoginPrompt;
-pub use process_log::init_process_log;
+pub use process_log::ProcessLog;
 pub use show::FishingbotConfigView;
 pub use utils::regenerate_fishingbot_config;
 

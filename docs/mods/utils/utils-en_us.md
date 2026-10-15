@@ -259,8 +259,8 @@ greater than `2`), so that filter is still needed today.
 
 ### 7.2 The program log: one copy in the terminal, one in a file
 
-The logger installed by `src/process_log.rs` (`init_process_log`, called by the process entry before the framework is
-assembled) writes the frameworks' `log::*` and the library's to two places at once:
+The logger installed by `src/process_log.rs` (`ProcessLog::get_or_init`, called by the process entry before the
+framework is assembled) writes the frameworks' `log::*` and the library's to two places at once:
 
 * Terminal (stderr): `journalctl -u minecraft-fishingbot-manager-for-discord`, or the foreground output. For watching things
   live, and it is still there when systemd runs the program.
@@ -270,16 +270,15 @@ Details:
 
 * The naming is the same as for bot logs (both come from `create_timestamped_log_file`) and each record looks like
   `[2026-09-28 15:30:12] [INFO] ...`, plain text with no colour, so the file stays clean.
-* Levels: `RUST_LOG` wins (single level words only, `debug` for example), otherwise the config's `[log] debug` decides
-  (`false` means this project from `info` and the frameworks from `warn`; `true` means both at `debug`). The filter the
-  frameworks ship with supports directives such as `module=level`, but this project deliberately keeps a single-level
-  convention.
+* Levels come from the config's `[log] debug` and nothing else (`false` means this project from `info` and the
+  frameworks from `warn`; `true` means both at `debug`); there is no environment variable and no second switch. The
+  filter the frameworks ship with supports directives such as `module=level`, but this project deliberately keeps a
+  single-level convention.
 * This project's own diagnostics go through `log` as well (no more `println!`), so the terminal and the log file hold
-  the same, complete content. The only exceptions are the two warnings for when the log itself fails (the logger
-  cannot be installed, the log file cannot be created), at which point the logger is not usable yet.
+  the same, complete content. The only exception is the note for when the logger cannot be installed (at that point
+  the log system is not usable yet).
 * A log file that cannot be created (the deployment directory is not writable) is not fatal: one warning in the
-  terminal is all, and it never keeps a bot from running. That warning is written straight to the terminal whenever the
-  global level is stricter than `WARN` (`RUST_LOG=error` or `off`), so the level filter cannot swallow it.
+  terminal is all, and it never keeps a bot from running.
 
 ## 8. Related documents
 

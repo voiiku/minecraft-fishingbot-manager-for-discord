@@ -868,9 +868,9 @@ impl Text for EnUs {
             LogText::ProcessLogInstallFailed { reason } => {
                 format!("log init failed: {reason}")
             }
-            LogText::RustLogInvalidLevel { raw, fallback } => format!(
-                "RUST_LOG='{raw}' is not a single level word (off/error/warn/info/debug/trace); using {fallback}"
-            ),
+            LogText::ProcessLogAlreadyInstalled => {
+                "the log was already initialized; keeping the installed logger".to_string()
+            }
 
             // 进程入口与看门狗
             LogText::ConfigLoaded { path } => format!("config loaded: {path}"),

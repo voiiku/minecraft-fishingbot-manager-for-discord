@@ -68,7 +68,9 @@ src/
 ├── watchdog.rs                 网关看门狗（子模块见下）
 │   ├── gateway.rs              握手与探活判定 + REST 探活任务（纯计时；每轮尝试前重置计时）
 │   └── lifecycle.rs            掉线记账、重连信号、等一次尝试结束、停机退出与永久失败退出
-├── process_log.rs              程序日志：终端（stderr）+ <部署目录>/logs/时间戳.log
+├── process_log.rs              程序日志：终端（stderr）+ <部署目录>/logs/时间戳.log（子模块见下）
+│   ├── levels.rs               级别判定（本项目与第三方两档上限）
+│   └── format.rs               记录渲染（时间戳、级别前缀、续行缩进）
 ├── config.rs                   外置配置的加载、校验与访问（子模块见下）
 │   ├── schema.rs               配置结构体（与 toml 一一对应）
 │   ├── parse.rs                TOML 反序列化 + 路径展开

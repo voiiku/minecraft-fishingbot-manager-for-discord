@@ -26,9 +26,7 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
 ## 4. 程序日志文件中没有框架（serenity、poise）的日志
 
 默认情况下：框架的日志只记录 `WARN`/`ERROR` 级别，因为它们按心跳节奏打印大量重复的 `INFO`，把配置里
-`[log] debug` 改成 `true` 后重启本程序生效。
-或临时用 `RUST_LOG=debug ./minecraft-fishingbot-manager-for-discord` 启动。
-`RUST_LOG` 优先于配置设置。
+`[log] debug` 改成 `true` 后重启本程序生效（级别只看这一行配置，没有环境变量可以覆盖它，也无法临时放宽）。
 
 ## 5. 程序日志显示 `Discord 初始化失败: Missing Access`，进程连上 Discord 后立即退出
 

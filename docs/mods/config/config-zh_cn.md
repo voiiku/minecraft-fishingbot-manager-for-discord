@@ -15,7 +15,7 @@
 2. 文件不存在时，按仓库里的 `minecraft-fishingbot-manager-for-discord.conf.example.toml` 生成一份：写模板与
    打印提示都在这一步里做，然后就地以退出码 0 结束进程，不进 Discord。文件已存在则在终端提示找到的那份
    配置文件路径再往下走（这一步日志系统还没装，所以证据只在终端；程序日志里那句"已加载配置: …"由
-   `init_process_log` 补）。
+   `ProcessLog::get_or_init` 补）。
 3. 文件存在时读文本，`Config::from_toml_text` 先把 TOML 解析成值树、递归去掉所有字符串值两头的空白，再用
    Serde 的 `Deserialize` 实现直接映射成运行时 `Config`（这是全链路唯一一次清洗）；其中 `[paths]` 那三个键
    由 `Paths` 自己的反序列化实现展开成以 `base_dir` 为根的路径。这一步只负责格式解析与结构转换，不负责所有配置规则。
@@ -96,8 +96,8 @@
   （目录名、文件名、内容丢到哪里）。跟着 JAR 走，整张表必填；示例配置里是 `raw`、`log0.log`、`/dev/null`。
 * `[ping]`：`default_ping_host`、`default_ping_port`、`timeout_ms`。`/ping` 不带参数时的默认目标与超时。
 * `[log]`：`debug`。程序日志的级别开关。`false`（默认）时本项目自己的记录 `INFO` 起、第三方库
-  （serenity、poise）`WARN` 起；`true` 时两边都放到 `DEBUG`（打开 debug 就是全都要）。环境变量
-  `RUST_LOG` 优先，且两档都按它走；细节见 [process-log.md](../process-log/process-log-zh_cn.md)。
+  （serenity、poise）`WARN` 起；`true` 时两边都放到 `DEBUG`（打开 debug 就是全都要）。这是唯一的级别
+  开关（不再认环境变量）；细节见 [process-log.md](../process-log/process-log-zh_cn.md)。
 * `[text]`：`help`。`/help` 的完整输出（多行字符串，改文案不用重新编译）。
 
 ### 3.1 关键词放哪里：`[keywords]`、`[command_echo]` 与 `[i18n]`
@@ -164,8 +164,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
   一致；给中文 jar 部署时改成 `CHINESE_SIMPLIFIED`），两种语言都编在二进制里，改这一行重启即生效。
 * `[log] debug` 是"要不要连框架的话一起听"。`false`（默认）时本项目自己打的日志 `INFO` 起、第三方库
   （serenity、poise）`WARN` 起，因为它们按心跳节奏打 `INFO`，会淹没启动、指令、回复这些关键行；
-  `true` 时两边都放到 `DEBUG`。只想临时看一眼、或要看框架的 `TRACE`，设环境变量 `RUST_LOG`（它优先，
-  本项目与第三方都按它走）。
+  `true` 时两边都放到 `DEBUG`（打开 debug 就是全都要；比 `DEBUG` 更细的 `TRACE` 拿不到）。
 * `[fishingbot]`：整张表都有默认值（与随仓库发布的模板一致），写错的地方会在启动时报错并点名字段 ——
   因为写错的取值 jar 只会**安静地按默认值跑**（实测：未知枚举值静默回落、版本号认不出来它自己探测），
   在这里拦住更省事。会被拦下的有：`server_ip` 空、`server_port` 是 0、`default_protocol` 既不是

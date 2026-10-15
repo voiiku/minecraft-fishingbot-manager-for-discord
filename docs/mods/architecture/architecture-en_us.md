@@ -71,7 +71,9 @@ src/
 ├── watchdog.rs                 gateway watchdog (submodules below)
 │   ├── gateway.rs              handshake and probe criteria + the REST probe task (pure timing; timers reset per attempt)
 │   └── lifecycle.rs            offline bookkeeping, the reconnect signal, waiting for an attempt to end, shutdown/exit
-├── process_log.rs              program log: terminal (stderr) + <deploy dir>/logs/timestamp.log
+├── process_log.rs              program log: terminal (stderr) + <deploy dir>/logs/timestamp.log (submodules below)
+│   ├── levels.rs               level decision (one ceiling for this project, one for third parties)
+│   └── format.rs               record rendering (timestamp, level prefix, continuation indent)
 ├── config.rs                   loading, validation and access for the external config (submodules below)
 │   ├── schema.rs               config structs (one to one with the toml)
 │   ├── parse.rs                TOML deserialisation + path expansion

@@ -60,8 +60,8 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    `ctx.defer*`. Do not use: the framework's own logging channel - all logging goes through our own `process_log.rs`
    (a self-implemented `log::Log`). poise's `tracing` `log` feature forwards framework logs to this channel; real runs
    have confirmed the records appear in the program log.
-   There is only one configuration file, `minecraft-fishingbot-manager-for-discord.conf.toml` (no environment variables,
-   except `RUST_LOG`).
+   There is only one configuration file, `minecraft-fishingbot-manager-for-discord.conf.toml` (no environment
+   variables at all).
 2. Avoid writing files outside the deployment directory as far as possible. Every generated file lives either in the
    deployment directory (the directory of the executable: the configuration, and the program log under `logs/`) or in
    a bot directory (`paths.base_dir/bots/<Discord user ID>/<bot name>`). There are no exceptions today: the framework

@@ -169,7 +169,6 @@ timeout_ms = 3000
 # ------------------------------ Process log level ------------------------------
 # false: Record this project's all logs, framework (serenity / poise)'s WARN/ERROR.
 # true:  Record everything.
-# The RUST_LOG environment variable (one of off/error/warn/info/debug/trace) takes precedence.
 # The log goes to the terminal and to logs/<timestamp>.log.
 [log]
 debug = false
