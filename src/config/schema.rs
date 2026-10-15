@@ -101,7 +101,7 @@ pub struct Paths {
     pub fishingbot_config: PathBuf,
 }
 
-/// FishingBot `config.json` 中由本项目管理的字段；其余字段沿用模板。
+/// FishingBot `conf.json` 中由本项目管理的字段；其余字段沿用模板。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FishingBotConfig {
@@ -390,7 +390,7 @@ port = 25565
         let paths = read_paths(
             &base_dir.display().to_string(),
             "FishingBot.jar",
-            "config.json",
+            "conf.json",
         )
         .expect("符合规则的路径应当通过");
 
@@ -399,7 +399,7 @@ port = 25565
         assert_eq!(paths.jar, base_dir.join("FishingBot.jar"));
         assert_eq!(
             paths.fishingbot_config,
-            base_dir.join("config.json"),
+            base_dir.join("conf.json"),
             "配置里写的是文件名，运行时是展开后的完整路径"
         );
     }
@@ -407,7 +407,7 @@ port = 25565
     /// 相对路径的 `base_dir` 会被拒绝（提示写绝对路径）。
     #[test]
     fn relative_base_dir_is_rejected() {
-        let err = read_paths("fishingbots", "FishingBot.jar", "config.json")
+        let err = read_paths("fishingbots", "FishingBot.jar", "conf.json")
             .expect_err("相对 base_dir 应当报错");
 
         // 措辞断言钉默认语言（英语）的片段（默认语言是 `Language::default()`，见 `docs/mods/i18n/i18n-zh_cn.md`）。
@@ -425,7 +425,7 @@ port = 25565
         let err = read_paths(
             &base_dir,
             &absolute("opt/FishingBot.jar").display().to_string(),
-            "config.json",
+            "conf.json",
         )
         .expect_err("绝对 jar 应当报错");
         // 措辞断言同 `relative_base_dir_is_rejected`：钉默认语言（英语）的片段。
@@ -437,7 +437,7 @@ port = 25565
         let err = read_paths(
             &base_dir,
             "FishingBot.jar",
-            &absolute("etc/config.json").display().to_string(),
+            &absolute("etc/conf.json").display().to_string(),
         )
         .expect_err("绝对 fishingbot_config_file_name 应当报错");
         assert!(

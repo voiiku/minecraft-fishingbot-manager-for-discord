@@ -42,9 +42,10 @@
   `create_bot_log_file`、`create_timestamped_log_file`、`target_logs_dir`、`latest_log_path`。
 * `fishingbot_config`：游戏侧配置（FishingBot 的 `conf.json`）的生成：先删旧文件，再用随仓库发布的模板
   `fishingbot-config.example.json` 当底、覆盖 `[fishingbot]` 那几个键（`misc.language` 直接写
-  `[i18n] language` 的取值，它的取值本来就是 jar 的常量名）。写出来的是完整配置，不依赖 jar 补字段。
+  `[i18n] language` 解析出来的语言，它的取值本来就是 jar 的常量名）。写出来的是完整配置，不依赖 jar 补字段。
   入口 `regenerate_fishingbot_config`（只在进程启动时调一次，见
-  [config.md 第 3.2 节](../config/config-zh_cn.md#32-游戏侧配置confjson是生成物)）。
+  [config.md 第 3.2 节](../config/config-zh_cn.md#32-游戏侧配置confjson是生成物)）：它只读配置，干活那半
+  `write_fishingbot_config`（路径与取值都由调用方给全）在临时目录里可单测。
 * `fs`：文件与目录操作原语，只回答怎么碰文件（尾部读行、列子目录名、删一个可能不存在的目录）；碰哪个
   与失败怎么说都归调用方。入口 `read_lines_backwards_until`、`read_last_lines`、
   `list_subdirectory_names`、`remove_dir_all_if_exists`。

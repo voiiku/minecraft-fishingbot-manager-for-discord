@@ -52,7 +52,9 @@
   template shipped with the repository (`fishingbot-config.example.json`) as the base and override those
   `[fishingbot]` keys (`misc.language` is written straight from `[i18n] language`, whose value is the jar's constant
   name). What gets written is a complete config and does not rely on the jar filling fields in. Entry point
-  `regenerate_fishingbot_config` (called once at process startup, see
+  `regenerate_fishingbot_config` (called once at process startup; it only reads the config, while the half that does
+  the work - `write_fishingbot_config`, with the path and values all passed in - is unit-tested in a temp directory;
+  see
   [config-en_us.md](../config/config-en_us.md) section 3.2).
 * `fs`: file and directory primitives; they only answer how to touch a file (read lines from the tail, list
   subdirectory names, remove a directory that may not exist). Which file and what to say on failure belong to the

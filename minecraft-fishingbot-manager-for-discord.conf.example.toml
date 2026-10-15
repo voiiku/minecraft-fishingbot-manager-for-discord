@@ -29,7 +29,7 @@ base_dir = "/absolute/path/yourfolder/fishingbots"
 # Prefer a build that also has the in-game `/pause` and `/unpause` commands;
 # upstream's jar those two slash commands can only report "sent" (see README.md).
 jar = "FishingBot-2.13.15.jar"
-# File name of the config FishingBot itself reads (its `config.json`), relative to base_dir.
+# File name of the config FishingBot itself reads (its `conf.json`), relative to base_dir.
 # This project writes that file at startup from `[fishingbot]` below, deleting the old file first,
 # so edits that file do not survive a restart. Change `[fishingbot]` instead.
 fishingbot_config_file_name = "conf.json"

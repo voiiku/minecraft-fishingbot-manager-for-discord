@@ -121,7 +121,7 @@
 ### 3.2 游戏侧配置（`conf.json`）是生成物
 
 FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置的命令行参数**（启动参数只有 `-nogui`、
-`-help`、`-logsdir`、`-config`、`-refreshToken`、`-onlyCreateConfig`），所以"把它那份 `config.json` 合并
+`-help`、`-logsdir`、`-config`、`-refreshToken`、`-onlyCreateConfig`），所以"把它那份 `conf.json` 合并
 进 TOML"只能是**单向生成**：TOML 是唯一真源，进程启动时写出那份 JSON（代码在 `utils/fishingbot_config.rs`）。
 
 生成方式：**拿随仓库发布的模板当底、只覆盖 `[fishingbot]` 里那几个键**。
@@ -138,7 +138,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 * **先删旧文件**：这份文件是生成物，手改它在下次启动后不会留下 —— 要改就改 `[fishingbot]`，要改默认值就
   改模板。
 
-上游改了配置结构（加键、改名、删键）时怎么办：拿新 jar 生成的默认 `config.json` 覆盖成模板，然后跑
+上游改了配置结构（加键、改名、删键）时怎么办：拿新 jar 生成的默认 `conf.json` 覆盖成模板，然后跑
 `cargo test` —— `template_holds_every_managed_path` 会先红（托管路径在模板里找不到），照着提示同步
 `managed_values` 与 `[fishingbot]` 即可。这是**唯一**需要跟着上游动的维护点。
 

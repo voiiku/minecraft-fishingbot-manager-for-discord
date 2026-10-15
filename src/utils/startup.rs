@@ -1,6 +1,6 @@
-//! 启动：拉起会话的四步流程（`/start`、`/startall` 与重启里的拉起部分共用）。
+//! 启动会话的四步流程
 //!
-//! 批次启动是四个显式步骤（见 [`start_bot_sessions_now`]），shell 脚本只负责"跑 JVM → 过滤 → 追加日志"：
+//! 批次启动是四个显式步骤（见 [`start_bot_sessions_now`]）
 //!
 //! 1. 建这次运行的日志文件（[`super::bot_log_files::create_bot_log_file`]）；
 //! 2. 准备 FishingBot 自己的日志目录（[`reset_fishingbot_logs_dir`]）；
@@ -33,8 +33,8 @@ struct StartRequest {
     reply: SyncSender<LaunchOutcome>,
 }
 
-/// 批次准入状态：两次登录之间的间隔由 `[startup_queue] login_interval_ms` 决定，这里只记"上一次登录是
-/// 什么时候"与"当前批次已经拉起了几台"。状态跨请求保留，所以连续命令也绕不过限流。
+/// 批次准入状态：两次登录之间的间隔由 `[startup_queue] login_interval_ms` 决定
+/// 这里只记"上次登录时间"与"当前批次已经尝试启动几台"。状态保留。
 struct StartBatchGate {
     batch_size: usize,
     /// 两次登录之间的最小间隔。
@@ -768,7 +768,7 @@ mod tests {
         let log_path = Path::new("/srv/bots/1/duck/logs/2026-09-28-01-47-01.log");
         let fishingbot_logs_dir = Path::new("/srv/bots/1/duck/logs/raw");
         let jar = Path::new("/fishingbots/FishingBot.jar");
-        let fishingbot_config = Path::new("/fishingbots/config.json");
+        let fishingbot_config = Path::new("/fishingbots/conf.json");
 
         let command = launch_command_line(
             log_path,
@@ -806,7 +806,7 @@ mod tests {
                 token_file_name: "refreshToken",
                 filter_regex: "XP",
                 jar: Path::new("/tmp/FishingBot.jar"),
-                fishingbot_config: Path::new("/tmp/config.json"),
+                fishingbot_config: Path::new("/tmp/conf.json"),
             },
         );
 

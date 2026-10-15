@@ -9,7 +9,7 @@ use crate::utils::MAX_ATTACHMENT_BYTES;
 /// 游戏侧配置附件数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FishingbotConfigView {
-    /// 配置文件名（附件的文件名就是它，通常是 `config.json`）。
+    /// 配置文件名（附件的文件名就是它，通常是 `conf.json`）。
     pub file_name: String,
     /// 配置全文。
     pub content: String,
@@ -34,7 +34,7 @@ pub(crate) fn fishingbot_config_view() -> Result<FishingbotConfigView, String> {
     let file_name = fishingbot_config_path
         .file_name()
         .and_then(|file_name| file_name.to_str())
-        .unwrap_or("config.json")
+        .unwrap_or("conf.json")
         .to_string();
 
     Ok(FishingbotConfigView { file_name, content })

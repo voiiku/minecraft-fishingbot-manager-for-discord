@@ -1094,6 +1094,11 @@ impl Text for EnUs {
             LogText::FishingbotConfigTemplateInvalid { reason } => {
                 format!("the bundled game-side config template is unusable: {reason}")
             }
+            LogText::FishingbotConfigTemplatePathMissing { path } => {
+                format!(
+                    "tried to find {path} in the game-side config template, but that path does not exist"
+                )
+            }
             LogText::CreateLogDirFailed { dir, reason } => {
                 format!("failed to create the log directory {dir}: {reason}")
             }

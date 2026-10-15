@@ -198,8 +198,10 @@ pub enum LogText<'a> {
     FishingbotConfigWriteFailed { path: &'a str, reason: &'a str },
     /// 把游戏侧配置序列化成 JSON 失败（理论上不会发生，理由写进调用点）。
     FishingbotConfigSerializeFailed { reason: &'a str },
-    /// 仓库里那份游戏侧配置模板用不了：不是合法 JSON，或与生成代码对不上（上游改了键名）。
+    /// 仓库里那份游戏侧配置模板用不了：不是合法 JSON。
     FishingbotConfigTemplateInvalid { reason: &'a str },
+    /// 模板里找不到某个托管路径（上游改了键名或删了键）。
+    FishingbotConfigTemplatePathMissing { path: &'a str },
 
     // ============ 日志文件读写（`utils/bot_log_files.rs`） ============
     /// 建日志目录失败。

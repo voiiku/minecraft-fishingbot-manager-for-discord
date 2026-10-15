@@ -63,7 +63,7 @@ pub struct Config {
     pub text: TextConfig,
 }
 
-/// `config_file_path` 的默认值：按可执行文件位置现算（取不到就留空，装载期会以同一个错误退出）。
+/// `config_file_path` 的值，按可执行文件位置推导（取不到就留空，装载会以错误退出）。
 fn default_config_file_path() -> PathBuf {
     Config::install_dir().map_or_else(|_| PathBuf::new(), |dir| dir.join(CONFIG_FILE_NAME))
 }

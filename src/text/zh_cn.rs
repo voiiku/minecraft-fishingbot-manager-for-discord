@@ -1031,6 +1031,9 @@ impl Text for ZhCn {
             LogText::FishingbotConfigTemplateInvalid { reason } => {
                 format!("随仓库发布的游戏侧配置模板用不了: {reason}")
             }
+            LogText::FishingbotConfigTemplatePathMissing { path } => {
+                format!("尝试在游戏侧配置模板中寻找{path}，但此路径不存在")
+            }
             LogText::CreateLogDirFailed { dir, reason } => {
                 format!("创建日志目录 {dir} 失败: {reason}")
             }

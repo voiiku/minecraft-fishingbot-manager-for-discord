@@ -17,7 +17,7 @@ impl Config {
             toml::from_str(text).map_err(|error| Self::parse_failed(&error.to_string()))?;
         trim_string_values(&mut value);
 
-        // 映射失败的文本自带表名与字段名（例如“invalid type … in `ping.port`”），直接用即可。
+        // 把值树按目标类型自动映射到 `Config`结构体，失败文本直接返回给用户。
         value
             .try_into()
             .map_err(|error| Self::parse_failed(&error.to_string()))

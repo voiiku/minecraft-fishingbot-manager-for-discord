@@ -42,7 +42,7 @@ impl Language {
         &["ENGLISH", "CHINESE_SIMPLIFIED"]
     }
 
-    /// 返回 FishingBot `config.json` 中使用的语言名。
+    /// 返回 FishingBot `conf.json` 中使用的语言名。
     pub fn name(self) -> &'static str {
         match self {
             Self::ChineseSimplified => "CHINESE_SIMPLIFIED",
@@ -96,7 +96,7 @@ pub trait Text: Send + Sync {
     // ========== FishingBot.jar 自己打印的固定文案（`utils/bot_status.rs`）==========
     // 用来在机器人日志里认出"重连了"，不是我们发到 Discord 的话。
     // 这两句由 JAR 自己的语言资源决定（各部署都一样），所以不放进配置、不放 `[keywords]`：
-    // `[i18n] language` 的取值会原样写进生成出来的 config.json（`misc.language`），JAR 就按它说话，
+    // `[i18n] language` 的取值会原样写进生成出来的 conf.json（`misc.language`），JAR 就按它说话，
     // 两边是同一个值，不会对不上。
     // 与游戏服务器 / 本机环境有关的关键词（进服提示、结束标记、刷屏噪声）各部署不同，
     // 仍留在配置的 `[keywords]` 里。
