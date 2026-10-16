@@ -18,7 +18,7 @@ use crate::utils::reply::{BotStartOutcome, BotStartResults};
 /// 账本的内部状态。
 #[derive(Debug, Default)]
 struct LedgerState {
-    /// 还在等结果的机器人名（空了就是这次调用齐了）。
+    /// 仍在等待结果的机器人名（为空即本次调用已齐）。
     pending_bot_names: HashSet<String>,
     /// 已经写回的结果（按跑完顺序）。
     results: BotStartResults,
@@ -75,7 +75,7 @@ impl StartLedger {
         );
     }
 
-    /// 写回一台的"取消"结果：还没拉起就被"停止全部机器人"撤了下来（见 [`BotStartOutcome::Cancelled`]）。
+    /// 写回一台的"取消"结果：尚未拉起便被"停止全部机器人"撤下（见 [`BotStartOutcome::Cancelled`]）。
     pub(super) fn record_cancelled(&self, bot_dir_entry: &BotDirEntry) {
         self.record(bot_dir_entry.clone(), BotStartOutcome::Cancelled);
     }
@@ -200,7 +200,7 @@ mod tests {
         assert!(taken_again.iter().next().is_none(), "结果取走之后就空了");
     }
 
-    /// 两个账本互不串台：谁登记的机器人，结果就落在谁的账本里。
+    /// 两个账本互不混淆：结果只落在登记该机器人的账本里。
     #[test]
     fn two_ledgers_keep_their_own_results() {
         let startall = StartLedger::new(&[bot("duck"), bot("goose")]);
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(results.cancelled_bot_names(), ["duck"]);
     }
 
-    /// 超时：还没回结果的按"没等到"收尾，等账本的人不会一直被挂在那里。
+    /// 超时：尚未回结果的按"没等到"收尾，等待账本者不会被一直阻塞。
     #[test]
     fn waiting_gives_up_after_the_timeout_and_records_the_rest() {
         let ledger = StartLedger::new(&[bot("duck"), bot("goose")]);

@@ -88,7 +88,7 @@ impl Watchdog {
 
     /// 根据当前时刻判定网络状态（时序取自 [`Watchdog`] 的字段）。
     fn state(&self, now: Instant) -> GatewayState {
-        // 先看有没有握过手。
+        // 先判断本次尝试是否已握手。
         let handshaken = self
             .last_handshake
             .lock()
@@ -108,12 +108,12 @@ impl Watchdog {
                 GatewayState::Waiting
             };
         }
-        // 获取探活失败的起始时刻
+        // 读取探活失败的起始时刻。
         let unhealthy_since = *self
             .unhealthy_since
             .lock()
             .expect("尝试判定网络状态时，看门狗的 unhealthy_since 字段的互斥锁被占用");
-        // 失败累计满一个窗口才判断联；没满就是网络波动。
+        // 失败累计满一个窗口才判掉线；未满只视为网络波动。
         match unhealthy_since {
             Some(unhealthy_since) if now.duration_since(unhealthy_since) >= self.window => {
                 GatewayState::Unreachable
@@ -130,18 +130,18 @@ impl Watchdog {
 
             loop {
                 tokio::time::sleep(interval).await;
-                // 如果为 true 就表示这一轮已经结束。
+                // 为 `true` 即表示本轮已结束。
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
 
-                // 尝试取自身账号信息
+                // 读取自身账号信息。
                 let probed = http.get_current_user().await;
-                // 过程中被叫停就丢掉这次结果。
+                // 期间收到停止标志就丢弃本次结果。
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
-                // 取到自身信息就算网络通畅。失败原因写日志。
+                // 取到自身信息即视为网络通畅；失败原因写入日志。
                 match probed {
                     Ok(_) => self.clear_probe_failures(),
                     Err(e) => {

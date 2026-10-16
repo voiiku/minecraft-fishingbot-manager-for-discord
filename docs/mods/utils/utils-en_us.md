@@ -33,10 +33,9 @@
   can clean it up), `is_bot_screen_running`, `session_name`, `send_command_to_single_bot`,
   `send_stop_signal_to_session` and `force_quit_session`.
 * `running_bots`: the single source of the bot state (whether it is started comes from the session, whether it is
-  queued comes from the queue). Grouping by run state, the names of the running ones, a status snapshot (including the
-  `/show status` header and rows) and the refusal text for running or queued bots. Entry points
-  `split_bot_entries_by_is_running`, `all_running_bot_names`, `all_running_bot_infos`, `RunningBotInfo`
-  (`into_row`), `status_table_header` and `refusal_if_not_stopped`.
+  queued comes from the queue). Grouping by run state, the names of the running ones, the `/show status` rows and the
+  refusal text for running or queued bots. Entry points `split_bot_entries_by_is_running`, `all_running_bot_names`,
+  `all_running_bot_status_rows` and `refusal_if_not_stopped`.
 * `startup`: starting. Launching one bot is "check the token -> create the log -> prepare the raw log
   directory -> `screen -dmS`"; targets without a token are not launched. Batch starting is orchestrated by
   `StartupQueue::start_bots()` (create the ledger -> `add_bots_to_queue` hands it over -> wait for its own entries -> take
@@ -125,16 +124,15 @@
 snapshot. The join between a directory and a session happens only in this module, so nothing else walks directories to
 match session names:
 
-* The `/show status` table: the snapshot `RunningBotInfo` (including `all_running_bot_infos()`) is in this module, and so
-  are the header (`status_table_header()`) and the rows (`into_row(self)`). Two four-element arrays sit next to each
-  other and are read column by column; both statuses are snapshots of this call, the fields are private and
-  `into_row(self)` can only consume them once, so they are discarded right after rendering (see
+* The rows of the `/show status` table: `all_running_bot_status_rows()` lives in this module and joins the four cells of
+  each bot into one line on the spot (`status_row`, a `String` discarded right after rendering, with no snapshot type);
+  the header is built by `show/status.rs` itself, so the two sides must agree on the column order (see
   [commands-en_us.md](../commands/commands-en_us.md) section 6.2).
 * `split_bot_entries_by_is_running(&[BotDirEntry])` returns the running and the non-running group; which batch of
   directories is taken is decided by the caller (`all_bot_dir_entries()` or `token_ready_bot_dir_entries()`), see
   [commands-en_us.md](../commands/commands-en_us.md) section 5.2.
 * `all_running_bot_names()` returns the names of every running bot (used by `/commandall`): the scope matches
-  `all_running_bot_infos()` (every bot with a configured token), it calls `screen -list` once and reads no logs.
+  `all_running_bot_status_rows()` (every bot with a configured token), it calls `screen -list` once and reads no logs.
 
 One snapshot reused in many places is deliberate: if a batch flow probed again every time, a session started a moment
 ago would immediately count as already running and the statistics would drift.
@@ -234,8 +232,8 @@ stored:
   current state.
 * The online status can only be confirmed from the log (only the JVM knows whether it is connected or dropped) and a
   stored copy would be stale immediately, so it is not kept across calls: `bot_dir_entry.connection_status()` reads it
-  fresh on every call and the caller always gets the newest one (the `RunningBotInfo.connection_status` inside
-  `/show status` is a snapshot for that rendering only and is dropped right after).
+  fresh on every call and the caller always gets the newest one (the cell inside `/show status` is a string for that
+  rendering only and is dropped right after).
 
 That way `/show status` (a high-frequency command) does not have to scan a log back to the beginning of the file to find a
 pause keyword for a session that never showed one. Both the start and the end of a session forget this state

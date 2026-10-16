@@ -29,9 +29,8 @@
   算在跑，好让 `/stop` 能清掉它）、`is_bot_screen_running`、`session_name`、
   `send_command_to_single_bot`、`send_stop_signal_to_session`、`force_quit_session`。
 * `running_bots`：机器人的状态口径（是否启动看会话、是否排队看队列）。按运行状态分组、运行中的名字、
-  状态快照（含 `/show status` 的表头与数据行）、运行中与排队中拒绝文案。入口
-  `split_bot_entries_by_is_running`、`all_running_bot_names`、`all_running_bot_infos`、`RunningBotInfo`
-  （`into_row`）、`status_table_header`、`refusal_if_not_stopped`。
+  `/show status` 的数据行、运行中与排队中拒绝文案。入口 `split_bot_entries_by_is_running`、
+  `all_running_bot_names`、`all_running_bot_status_rows`、`refusal_if_not_stopped`。
 * `startup`：启动。逐台拉起是"查 Token → 建日志 → 准备原始日志目录 → `screen -dmS`"，缺 Token 的目标不拉起；
   命令方入口是 `StartupQueue::start_bots()`（建账本 → `add_bots_to_queue` 入队 → 等自己的条目都被拉起 → 取结果并
   复核一次 → `BotStartResults`，它自带 `into_report()` 与 `to_reply_text()`），`/start`、`/startall`、`/restart`
@@ -102,15 +101,14 @@
 `screen -list` 只调用一次并缓存成快照，之后所有在不在运行的判断都基于同一份快照。目录与会话的连接
 （join）只在本模块做，别处不要再遍历目录去匹配会话名：
 
-* `/show status` 那张表：快照 `RunningBotInfo`（含 `all_running_bot_infos()`）在本模块，表头
-  （`status_table_header()`）与数据行（`into_row(self)`）也在本模块。两个紧挨着的四元素数组，列序对着
-  看；两个状态都是本次调用的快照，字段私有、只能 `into_row(self)` 消费一次，渲完即丢（见
+* `/show status` 那张表的数据行：`all_running_bot_status_rows()` 在本模块，逐台算完四格就直接拼成一行文本
+  （`status_row`，渲完即弃的 `String`，没有快照类型）；表头由 `show/status.rs` 自己拼，两处列序要对齐（见
   [commands-zh_cn.md 第 6.2 节](../commands/commands-zh_cn.md#62-show-status)）。
 * `split_bot_entries_by_is_running(&[BotDirEntry])` 返回在运行与未运行两组；取哪批目录由调用方决定
   （`all_bot_dir_entries()` 或 `token_ready_bot_dir_entries()`），见
   [commands-zh_cn.md 第 5.2 节](../commands/commands-zh_cn.md#52-名单口径)。
 * `all_running_bot_names()` 返回所有在跑的机器人的名字（`/commandall` 用）：范围与
-  `all_running_bot_infos()` 一致（所有配好 Token 的），只查一次 `screen -list`，不读日志。
+  `all_running_bot_status_rows()` 一致（所有配好 Token 的），只查一次 `screen -list`，不读日志。
 
 一次快照、多处复用是有意的：批量流程里若每次都重新探测，前面刚启动的会话会立刻被后面算成已在运行，
 统计口径就会漂。
@@ -191,7 +189,7 @@
   判：最新的是另一条时，调用方按失败回一句，并把当前状态报出来。
 * 在线状态只能由日志确认（只有 JVM 知道它连没连上、有没有掉线），存下来的副本立刻会过期，所以它不跨
   调用保存：`bot_dir_entry.connection_status()` 每次调用都当场重新取一次，调用者拿到的永远是最新的
-  （`/show status` 里那份 `RunningBotInfo.connection_status` 只是本次渲染的快照，渲完即丢）。
+  （`/show status` 里那一格只是本次渲染用的字符串，拼完即丢）。
 
 这样 `/show status`（高频命令）就不必为了找一个"这个会话从没出现过"的 pause 关键词把日志扫到文件开头。
 会话开始与结束时都会把这份状态忘掉（`forget_bot_pause_status`），所以它永远只描述这个会话。

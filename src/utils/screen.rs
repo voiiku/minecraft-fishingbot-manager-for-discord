@@ -1,5 +1,5 @@
-//! screen 会话的检测与指令注入。是本项目与机器人JVM之间的唯一通道
-//! 会话存在只代表机器人进程在运行，不代表机器人一定在线（见[`crate::utils::running_bots`]）
+//! screen 会话的检测与指令注入，是本项目与机器人 JVM 之间的唯一通道。
+//! 会话存在只代表机器人进程在运行，不代表机器人一定在线（见 [`crate::utils::running_bots`]）。
 
 use std::collections::HashMap;
 use std::process::Command;
@@ -9,8 +9,8 @@ use crate::text;
 
 use super::bot_name::ToCleanBotName;
 
-/// 清洗原始机器人名 + 只读 `runtime.screen_prefix` 这一个字段，拼出 screen 会话名（形如 `fb_机器人名`）。
-/// 名字非法（含特殊字符）时返回 `Err`：此类目录名不可能有以同一口径拉起的会话。
+/// 清洗原始机器人名，并只读取 `runtime.screen_prefix` 这一个字段，拼出 screen 会话名（形如 `fb_机器人名`）。
+/// 名字非法（含特殊字符）时返回 `Err`：此类名字不可能有按同一口径拉起的会话。
 pub fn session_name(raw_bot_name: &str) -> Result<String, String> {
     let clean_bot_name = raw_bot_name.to_clean_bot_name()?;
 
@@ -28,9 +28,8 @@ pub fn is_bot_screen_running(raw_bot_name: &str) -> bool {
 }
 
 /// 把一条游戏内指令注入机器人的会话（`/command` 与 `/commandall` 共用）。
-/// screen 原语，校验由调用者负责。
-/// 返回的错误文案可直接作为回复。
-/// 末尾需要加一个换行符，screen 的伪终端才会把内容作为一次提交。
+/// screen 原语：校验由调用者负责，错误文案可直接作为回复。
+/// 末尾必须带换行符，screen 的伪终端才会把内容作为一次提交。
 pub fn send_command_to_single_bot(bot_name: &str, bot_command: &str) -> Result<(), String> {
     let target_session_name = session_name(bot_name)?;
     let payload = format!("{bot_command}\n");
@@ -68,10 +67,10 @@ pub fn force_quit_session(session_name: &str) -> Result<(), String> {
 
 /// 一条 `screen -list` 里的会话。
 ///
-/// 死残壳（`(Dead ...)`）是 screen 进程还在、里面的 JVM 已经没了时留下它。它按运行中处理
-/// （因为[`is_bot_screen_running`] 与停止流程都按运行中处理，这样 `/stop` 才会走到
-/// `screen -X quit` 把残壳清掉）。
-/// 但状态判定必须认出它：JVM 已经结束，不应该读日志，而是直接认定这个机器人已经停止了。见 [`crate::utils::running_bots`]。
+/// 死残壳（`(Dead ...)`）指 screen 进程仍在、其内的 JVM 已退出后留下的会话。
+/// 它按运行中处理：[`is_bot_screen_running`] 与停止流程都视其为运行中，`/stop` 才会走到
+/// `screen -X quit` 把残壳清掉。
+/// 但状态判定必须认出它：JVM 已结束，不应读取日志，而是直接认定该机器人已停止，见 [`crate::utils::running_bots`]。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenSession {
     /// screen 进程的 PID（`screen -list` 里会话名前的数字）。
@@ -80,7 +79,7 @@ pub struct ScreenSession {
     pub is_dead: bool,
 }
 
-/// 获取当前所有存活的 screen 会话：会话名 → [`ScreenSession`]。
+/// 获取当前所有存活的 screen 会话，返回会话名到 [`ScreenSession`] 的映射。
 /// `screen -list` 的每条会话行形如 `12345.fb_gamename (Detached)`：第一个点之前的数字是 PID，
 /// 之后到空白为止是会话名（完整匹配，调用方按名字查即可），再后面括号里是状态。
 /// 解析细节（认哪些行、怎么认死残壳）在 [`parse_screen_list`]。
@@ -93,9 +92,9 @@ pub fn active_screen_sessions() -> HashMap<String, ScreenSession> {
 }
 
 /// [`active_screen_sessions`] 的解析部分。
-/// 只认「PID.会话名」后面跟着状态的会话行；头部说明行、尾部 `N Sockets in ...` 统计行、空行都跳过，
-/// 所以 `-list` 输出被截断时留下的半行自然也被跳过。状态段取括号里那段：
-/// 以 `Dead` 开头的算死残壳，其余（`(Attached)`、`(Detached)`）算活着；
+/// 只认「PID.会话名」后跟状态的会话行；头部说明行、尾部 `N Sockets in ...` 统计行与空行都跳过，
+/// 因此 `-list` 输出被截断时留下的半行也被跳过。状态段取括号内那段：
+/// 以 `Dead` 开头者视为死残壳，其余（`(Attached)`、`(Detached)`）视为存活。
 fn parse_screen_list(output: &str) -> HashMap<String, ScreenSession> {
     let mut sessions = HashMap::new();
 
@@ -105,7 +104,7 @@ fn parse_screen_list(output: &str) -> HashMap<String, ScreenSession> {
             continue;
         }
 
-        // 不是「PID.会话名 ...」形状的（说明行、统计行）就跳过。
+        // 不是「PID.会话名 ...」形状的（说明行、统计行）跳过。
         let mut parts = trimmed.split_whitespace();
         let Some(session_part) = parts.next() else {
             continue;
@@ -117,7 +116,7 @@ fn parse_screen_list(output: &str) -> HashMap<String, ScreenSession> {
             continue;
         };
 
-        // 状态段里带空格（`(Dead ???)`），所以按"第一个空白分隔的片段"取就够：
+        // 状态段内可能含空格（`(Dead ???)`），因此取"第一个空白分隔的片段"即可：
         // 它要么是 `(Detached)`，要么是 `(Dead`。
         let is_dead = parts
             .next()
@@ -136,8 +135,8 @@ fn parse_screen_list(output: &str) -> HashMap<String, ScreenSession> {
 mod tests {
     use super::*;
 
-    /// 真实的 `screen -list` 输出（头部说明行 + 三条会话 + 尾部统计行）：
-    /// 会话名从第一个点之后取，PID 取点之前那段，`(Dead ???)` 要认成死残壳。
+    /// 真实的 `screen -list` 输出（头部说明行、三条会话、尾部统计行）：
+    /// 会话名取第一个点之后的部分，PID 取点之前的部分，`(Dead ???)` 需识别为死残壳。
     #[test]
     fn screen_list_output_is_parsed() {
         let output = concat!(
@@ -175,7 +174,7 @@ mod tests {
     }
 
     /// 认不出的行一律跳过：说明行、统计行、空行、没有点的行，以及被截断、没有状态段的半行
-    ///（后者按活着算：老版本 screen 就不打状态）。
+    ///（后者按存活处理：老版本 screen 不打印状态段）。
     #[test]
     fn unrecognized_screen_list_lines_are_skipped() {
         let output = concat!(

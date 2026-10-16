@@ -122,9 +122,8 @@
   `/show status` 就不必为了找一个从没出现过的 pause 关键词扫到文件开头。写暂停状态的只有 `/pause` 与
   `/unpause` 那条确认路径，别处只读。例外是"进程已结束"：它不看日志，会话只剩 `(Dead ...)` 残壳时
   `running_bots` 直接给这个状态（JVM 已经没了，日志最后一条可能还是旧的"在线"）。
-* `/show status` 的表格与快照在同一个模块（`utils::running_bots`）：表头 `status_table_header()` 与数据行
-  `RunningBotInfo::into_row()` 是两个紧挨着的四元素数组（列序对着看，分隔符共用同一个常量）；加列或调序
-  就改那两个数组（外加 `text` 里的列名，中英各一份）。快照字段私有、只能 `into_row(self)` 消费一次。
+* `/show status` 的表格没有专门的类型：数据行由 `utils::running_bots::all_running_bot_status_rows()` 当场拼
+  （四格 + `" | "`），表头由 `show/status.rs` 当场拼，两处列序要对齐（列名在 `text` 里，中英各一份）。
   完整写法见 [docs/mods/commands/commands-zh_cn.md 第 6.2 节](../mods/commands/commands-zh_cn.md#62-show-status)。
 * 回复口径不许夸大：`/start` 与 `/restart` 只能确认命令已发送、会话已出现，因此回复写"已发送启动命令"；
   `/stop` 的停止流程当场复核，才可以回"已成功停止"；`/pause` 与 `/unpause` 发完等配置里

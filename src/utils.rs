@@ -1,6 +1,6 @@
 //! 项目公共工具函数。
 //!
-//! 此模块只依赖 `config`（读取配置）和`text`(文本)，不依赖更上层的业务模块。
+//! 此模块只依赖 `config`（读取配置）与 `text`（文本），不依赖更上层的业务模块。
 /// 单个附件的字节上限：Discord 普通上传上限是 10 MiB，这里留出余量。
 pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -34,8 +34,8 @@ pub use permission::{RequiredPermission, has_permission};
 pub use reply::{IntoReplyText, Report};
 pub(crate) use restart::restart_bot_sessions;
 pub use running_bots::{
-    RunningBotInfo, all_running_bot_infos, all_running_bot_names, refusal_if_not_stopped,
-    split_bot_entries_by_is_running, status_table_header,
+    all_running_bot_names, all_running_bot_status_rows, refusal_if_not_stopped,
+    split_bot_entries_by_is_running,
 };
 pub use screen::{is_bot_screen_running, send_command_to_single_bot};
 pub(crate) use shutdown::{stop_all_bot_sessions, stop_single_bot_session};

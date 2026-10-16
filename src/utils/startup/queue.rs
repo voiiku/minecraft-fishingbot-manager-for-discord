@@ -63,7 +63,7 @@ impl StartupQueue {
         popped
     }
 
-    /// 最近一次取出（= 上一批开始启动）的时刻。
+    /// 最近一次取出的时刻（即上一批开始启动的时刻）。
     pub(super) fn latest_poped_timestamp(&self) -> Instant {
         *self.latest_poped_timestamp_mut()
     }
@@ -96,7 +96,7 @@ mod tests {
 
     use super::*;
 
-    /// 队列只吃队列交互，取值随便给（这批用例不看节奏）。
+    /// 队列只做队列交互，取值随意给（这批用例不考察节奏）。
     fn queue() -> StartupQueue {
         queue_with_capacity(32)
     }
@@ -129,7 +129,7 @@ mod tests {
         )
     }
 
-    /// 一个待启动条目（机器人 + 一个只等它的账本）。
+    /// 一个待启动条目（机器人与一个只等它的账本）。
     fn queued(bot_name: &str) -> QueuedBot {
         let bot_dir_entry = bot(bot_name);
         let ledger = StartLedger::new(std::slice::from_ref(&bot_dir_entry));

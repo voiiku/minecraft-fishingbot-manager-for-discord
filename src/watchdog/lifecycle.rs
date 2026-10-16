@@ -8,11 +8,11 @@ use crate::text;
 
 use super::Watchdog;
 
-/// 退出信号收尾把报告发到各服务器的总时限
+/// 退出信号收尾时，把报告发到各服务器的总时限。
 const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 这一次尝试的结束原因
-/// 正常运行时三个分支都不发生
+/// 本次连接尝试的结束原因。
+/// 正常运行时三个分支都不会发生。
 /// [`Watchdog::wait_for_attempt`] 会一直等待此结束原因。
 enum AttemptEnding {
     /// `client.start()` 返回了：客户端被关停，或 token / Intent 非法这类致命错误。

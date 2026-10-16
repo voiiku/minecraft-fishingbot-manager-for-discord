@@ -1,7 +1,7 @@
 //! 看门狗：判定本进程与 Discord 的连接状态，并负责掉线后的进程内处理。
-//! - 本文件：Watchdog的构造方法
-//! - `gateway`：为Watchdog实现网络判定与 REST 探活任务
-//! - `lifecycle`：根据Watchdog状态实现掉线记录、重连信号与进程收尾相关具体处理逻辑。
+//! - 本文件：`Watchdog` 的构造方法。
+//! - `gateway`：为 `Watchdog` 实现网络状态判定与 REST 探活任务。
+//! - `lifecycle`：按 `Watchdog` 的状态实现掉线记录、重连信号与进程收尾。
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
@@ -39,10 +39,10 @@ pub struct Watchdog {
     notice_ctx: Mutex<Option<serenity::Context>>,
 }
 
-/// 进程内唯一的那一份看门狗：谁要谁调 `WATCHDOG.get_or_init()`（首次调用按配置建）。
+/// 进程内唯一的看门狗：使用方调用 `WATCHDOG.get_or_init()` 获取（首次调用按配置创建）。
 pub static WATCHDOG: WatchdogSlot = WatchdogSlot::new();
 
-/// 进程级单例的槽位：`get_or_init()` 取同一份（首次调用按配置建）。
+/// 进程级单例的槽位：`get_or_init()` 始终取到同一份（首次调用按配置创建）。
 /// 事件回调只收函数指针、捕获不了闭包，所以只能走这个入口。
 #[derive(Debug, Default)]
 pub struct WatchdogSlot(OnceLock<Watchdog>);
@@ -53,7 +53,7 @@ impl WatchdogSlot {
         Self(OnceLock::new())
     }
 
-    /// 取进程内唯一的那一份看门狗：首次调用按配置 `[timing]` 建，之后拿到的都是它。
+    /// 取进程内唯一的看门狗：首次调用按配置 `[timing]` 创建，之后拿到的一直是它。
     /// 只在 `static` 上调用（要交出 `'static` 的那一份），并在 `config::Config::get_or_init()` 之后调。
     pub fn get_or_init(&'static self) -> &'static Watchdog {
         self.0.get_or_init(|| Watchdog::from_config(Instant::now()))
@@ -73,7 +73,7 @@ impl Watchdog {
         )
     }
 
-    /// 按显式时序建一个看门狗（不读配置，所以暂时仅供测试用）。
+    /// 按显式时序创建看门狗（不读配置，因此仅供测试使用）。
     pub fn new(
         started: Instant,
         window: Duration,

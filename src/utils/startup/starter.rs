@@ -1,4 +1,4 @@
-//! 线程与启动的具体逻辑
+//! 线程与启动的具体逻辑。
 //!
 //! * 命令侧（[`StartupQueue::start_bots`]）：登记 → 入队 → 等自己的条目都被拉起过一遍 → 交给账本复核。
 //! * 线程侧（[`StartupQueue::run_starter`]）：等队列 → 等批间间隔 → 取一批 → 逐台拉起 → 交给账本。
@@ -126,7 +126,7 @@ impl StartupQueue {
             };
             entries[index].record(outcome);
 
-            // 批内相邻两台也隔一个间隔（JVM 启动错峰，别把内存占满）。
+            // 批内相邻两台也隔一个间隔（JVM 启动错峰，以免内存被占满）。
             let is_last_bot = index + 1 == entries.len();
             if !is_last_bot {
                 thread::sleep(Duration::from_millis(self.bot_login_interval_ms));
@@ -146,7 +146,7 @@ impl StartupQueue {
 
         // 与 `/bot login` 共用同一份实现（见 [`Self::add_bot_for_login`]）。
         let launch_result = Self::add_bot_for_login(bot_name, bot_dir_path);
-        // 拉起命令发出去了，新会话的状态要重置记忆的暂停状态。
+        // 拉起命令已发出：新会话需重置其暂停状态记忆。
         bot_name.forget_bot_pause_status();
 
         launch_result.map_or_else(BotStartOutcome::Failure, |_log_path| {
@@ -301,7 +301,7 @@ mod tests {
         /// 启动命令的拼接：JVM 输出过滤后追加进日志（`-logsdir` 指向丢弃目标）。
         ///
         /// 这条命令错了就拉不起机器人，所以按逐字对照钉住；期望串里的路径也用 `display()` 拼，
-        /// 免得 Windows 上因为分隔符不同而误报。
+        /// 避免 Windows 上因路径分隔符不同而误报。
         #[test]
         fn launch_command_is_built_as_expected() {
             let log_path = Path::new("/srv/bots/1/duck/logs/2026-09-28-01-47-01.log");

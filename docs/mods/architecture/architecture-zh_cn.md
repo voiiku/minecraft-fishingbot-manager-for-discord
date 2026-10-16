@@ -185,7 +185,7 @@ src/
   `bot_manage`、`show`、`all_bots_control`）与 utils 原语层。
 * 框架只出现在命令层与进程入口：业务层与 `lib.rs` 不引用 serenity 与 poise，只吃普通参数、返回
   `Result<String, String>`，这样业务逻辑能单测。
-* 命名自解释：动作函数用动词短语（`start_bot`）；取返回值用名词（`all_running_bot_infos`，没有
+* 命名自解释：动作函数用动词短语（`start_bot`）；取返回值用名词（`all_running_bot_status_rows`，没有
   `get_` 前缀）；转换用 `to_` 与 `into_` 前缀（`to_clean_bot_name`、`into_report`，消费 `self` 的用
   `into_`、其余用 `to_`，clippy 也这么认）；需要磁盘查找的构造用 `find_*`；判断用 `is_` 与 `has_`；
   ID 一律叫 `*_id`（`caller_id`、`owner_id`）。

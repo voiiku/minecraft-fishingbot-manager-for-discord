@@ -91,7 +91,7 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
     let log_path = match StartupQueue::add_bot_for_login(bot_name, &bot_dir_entry.bot_dir_path) {
         Ok(log_path) => log_path,
         Err(message) => {
-            // 会话没起来：把旧凭据放回去，别让一次失败的登录把能用的凭据弄丢。
+            // 会话未起来：恢复旧凭据，避免一次失败的登录使可用凭据丢失。
             restore_replaced_token(replaced_token_path);
             return Err(message);
         }

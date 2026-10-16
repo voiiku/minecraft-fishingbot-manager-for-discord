@@ -161,11 +161,10 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   read everywhere else. The exception is "the process has ended": it does not look at the log at all - when a session
   is only a `(Dead ...)` shell, `running_bots` reports that state directly (the JVM is gone, and the last log line may
   still be an old "online").
-* `/show status`'s table and snapshot live in the same module (`utils::running_bots`): the header `status_table_header()`
-  and the data row `RunningBotInfo::into_row()` are two adjacent four-element arrays (the column order is read side by
-  side, and the separator is one shared constant); adding a column or changing the order means changing those two
-  arrays (plus the column names in `text`, one per language). The snapshot fields are private and can be consumed only
-  once by `into_row(self)`. The full pattern is in
+* `/show status`'s table has no dedicated type: the rows are joined on the spot by
+  `utils::running_bots::all_running_bot_status_rows()` (four cells and `" | "`) and the header on the spot by
+  `show/status.rs`, so the two sides must agree on the column order (the column names live in `text`, one set per
+  language). The full pattern is in
   [docs/mods/commands/commands-en_us.md section 6.2](../mods/commands/commands-en_us.md#62-show-status).
 * Replies must not overstate: `/start` and `/restart` can only confirm that the command was sent and that the session
   appeared, so their reply says "start command sent"; `/stop` re-checks its stop flow on the spot, so it may answer

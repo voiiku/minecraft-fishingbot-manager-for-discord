@@ -1,8 +1,8 @@
 //! 启动会话：待启动的机器人排队进入 [`StartupQueue`]，启动线程按批取走、逐台拉起，最后统一复核一次。
 //!
-//! 本文件是模块的统一的对外接口，需要暴露的方法都实现中这里
-//! 启动线程是常驻的（意外崩溃会自动重启，见 `starter.rs::run_starter_forever`）
-//! 内部实现按职责：队列内部工具函数在 `queue.rs`，启动的逻辑实现在 `starter.rs`，账本与复核的逻辑在 `ledger.rs`，启动结果转回复在 `super::reply.rs`。
+//! 本文件是模块统一的对外接口，需要暴露的方法都实现于此。
+//! 启动线程是常驻的（意外崩溃会自动重启，见 `starter.rs::run_starter_forever`）。
+//! 内部实现按职责划分：队列内部工具函数在 `queue.rs`，启动流程在 `starter.rs`，账本与复核在 `ledger.rs`，启动结果转回复在 `super::reply.rs`。
 
 mod ledger;
 mod queue;
@@ -28,13 +28,13 @@ use crate::utils::bot_logs::{create_bot_log_file, reset_fishingbot_logs_dir};
 /// 进程内唯一的启动队列。
 static STARTUP_QUEUE: OnceLock<StartupQueue> = OnceLock::new();
 
-/// 兜底超时的余量：按"队列排满时最慢的一次启动"翻倍（拉起本身的开销与抖动算在这一倍里）。
+/// 兜底超时的余量：取"队列排满时最慢的一次启动"的两倍（该倍量用于兜住拉起本身的开销与抖动）。
 const RESULT_TIMEOUT_MARGIN_FACTOR: u64 = 2;
 
-/// 启动队列：外部命令只与此对象交互，封装复杂度。
+/// 启动队列：外部命令只与此对象交互，复杂度封装在内部。
 ///
-/// 前五个字段是配置取值
-/// 后五个是运行状态，都在 [`StartupQueue::get_or_init`] 里一次填好。
+/// 前五个字段来自配置取值；
+/// 后五个为运行状态，均在 [`StartupQueue::get_or_init`] 中一次填好。
 pub struct StartupQueue {
     /// `[startup_queue] max_batch_size`：一批最多拉起几台。
     max_batch_size: usize,
@@ -59,7 +59,7 @@ pub struct StartupQueue {
     starter: OnceLock<Result<(), String>>,
 }
 
-/// 队列里的一个待启动条目：机器人 + 它所属的账本（结果写回该账本，见 `ledger.rs`）。
+/// 队列里的一个待启动条目：机器人与它所属的账本（结果写回该账本，见 `ledger.rs`）。
 ///
 /// 结果由处理这一台的代码通过 [`QueuedBot::record`] 写回账本。
 /// 条目在未写回结果的情况下离开作用域（清空队列、撤单、启动线程 panic 展开、提前返回）时，
@@ -119,7 +119,7 @@ impl StartupQueue {
                 batch_login_interval_ms: startup_queue.batch_login_interval_ms,
                 max_pending_requests: startup_queue.max_pending_requests,
                 check_grace_ms: settings.timing.check_grace_ms,
-                // 运行状态初值：没人排队、没有唤醒、线程没起；取批时刻从"现在"起算，首条命令不必白等。
+                // 运行状态初值：等待列表为空、无待唤醒、线程未启动；取批时刻从当前时间起算，首条命令无需等待。
                 waiting_bots: Mutex::new(VecDeque::new()),
                 latest_poped_timestamp: Mutex::new(Instant::now()),
                 added: Condvar::new(),
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(queue.batch_login_interval_ms(), 45_000);
     }
 
-    /// 兜底超时是算出来的：队列排满时最慢的一次启动 × 2（不单独配置，跟着节奏参数走）。
+    /// 兜底超时是算出来的：队列排满时最慢的一次启动的两倍（不单独配置，按节奏参数推导）。
     #[test]
     fn the_result_timeout_covers_a_full_queue_with_margin() {
         // 批数 = ⌈32 / 3⌉ = 11，每批最慢 = max(批间 20s, 批内 2 × 20s) = 40s，宽限期 300ms（每台一次）。

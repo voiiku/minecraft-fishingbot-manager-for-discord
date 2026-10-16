@@ -236,8 +236,7 @@ pub trait Text: Send + Sync {
     fn status_title(&self) -> &'static str;
     /// `/show status`：一个都没在跑。
     fn status_no_running_bots(&self) -> &'static str;
-    /// `/show status` 表头第 1 列：机器人名（列序的唯一出处是 `utils::running_bots::status_table_header()`，
-    /// 见 `docs/mods/commands/commands-zh_cn.md` 的 6.2 节）。
+    /// `/show status` 表头第 1 列：机器人名（列序见 `docs/mods/commands/commands-zh_cn.md` 的 6.2 节）。
     fn status_column_bot_name(&self) -> &'static str;
     /// `/show status` 表头第 2 列：服务器状态。
     fn status_column_connection(&self) -> &'static str;

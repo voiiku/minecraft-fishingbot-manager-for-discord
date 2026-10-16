@@ -11,7 +11,7 @@ pub(crate) fn stop_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String> {
     let bot_name: &str = &bot_dir_entry.bot_name;
 
     // 还在启动队列里排着的：撤下来就等于停住了（这时候它还没有会话）。
-    // 先撤队列再判会话：撤不到（刚好被拉起）也不算错误，接着按会话停。
+    // 先撤队列再判会话：撤不到（刚刚被拉起）不算错误，转而按会话停止。
     let cancelled =
         StartupQueue::get_or_init().remove_bots_from_queue(std::slice::from_ref(bot_dir_entry));
     if cancelled.iter().any(|(_, removed)| *removed) {

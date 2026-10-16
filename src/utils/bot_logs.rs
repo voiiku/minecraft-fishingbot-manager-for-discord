@@ -1,6 +1,6 @@
 //! 机器人日志文件：创建、挑选、读取（`<机器人目录>/<runtime.bot_logs_dir>` 下的 `时间戳.log`）。
 //! 默认丢弃 FishingBot.jar 的原始日志。
-//! "最新日志"的标准（[`latest_log_path`]）：在合法（以时间戳格式命名）的文件里按文件名取最大。
+//! "最新日志"的判定（[`latest_log_path`]）：在合法（以时间戳格式命名）的文件中按文件名取最大者。
 //! 程序日志（`<部署目录>/logs/`）用同一套命名逻辑，但属于另一模块，见 `src/process_log.rs`。
 
 use std::fs::{self, File};
@@ -15,7 +15,7 @@ use crate::text;
 /// 日志文件名里的时间戳格式：`2026-09-28-01-47-01`（机器本地时间）。
 const LOG_NAME_TIME_FORMAT: &str = "%Y-%m-%d-%H-%M-%S";
 
-/// 通用的拼路径工具，拼出一个"预期文件夹"的路径
+/// 拼接出一个"预期目录"的路径；不检查它是否存在。
 pub fn target_logs_dir(base_dir: &Path, dir_name: &str) -> PathBuf {
     base_dir.join(dir_name)
 }
@@ -40,9 +40,9 @@ fn is_bot_log_file(file_name: &str) -> bool {
     parts.next().is_none()
 }
 
-/// 创建以时间戳命名的日志文件（日志命名规范），并写入首行 `first_line`，返回路径与可写句柄。
-/// 机器人日志（[`create_bot_log_file`]）与程序日志（`src/process_log.rs`）共用它
-/// 句柄的写入位置在首行之后，父目录不存在会一并创建（`create_dir_all`）。
+/// 创建以时间戳命名的日志文件，写入首行 `first_line`，返回路径与可写句柄。
+/// 机器人日志（[`create_bot_log_file`]）与程序日志（`src/process_log.rs`）共用此函数，命名规则同此。
+/// 返回句柄的写入位置在首行之后；父目录不存在时一并创建（`create_dir_all`）。
 pub fn create_timestamped_log_file(
     dir: &Path,
     first_line: &str,
@@ -72,13 +72,13 @@ pub fn create_timestamped_log_file(
     Ok((log_path, file))
 }
 
-/// 由机器人文件夹路径，获取机器人日志文件夹路径（日志目录名只在这里从配置读一次）。
+/// 由机器人文件夹路径获取机器人日志文件夹路径（目录名只在此处从配置读取一次）。
 pub(crate) fn bot_logs_dir(bot_dir: &Path) -> PathBuf {
     target_logs_dir(bot_dir, &config::Config::get().runtime.bot_logs_dir)
 }
 
-/// 在开始一次机器人运行流程前新建日志文件：`<机器人目录>/<runtime.bot_logs_dir>/时间戳.log`。
-/// 这是启动流程的第一步（见 [`super::startup::StartupQueue`]）：先创建日志文件再启动会话，会话向日志内追加内容。
+/// 每次机器人运行流程开始前新建日志文件：`<机器人目录>/<runtime.bot_logs_dir>/时间戳.log`。
+/// 它是启动流程的第一步（见 [`super::startup::StartupQueue`]）：先创建日志文件再启动会话，会话向该文件追加内容。
 pub fn create_bot_log_file(bot_dir: &Path) -> Result<PathBuf, String> {
     let first_line = text::get().log_text(text::LogText::BotLogFirstLine);
 
@@ -86,9 +86,9 @@ pub fn create_bot_log_file(bot_dir: &Path) -> Result<PathBuf, String> {
         .map(|(log_path, _file)| log_path)
 }
 
-/// 挑选机器人最新的一份日志文件的路径（`logs/` 下名字最大的那份日志）。
-/// "名字最大"= 最新启动对应的日志；
-/// 文件名不符合本项目命名规则的文件不参与挑选。
+/// 挑选机器人最新一份日志文件的路径（`logs/` 下文件名最大者）。
+/// 文件名最大即最新启动对应的日志；
+/// 不符合本项目命名规则的文件不参与挑选。
 pub fn latest_log_path(bot_dir: &Path) -> Option<PathBuf> {
     let logs_dir = bot_logs_dir(bot_dir);
 
@@ -104,7 +104,7 @@ pub fn latest_log_path(bot_dir: &Path) -> Option<PathBuf> {
     Some(logs_dir.join(latest_file_name))
 }
 
-/// 从一批候选文件名里挑出最新的一份日志的文件名；`None` 表示一个合格的候选文件都没有。
+/// 从一批候选文件名中挑出最新一份日志的文件名；`None` 表示没有任何合格候选。
 fn latest_log_file_name(candidate_file_names: &[String]) -> Option<&str> {
     candidate_file_names
         .iter()
@@ -116,16 +116,15 @@ fn latest_log_file_name(candidate_file_names: &[String]) -> Option<&str> {
 // FishingBot 原始日志目录的准备（启动流程的第二步）。
 //
 // 整个目录删掉重建 `<机器人目录>/<runtime.bot_logs_dir>/raw`，并把它的原始日志指向丢弃路径。
-// 清之前先把"意料之外的文件"报出来：静默删除会掩盖 FishingBot.jar 改了日志命名规则。
-// 名字与丢弃目标由调用方给（[`reset_raw_logs_dir`]，能吃配置的单测都打在它上面），
-// 读配置那一步在它上面（[`reset_fishingbot_logs_dir`]）。
+// 清理前先报出"意料之外的文件"：静默删除会掩盖 FishingBot.jar 更名日志规则这一情况。
+// 目录名与丢弃目标由调用方给出（[`reset_raw_logs_dir`] 不读配置，便于单测），
+// 读取配置的是 [`reset_fishingbot_logs_dir`]。
 
 use crate::utils::fs::remove_dir_all_if_exists;
 
-/// 准备 FishingBot.jar 的日志目录（启动流程的第二步）
-/// 整个目录删掉重建 `<机器人目录>/<runtime.bot_logs_dir>/raw`，并把它的原始日志指向 `discard_path`
-/// 清之前先把"意料之外的文件"报出来，如果静默删除的话，会忽略 FishingBot.jar 的日志改了命名规则。
-/// 意外只警告、不打断启动，最坏情况是 FishingBot.jar 因建不出日志文件而拒绝启动。
+/// 准备 FishingBot.jar 的日志目录（启动流程的第二步）：整个目录删掉重建，并把原始日志指向 `discard_path`。
+/// 清理前先报出"意料之外的文件"，以免静默删除掩盖 FishingBot.jar 更名日志规则。
+/// 意外只警告、不打断启动；最坏情况是 FishingBot.jar 因建不出日志文件而拒绝启动。
 pub fn reset_fishingbot_logs_dir(bot_dir: &Path) -> PathBuf {
     let raw_game_logs = &config::Config::get().raw_game_logs;
 
@@ -136,14 +135,14 @@ pub fn reset_fishingbot_logs_dir(bot_dir: &Path) -> PathBuf {
     )
 }
 
-/// [`reset_fishingbot_logs_dir`] 的实现：`raw_logs_dir` 是 raw 目录本身，
-/// 名字与丢弃目标由调用方给（拆出来是为了能不吃配置地单测，读配置那一步在它上面）。
+/// [`reset_fishingbot_logs_dir`] 的实现：`raw_logs_dir` 为 raw 目录本身，
+/// 目录名与丢弃目标由调用方给出（拆出来是为了不读配置即可单测；读配置在 [`reset_fishingbot_logs_dir`] 中）。
 fn reset_raw_logs_dir(
     raw_logs_dir: &Path,
     game_log_file_name: &str,
     discard_path: &str,
 ) -> PathBuf {
-    // 第一步：先报出上一轮留下的"意料之外的文件"，随后整个目录会被清掉。
+    // 第一步：先报出上一轮留下的"意料之外的文件"；随后整个目录会被清空。
     for file_name in unexpected_game_log_file_names(raw_logs_dir, discard_path) {
         log::warn!(
             "{}",
@@ -154,7 +153,7 @@ fn reset_raw_logs_dir(
         );
     }
 
-    // 第二步：整个目录删掉重建（"目录本来就不在"由 `remove_dir_all_if_exists` 当成成功，不必再判断存在性）。
+    // 第二步：整个目录删掉重建（目录原本不存在的情况由 `remove_dir_all_if_exists` 视为成功，无需另行判断存在性）。
     if let Err(e) = remove_dir_all_if_exists(raw_logs_dir) {
         log::warn!(
             "{}",
@@ -174,7 +173,7 @@ fn reset_raw_logs_dir(
         );
     }
 
-    // 第三步：把预期的原始日志指向丢弃路径（FishingBot.jar 建不出日志文件会拒绝启动，给它一个"能写、但什么都不存"的目标）。
+    // 第三步：将预期的原始日志指向丢弃路径：FishingBot.jar 建不出日志文件会拒绝启动，因此给它一个"能写、但什么都不留"的目标。
     let game_log_file = raw_logs_dir.join(game_log_file_name);
     if let Err(e) = std::os::unix::fs::symlink(discard_path, &game_log_file) {
         log::warn!(
@@ -190,9 +189,9 @@ fn reset_raw_logs_dir(
     raw_logs_dir.to_path_buf()
 }
 
-/// 列出 `raw/` 里不应该存在的文件名（已排序）；目录读取错误时返回空数组。
+/// 列出 `raw/` 中不应存在的文件名（已排序）；目录读取失败时返回空数组。
 /// 预期只有一个文件：`game_log_file_name` 指向 `discard_path` 的符号链接；
-/// 其他文件都算意外。[`reset_raw_logs_dir`] 会在清掉整个目录前先把它报出来。
+/// 其余文件均视为意外。[`reset_raw_logs_dir`] 在清空整个目录前先将其报出。
 fn unexpected_game_log_file_names(raw_logs_dir: &Path, discard_path: &str) -> Vec<String> {
     let Ok(dir_reader) = fs::read_dir(raw_logs_dir) else {
         return Vec::new();
@@ -201,7 +200,7 @@ fn unexpected_game_log_file_names(raw_logs_dir: &Path, discard_path: &str) -> Ve
     let mut unexpected_names: Vec<String> = dir_reader
         .flatten()
         .filter_map(|entry| {
-            // 只有符号链接 + 指向 `discard_path` 才算预期的文件。
+            // 只有指向 `discard_path` 的符号链接才算预期文件。
             let is_discard_link =
                 fs::read_link(entry.path()).is_ok_and(|target| target == Path::new(discard_path));
             if is_discard_link {
@@ -220,7 +219,7 @@ fn unexpected_game_log_file_names(raw_logs_dir: &Path, discard_path: &str) -> Ve
 mod raw_logs_dir_tests {
     use super::*;
 
-    /// FishingBot 的 raw 日志目录与文件都要准备好：它建不出文件会直接拒绝启动。
+    /// FishingBot 的 raw 日志目录与文件需预先准备好：建不出文件它会直接拒绝启动。
     #[test]
     fn game_logs_dir_is_prepared() {
         let bot_logs_dir = temp_test_dir("prepare-game-logs");
@@ -235,8 +234,8 @@ mod raw_logs_dir_tests {
         fs::remove_dir_all(&bot_logs_dir).expect("清理临时目录");
     }
 
-    /// "启动时清空 `raw/`"这条规矩要能发现 FishingBot 换了日志文件名：
-    /// 上一轮留下的意料之外文件会被**报出来**（随后整目录被清掉）；正常情况不该有任何告警。
+    /// "启动时清空 `raw/`"这条规则需能发现 FishingBot 更换了日志文件名：
+    /// 上一轮留下的意外文件会被**报出**（随后整个目录被清空）；正常情况下不应有任何告警。
     #[test]
     fn unexpected_game_logs_are_reported_before_cleanup() {
         let bot_logs_dir = temp_test_dir("unexpected-game-logs");
@@ -248,7 +247,7 @@ mod raw_logs_dir_tests {
             "正常情况下 raw/ 里只有指向 /dev/null 的 log0.log"
         );
 
-        // 模拟 FishingBot 换了文件名：多出一个**有内容的普通文件**。
+        // 模拟 FishingBot 更换文件名：多出一个**有内容的普通文件**。
         fs::write(game_logs_dir.join("log1.log"), "未过滤的刷屏行\n")
             .expect("造一个意料之外的文件");
 
@@ -257,7 +256,7 @@ mod raw_logs_dir_tests {
             vec!["log1.log".to_string()]
         );
 
-        // 再执行一次"启动清理"：必须清掉（磁盘上只保留过滤后的那一份）。
+        // 再次执行"启动清理"：该文件必须被清掉（磁盘上只保留过滤后的那一份）。
         let game_logs_dir_again = reset_raw_logs_dir(&raw_logs_dir, "log0.log", "/dev/null");
         assert!(
             !game_logs_dir_again.join("log1.log").exists(),
@@ -392,7 +391,7 @@ mod tests {
             format!("{first_line}\n")
         );
 
-        // 句柄的写入位置就在首行之后：接着写就是追加，不会截掉首行。
+        // 句柄的写入位置紧随首行之后：继续写入即为追加，不会截断首行。
         writeln!(file, "测试追加").expect("写日志");
         assert_eq!(
             fs::read_to_string(&log_path).expect("读回日志"),

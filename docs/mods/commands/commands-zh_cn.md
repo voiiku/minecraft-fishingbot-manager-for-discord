@@ -556,7 +556,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 ### 6.1 指令一览
 
-* `/show status`：`status::all_running_bots_status()`（内部走 `utils::running_bots::all_running_bot_infos()`）。
+* `/show status`：`status::all_running_bots_status()`（内部走 `utils::running_bots::all_running_bot_status_rows()`）。
   数据来自 `screen -list`、各机器人最新一份过滤后的日志，以及一次启动队列查询（排队中的在报告下方
   `[排队中]` 一栏），回复形式是文本（一张表）。
 * `/show botconfig`：`botconfig::fishingbot_config_view()`。数据来自 `paths.fishingbot_config_file_name`（所有
@@ -568,7 +568,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 ### 6.2 `/show status`
 
 * 名单是已配 Token 与会话存在的交集：先取 `utils::token_ready_bot_dir_entries()`（与 `/commandall`
-  同一口径），再由 `utils::running_bots::all_running_bot_infos()` 用一次 `screen -list` 快照把不在跑
+  同一口径），再由 `utils::running_bots::all_running_bot_status_rows()` 用一次 `screen -list` 快照把不在跑
   的剔掉。所以出现在表里的都是配好 Token 且会话存在的机器人；Token 文件被删掉但进程还在跑的那种不在
   表里（`/stopall` 仍能收掉它）。
 * 排队与否由 `/show status` 自己问一次启动队列（`StartupQueue::bots_in_queue`，与 `/start`、`/stop`
@@ -584,15 +584,16 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   "服务器在线"、"重连/本人在线"、"进程已结束"；三种读不到日志的情况（挑不到、读不出来、为空）在正常
   运行里不会出现，所以直接在这一格里显示报错原因；钓鱼状态是"钓鱼中"与"已暂停"。
 * 运行时长由 `utils::format_uptime` 统一格式化成"天-时-分"，避免每个调用点各写一套。
-* 输出逐台一行，方便肉眼扫。表头与数据行都由 `utils::running_bots` 生成（同一个文件里紧挨着）：
-  * 表头是 `status_table_header()`，数据行是 `RunningBotInfo::into_row()`，两者都是四元素数组（列序
-    对着看），共用同一个分隔符常量（` | `，两侧各一个空格）；
-  * 加列、删列、调序就是改那两个数组，另补 `text` 里对应的列名（中英各一份）；
-  * 快照字段私有、`into_row(self)` 吃掉自己，所以每份快照只可能被渲染一次，不会出现"表头四列、数据
-    三列"这种错位。
-  * 为什么放在 `running_bots` 而不是通用的 `reply`：这张表只服务 `/show status`（只对正在运行的机器人
-    执行），而快照的字段是私有的，放在它身边就能直接读字段，不必为一个表格引入 trait 或 getter。
-    测试 `status_table_header_matches_row_columns` 在同一模块里对着两边的格子逐一断言。
+* 输出逐台一行，方便肉眼扫。这张表没有专门的类型：数据行由 `utils::running_bots::status_row()` 当场拼
+  成一行文本，表头由 `show/status.rs` 当场拼成一行文本，两处都是"四格数组 + `join(" | ")`"，列序要对齐：
+  * 列名（中英各一份）在 `text` 里：`status_column_bot_name()`、`status_column_connection()`、
+    `status_column_pause()`、`status_column_uptime()`；
+  * 加列、删列、调序要同时改这两处；列序没有类型层面的强制，对齐靠两边读同一组列名、用同一个分隔符
+    （` | `，两侧各一个空格）；
+  * 行是渲完即弃的字符串，所以不存在"同一份快照被渲两次"的问题，也不必为一个表格引入 getter 或 trait：
+    `status_row` 算完四格就直接拼行。
+  * 为什么数据行放在 `running_bots` 而不是通用的 `reply`：它要读会话快照与日志（两者都属于运行状态的
+    判断），当场拼行比先造一个快照类型再消费更简单。
 
 ### 6.3 `/show botconfig`
 

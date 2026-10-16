@@ -1,4 +1,4 @@
-//! 状态口径（是否启动看会话、是否排队看队列）、运行状态分组、运行中的名字、`/show status` 的状态快照、
+//! 状态口径（是否启动看会话、是否排队看队列）、运行状态分组、运行中的名字、`/show status` 的数据行、
 //! 运行中 / 排队中拒绝文案。
 //! 「是否启动」只查一次 `screen -list` 快照（[`active_screen_sessions`]），之后所有「在不在运行」的判断都基于同一份快照；
 //! 「是否排队」只查一次启动队列（[`super::startup::StartupQueue`]），与日志无关。
@@ -9,87 +9,49 @@ use std::collections::HashMap;
 use crate::text;
 
 use super::bot_dirs::{BotDirEntry, token_ready_bot_dir_entries};
-use super::bot_status::{BotPauseStatusMemory, ConnectionStatus, PauseStatus};
+use super::bot_status::{BotPauseStatusMemory, ConnectionStatus};
 use super::screen::{ScreenSession, active_screen_sessions, is_bot_screen_running, session_name};
 use super::startup::StartupQueue;
 use super::uptime::{format_uptime, process_elapsed_seconds};
 
-/// `/show status` 表头与数据行共用的分隔符。
+/// `/show status` 一行的列分隔符（表头与数据行各用一次：`名字 | 状态 | 暂停 | 时长`）。
 const STATUS_COLUMN_SEPARATOR: &str = " | ";
 
-/// 一个正在运行的机器人的一次性状态快照：只用于 `/show status` 的渲染。
-/// 字段私有，只被 [`RunningBotInfo::into_row`] 消费一次（不复制、不存进别处、不跨调用传递）；
-/// 各列的取值与列序在 [`status_table_header`] 与 [`RunningBotInfo::into_row`]。
-#[derive(Debug)]
-pub struct RunningBotInfo {
-    /// 机器人名。
-    bot_name: String,
-    /// 连接那一格：正常是状态名，异常是那句报错（挑不到日志 / 读不出来 / 为空，正常运行时不会出现）。
-    connection_status: String,
-    /// 进程内记着的暂停状态的副本（与 `bot_status::BotPauseStatus` 那份记忆同源）。
-    pause_status: PauseStatus,
-    /// 会话进程已经跑了多少秒。
-    running_seconds: u64,
-}
+/// 拼一台运行中的机器人的一行；会话没在跑（或名字拼不出会话名）时返回 `None`。
+/// `active_sessions` 是 [`active_screen_sessions`] 的结果，由调用方传入复用，避免每台都查一次 `screen -list`。
+fn status_row(
+    bot_dir_entry: BotDirEntry,
+    active_sessions: &HashMap<String, ScreenSession>,
+) -> Option<String> {
+    // 只对确实运行会话解析状态，忽略拼不出会话名的目录。
+    let session = session_name(&bot_dir_entry.bot_name)
+        .ok()
+        .and_then(|target_session_name| active_sessions.get(&target_session_name))
+        .copied()?;
 
-/// `/show status` 的第一行（固定表头）：与 [`RunningBotInfo::into_row`] 同序。
-pub fn status_table_header() -> String {
-    let i18n_text = text::get();
-    [
-        i18n_text.status_column_bot_name(),
-        i18n_text.status_column_connection(),
-        i18n_text.status_column_pause(),
-        i18n_text.status_column_uptime(),
-    ]
-    .join(STATUS_COLUMN_SEPARATOR)
-}
+    // 各个状态的来源不同：暂停状态读进程内保存的，在线状态必须读日志（结论不保存）。
+    let pause_status = bot_dir_entry.bot_name.to_bot_pause_status().pause_status();
+    // 连接状态分两种来源：
+    // 会话是死残壳（JVM 已经被杀、只剩 screen 的空壳）直接是"进程已结束"，
+    // 会话正常就当场读一次日志；三种"读不到日志"的异常直接把原因显示在这一格里。
+    let connection_status = if session.is_dead {
+        ConnectionStatus::Stopped.to_string()
+    } else {
+        match bot_dir_entry.connection_status() {
+            Ok(connection_status) => connection_status.to_string(),
+            Err(message) => message,
+        }
+    };
 
-impl RunningBotInfo {
-    /// 把这一份快照拼成一行文本并消耗自己
-    pub fn into_row(self) -> String {
+    Some(
         [
-            self.bot_name,
-            self.connection_status.to_string(),
-            self.pause_status.to_string(),
-            format_uptime(self.running_seconds),
-        ]
-        .join(STATUS_COLUMN_SEPARATOR)
-    }
-
-    /// 用一次 `screen -list` 快照造一份快照；
-    /// `None` = 这个机器人的会话没在跑（或名字拼不出会话名）。
-    /// active_sessions 是 [`active_screen_sessions`] 的结果，应该由调用者复用并传递进此函数，避免每个机器人都去查一次 `screen -list`。
-    fn from_entry(
-        bot_dir_entry: BotDirEntry,
-        active_sessions: &HashMap<String, ScreenSession>,
-    ) -> Option<Self> {
-        // 只对确实运行会话解析状态，忽略拼不出会话名的目录。
-        let session = session_name(&bot_dir_entry.bot_name)
-            .ok()
-            .and_then(|target_session_name| active_sessions.get(&target_session_name))
-            .copied()?;
-
-        // 各个状态的来源不同：暂停状态读进程内保存的，在线状态必须读日志（结论不保存）。
-        let pause_status = bot_dir_entry.bot_name.to_bot_pause_status().pause_status();
-        // 连接状态分两种来源：
-        // 会话是死残壳（JVM 已经被杀、只剩 screen 的空壳）直接是"进程已结束"，
-        // 会话正常就当场读一次日志；三种"读不到日志"的异常直接把原因显示在这一格里。
-        let connection_status = if session.is_dead {
-            ConnectionStatus::Stopped.to_string()
-        } else {
-            match bot_dir_entry.connection_status() {
-                Ok(connection_status) => connection_status.to_string(),
-                Err(message) => message,
-            }
-        };
-
-        Some(Self {
-            bot_name: bot_dir_entry.bot_name,
+            bot_dir_entry.bot_name,
             connection_status,
-            pause_status,
-            running_seconds: process_elapsed_seconds(session.pid).unwrap_or(0),
-        })
-    }
+            pause_status.to_string(),
+            format_uptime(process_elapsed_seconds(session.pid).unwrap_or(0)),
+        ]
+        .join(STATUS_COLUMN_SEPARATOR),
+    )
 }
 
 /// 查一次 `screen -list` 快照，把全部机器人（无 Token 过滤）按 在运行 / 未运行 分组。
@@ -126,14 +88,14 @@ pub fn all_running_bot_names() -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// 扫描所有正在运行的机器人并返回其状态快照（`/show status` 用）。
-/// 只执行一次 `screen -list` 拿会话快照，并且只对在跑的实例读日志（每个实例只读一次）；
-pub fn all_running_bot_infos() -> Result<Vec<RunningBotInfo>, String> {
+/// 扫描所有正在运行的机器人，返回 `/show status` 的数据行（表头由调用方拼）。
+/// 只执行一次 `screen -list` 获取会话快照，且仅对正在运行的实例读取日志（每个实例只读一次）。
+pub fn all_running_bot_status_rows() -> Result<Vec<String>, String> {
     let active_sessions = active_screen_sessions();
 
     Ok(token_ready_bot_dir_entries()?
         .into_iter()
-        .filter_map(|bot_dir_entry| RunningBotInfo::from_entry(bot_dir_entry, &active_sessions))
+        .filter_map(|bot_dir_entry| status_row(bot_dir_entry, &active_sessions))
         .collect())
 }
 
@@ -159,7 +121,6 @@ pub fn refusal_if_not_stopped(bot_dir_entry: &BotDirEntry) -> Result<(), String>
 mod tests {
     use super::*;
     use crate::utils::bot_dirs::BotTokenStatus;
-    use crate::utils::bot_status::ConnectionStatus;
 
     /// 没在跑时返回 `None`：这里用非法名字让"拼会话名"这一步先失败，所以不必装真配置
     ///（另一支 —— 真在跑 —— 要读配置里的 `screen_prefix` 与 `bot_logs_dir`，单测碰不到）。
@@ -172,47 +133,6 @@ mod tests {
             bot_token_status: BotTokenStatus::Missing,
         };
 
-        assert!(RunningBotInfo::from_entry(bot_dir_entry, &HashMap::new()).is_none());
-    }
-
-    /// 表头与数据行逐格对应：格数与顺序都要对得上（快照字段私有，只有本模块的测试能造它）。
-    #[test]
-    fn status_table_header_matches_row_columns() {
-        let i18n_text = text::get();
-        let bot_info = RunningBotInfo {
-            bot_name: "duck".to_string(),
-            connection_status: ConnectionStatus::Online.to_string(),
-            pause_status: PauseStatus::Fishing,
-            running_seconds: 65,
-        };
-        let row = bot_info.into_row();
-
-        let header = status_table_header();
-        let header_cells: Vec<&str> = header.split(STATUS_COLUMN_SEPARATOR).collect();
-        assert_eq!(
-            header_cells,
-            vec![
-                i18n_text.status_column_bot_name(),
-                i18n_text.status_column_connection(),
-                i18n_text.status_column_pause(),
-                i18n_text.status_column_uptime(),
-            ]
-        );
-
-        let row_cells: Vec<String> = row
-            .split(STATUS_COLUMN_SEPARATOR)
-            .map(str::to_string)
-            .collect();
-        assert_eq!(
-            row_cells,
-            vec![
-                "duck".to_string(),
-                ConnectionStatus::Online.to_string(),
-                PauseStatus::Fishing.to_string(),
-                format_uptime(65),
-            ]
-        );
-
-        assert_eq!(header_cells.len(), row_cells.len());
+        assert!(status_row(bot_dir_entry, &HashMap::new()).is_none());
     }
 }

@@ -207,7 +207,7 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   reference serenity or poise; they take plain arguments and return `Result<String, String>`, which keeps the business
   logic unit-testable.
 * Names explain themselves: action functions use verb phrases (`start_bot`); things that return a value use nouns
-  (`all_running_bot_infos`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
+  (`all_running_bot_status_rows`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
   `into_report`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
   disk use `find_*`; predicates use `is_` and `has_`; an ID is always `*_id` (`caller_id`, `owner_id`).
 * The suffix follows the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
