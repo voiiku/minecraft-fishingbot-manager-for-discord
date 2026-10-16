@@ -28,16 +28,30 @@
   入口 `active_screen_sessions`（会话名 → `ScreenSession`，含 PID 与"是不是 `(Dead ...)` 残壳"，残壳也
   算在跑，好让 `/stop` 能清掉它）、`is_bot_screen_running`、`session_name`、
   `send_command_to_single_bot`、`send_stop_signal_to_session`、`force_quit_session`。
-* `running_bots`：谁在跑的唯一口径。按运行状态分组、运行中的名字、在跑机器人的状态快照（含 `/show status`
-  的表头与数据行）、运行中拒绝文案。入口 `split_bot_entries_by_is_running`、`all_running_bot_names`、
-  `all_running_bot_infos`、`RunningBotInfo`（`into_row`）、`status_table_header`、`refusal_if_running`。
-* `startup`：启动（四步显式流程；缺 Token 的目标不拉起；只返回原始明细 `LaunchOutcome`，它自带
-  `into_report()` 与 `to_failure_text()`）。入口 `start_bot_sessions` 与 `prepare_and_launch_bot`
-  （`/bot login` 用）；拉起步骤本身（`launch_bot_session`、`launch_command_line` 与 `LaunchCommandConfig`）是模块内部实现。
+* `running_bots`：机器人的状态口径（是否启动看会话、是否排队看队列）。按运行状态分组、运行中的名字、
+  状态快照（含 `/show status` 的表头与数据行）、运行中与排队中拒绝文案。入口
+  `split_bot_entries_by_is_running`、`all_running_bot_names`、`all_running_bot_infos`、`RunningBotInfo`
+  （`into_row`）、`status_table_header`、`refusal_if_not_stopped`。
+* `startup`：启动。逐台拉起是"查 Token → 建日志 → 准备原始日志目录 → `screen -dmS`"，缺 Token 的目标不拉起；
+  命令方入口是 `StartupQueue::start_bots()`（建账本 → `add_bots_to_queue` 入队 → 等自己的条目都被拉起 → 取结果并
+  复核一次 → `BotStartResults`，它自带 `into_report()` 与 `to_reply_text()`），`/start`、`/startall`、`/restart`
+  与 `/restartall` 共用它；`/bot login` 走 `StartupQueue::add_bot_for_login`；拉起步骤本身
+  （`launch_bot_session`、
+  `launch_command_line`）是模块内部实现。命令层读队列的入口还有 `pending_bot_count()`（现在排着几台）、
+  `slowest_start_duration(台数)`（按节奏算的耗时预估，`/startall` 的第一条回执用它）与 `result_timeout()`
+  （等结果的兜底超时）。"停止全部机器人"的第一步是 `StartupQueue::request_stop()`：
+  启动线程不取新批，正在拉的那一批把剩余条目记成 `BotStartOutcome::Cancelled`（不算失败，进跳过明细），
+  所以等账本的人（`/start`、`/startall`）不会卡住。待启动条目自己也是兜底：谁都没写回就离开作用域
+  （清空队列、撤单、启动线程 panic 展开）时，`QueuedBot::drop` 按"取消"写回账本；
+  `wait_until_done()` 另有兜底超时：由队列按节奏参数算出来（`StartupQueue::result_timeout()`，取"队列排满时最慢
+  的一次启动 × 2"），超时把还没回结果的按"未确认"收尾 —— 不需要配置、也不会随节奏改动失配。
 * `restart`：重启。`/restart` 与 `/restartall` 共用的"先停后起"编排（只返回原始明细
   `RestartOutcome`，含停止与启动两份明细）。入口 `restart_bot_sessions`。
 * `shutdown`：停止会话（只返回原始明细 `StopOutcome`，它自带 `into_report()` 与
-  `to_failure_text()`）。入口 `stop_single_bot_session`、`stop_all_bot_sessions`。
+  `to_failure_text()`）。入口 `stop_single_bot_session`、`stop_all_bot_sessions`；后者的语义是"全停"，
+  顺序固定为"请求启动线程别再拉起新的 → 清空等待列表 → 关掉全部会话 → 再扫一遍会话"：最后那遍收掉
+  第一次快照之后才出现的会话（启动线程正拉着的那一台拦不住，只能事后收）。
+  （`/stopall`、看门狗的掉线收尾与退出收尾都走它。）
 * `bot_log_files`：机器人日志的创建与挑选（FishingBot 原始日志的处置在 `startup`）。入口
   `create_bot_log_file`、`create_timestamped_log_file`、`target_logs_dir`、`latest_log_path`。
 * `fishingbot_config`：游戏侧配置（FishingBot 的 `conf.json`）的生成：先删旧文件，再用随仓库发布的模板
@@ -106,10 +120,10 @@
 * 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；
   调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动
   `[startup_queue] max_batch_size` 台；该请求完成后才处理下一个 FIFO 请求。两次登录之间至少隔
-  `[startup_queue] login_interval_ms`：批内相邻两台按它错峰，批间等的时间 = 它减去本批的复核等待
-  （`timing.settle_per_bot_ms` × 2 × 本批台数）。队列空闲时未满批次会关闭，但"上一次登录时刻"跨命令保留，
+  `[startup_queue] bot_login_interval_ms`：批内相邻两台按它错峰，批间等的时间 = 它减去本批的复核等待
+  （复核最多再等一个 `timing.check_grace_ms`：它是每台的会话存活宽限期，不乘批大小）。队列空闲时未满批次会关闭，但"上一次登录时刻"跨命令保留，
   连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
-* `start_bot_sessions` 负责批内启动与错峰，队列调度器负责批间等待，`settle_per_bot_ms` 仍按批次台数计算复核等待
+* `start_bot_sessions` 负责批内启动与错峰，队列调度器负责批间等待，复核按每台的 `check_grace_ms` 观察会话存活
   （两次会话快照间隔相同）。登录频率才是被限制的东西，所以批内与批间用同一个间隔值：批内台数只影响复核窗口的
   长度与 JVM 启动时的内存峰值，不影响总耗时（总耗时 ≈ 台数 × 间隔）。见
   [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
@@ -124,7 +138,7 @@
 
 ## 5. `reply`：回执格式只写一处
 
-* 字段即小节：`basics`（基础信息与列表行，列表行直接 push）、`succeeded`、`skipped`、`failed`
+* 字段即小节：`basics`（基础信息与列表行，列表行直接 push）、`succeeded`、`skipped`、`queued`、`failed`
   （明细）、`content`（整块内容）。`render()` 会自动省略没填的部分，所以空节不会留下空标题。
 * `set_counts(&[(标签, 数量)])` 覆盖基础信息行，统一生成 `标签: N 个`；非计数行（表头、名单、说明）
   直接往 `basics` 里 push。
@@ -144,10 +158,9 @@
 
 `utils` 里没有"接收整份配置再自己挑字段"的函数，每个函数只碰它真正用到的那一两个字段，分两类写法：
 
-* 吃参数（值由调用方给，函数不碰配置）：用在逻辑重、值得单测的地方。例如 `launch_command_line` 与
-  `LaunchCommandConfig`（启动命令拼接）、`target_logs_dir`（纯拼串拼路径）。
+* 吃参数（值由调用方给，函数不碰配置）：用在逻辑重、值得单测的地方。例如 `launch_command_line`（启动命令拼接）、`target_logs_dir`（纯拼串拼路径）。
 * 只读它需要的字段（`config::Config::get().表.字段`）：用在只有一两行逻辑的便利函数。例如 `session_name` 读
-  `runtime.screen_prefix`；`create_bot_log_file` 与 `latest_log_path` 读 `runtime.logs_dir`；
+  `runtime.screen_prefix`；`create_bot_log_file` 与 `latest_log_path` 读 `runtime.bot_logs_dir`；
   `BotTokenStatus::from_dir` 读 `runtime.token_file`；`BotDirEntry::find_by_name` 读 `paths.bots_dir`；
   `stop_bot_sessions` 读 `timing.stop_grace_ms` 与 `timing.stop_settle_ms`；`Report::render`
   读 `runtime.max_reply_chars`。
@@ -187,7 +200,7 @@
 
 ### 7.1 机器人日志：只有一份
 
-`<机器人目录>/<runtime.logs_dir>/` 里就这两样东西：
+`<机器人目录>/<runtime.bot_logs_dir>/` 里就这两样东西：
 
 * `年-月-日-时-分-秒.log`：我们的日志。拉起会话前由 `create_bot_log_file` 建好，会话把 JVM 输出经
   `grep -v -E` 过滤后 `tee -a` 追加（命中 `keywords.filter_regex` 的行被丢掉）。`/log` 读它的尾部，

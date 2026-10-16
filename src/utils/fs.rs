@@ -126,7 +126,7 @@ pub fn read_lines_backwards_until(
 
     // 第三步：按字节块循环往前读取并倒序存储在scanned_lines数组中，直到走到文件开头。
     'scan: loop {
-        // 把这一块交给攒行器：它攒出这一块里攒得完的行（由新到旧），并告诉我们判定命中了没有。
+        // 把这一块交给攒行器：它产出该块内可攒出的行（由新到旧），并返回判定是否命中。
         // `position == 0` 表示这一块已经到文件开头 —— 那时它会连"开头那一行"（可能为空行）一起保存。
         let (lines, should_stop) = take_lines(&chunk, position == 0);
         scanned_lines.extend(lines);
@@ -158,8 +158,6 @@ pub fn read_last_lines(file_path: &Path, max_lines: usize) -> Result<Vec<String>
         counted_lines >= max_lines
     })
 }
-
-// ============================== 目录操作 ==============================
 
 /// 列出 `dir` 下可读取的子目录名字（只要名字的 UTF-8 文本），跳过单条读取错误，顺序由系统决定。
 pub fn list_subdirectory_names(dir: &Path) -> Result<Vec<String>, std::io::Error> {

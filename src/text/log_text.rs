@@ -147,8 +147,6 @@ pub enum LogText<'a> {
     BotDeleted { bot_name: &'a str },
     /// 机器人日志文件的第一行。
     BotLogFirstLine,
-    /// 启动时缺 Token，未拉起。
-    StartSkippedMissingToken { bot_name: &'a str },
     /// 建机器人日志文件失败（带原因）。
     StartLogFileFailed { bot_name: &'a str, reason: &'a str },
     /// 正在拉起会话。
@@ -157,11 +155,14 @@ pub enum LogText<'a> {
         session_name: &'a str,
         log_path: &'a str,
     },
-    /// 启动复核失败：会话要么从没出现，要么出现后又退出（对用户是同一句"启动失败"，差别只记在这里）。
-    StartVerificationFailed {
-        bot_name: &'a str,
-        session_seen_at_first_check: bool,
-    },
+    /// 批量启动完的复核没过（账本只复核一次）：带上没过的那条明细。
+    StartVerificationFailed { bot_name: &'a str, reason: &'a str },
+    /// 拉起单台机器人时发生内部错误（panic）：这台的失败明细已经写回账本。
+    StartLaunchPanicked { bot_name: &'a str, reason: &'a str },
+    /// 等待启动结果超时：该机器人的"未确认"明细已写回账本。
+    StartResultTimeout { bot_name: &'a str, seconds: u64 },
+    /// 启动线程异常退出（panic），准备重启它。
+    StarterRestarting { reason: &'a str },
     /// FishingBot 日志目录里有意料之外的文件。
     UnexpectedGameLogFile { dir: &'a str, file_name: &'a str },
     /// 清空 FishingBot 日志目录失败。
@@ -203,7 +204,7 @@ pub enum LogText<'a> {
     /// 模板里找不到某个托管路径（上游改了键名或删了键）。
     FishingbotConfigTemplatePathMissing { path: &'a str },
 
-    // ============ 日志文件读写（`utils/bot_log_files.rs`） ============
+    // ============ 日志文件读写（`utils/bot_logs.rs`） ============
     /// 建日志目录失败。
     CreateLogDirFailed { dir: &'a str, reason: &'a str },
     /// 建日志文件失败。

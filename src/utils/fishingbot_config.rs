@@ -133,7 +133,7 @@ fn fishingbot_config_json(
 }
 
 /// 按点分路径向 JSON 中写值。
-/// 路径上的每一层都必须已经存在（模板是完整的，我们只改值、不新增结构）
+/// 路径的每一层都必须已存在（模板是完整的，仅覆盖取值、不新增结构）
 /// 不存在就报错，（说明模板与代码不匹配，可能是上游改了键名）。
 fn set_json_path(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
     let Some((parent_path, key)) = path.rsplit_once('.') else {
@@ -196,7 +196,7 @@ mod tests {
         }
     }
 
-    /// 生成出来的文件 = 模板 + 我们那几个键：除了托管路径，其余键必须与模板逐值相同
+    /// 生成的文件 = 模板 + 本项目的键：除托管路径外，其余键必须与模板逐值相同
     ///（这就是"写出来的是完整配置、不依赖 jar 补齐"的保证）。
     #[test]
     fn generated_config_differs_from_template_only_in_managed_paths() {
@@ -235,7 +235,7 @@ mod tests {
             value_at(&generated, "start-text.text").unwrap(),
             &json!(["/home fishing"])
         );
-        // 模板里"我们不管"的键保持模板原样（挑两个有代表性的：account.mail 与 logs.log-count）。
+        // 模板中非本项目托管的键保持原样（取两个有代表性的：account.mail 与 logs.log-count）。
         assert_eq!(value_at(&generated, "account.mail").unwrap(), "");
         assert_eq!(value_at(&generated, "logs.log-count").unwrap(), 1);
     }

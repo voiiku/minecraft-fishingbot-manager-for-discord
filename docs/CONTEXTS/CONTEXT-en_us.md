@@ -117,13 +117,13 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    same rule: `config::Config::from_toml_text` trims string values once, and config readers pass the value as-is. Two rules never
    change:
    the single source of truth for bot names is `utils::bot_name`; checks that need business state (whether a token
-   exists, whether a session is running, permissions and directory ownership, the `max_log_lines` cap) always stay in
+   exists, whether a session is running, permissions and directory ownership, the `max_reply_log_lines` cap) always stay in
    the business layer. Numbers are the command layer's only conversion: the line count of `/log` is parsed and
    validated in the command layer and then turned into `usize`, the port of `/ping` likewise, and a failed validation
    replies with the usage hint on the spot (Discord's integer option is a signed 64-bit integer, so the option is
    declared as `i64`).
 8. Read configuration only where it is needed, and only the few fields that are needed: functions with heavy logic
-   that deserve a unit test take parameters (`launch_command_line` takes a `LaunchCommandConfig`); convenience
+   that deserve a unit test take parameters (`launch_command_line` takes every value it needs as an argument); convenience
    functions with only one or two lines of logic read `config::Config::get().<table>.<field>` directly (for example
    `session_name` only reads `runtime.screen_prefix`, and `BotTokenStatus::from_dir` only reads `runtime.token_file`);
    the state judgement `BotDirEntry::connection_status()` is the heavy version of that approach, its keywords are one
@@ -141,7 +141,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   force kill, re-check), and an orphan JVM holding a game account may never be left behind; on the systemd side
   `KillMode=control-group` catches whatever is left.
 * There are two logging lines, but only one bot log on disk:
-  * bot log: `<bot dir>/<runtime.logs_dir>/YYYY-MM-DD-HH-MM-SS.log`, created before the session is launched
+  * bot log: `<bot dir>/<runtime.bot_logs_dir>/YYYY-MM-DD-HH-MM-SS.log`, created before the session is launched
     (`create_bot_log_file`), and inside the session it is appended through `grep -v -E` filtering plus `tee -a`; `/log`
     and `/show status` read it;
   * FishingBot's own log: `raw/log0.log` next to it, a symlink to `/dev/null`. That program refuses to start when it
@@ -174,7 +174,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   the echo is seen do they answer "pause confirmed" or "resumed" - otherwise they only say "sent". Pick the wording of
   new commands by this principle: say exactly as much as can be verified.
 * An interaction has to be answered within 3 seconds, otherwise the user sees "the interaction failed". What we have to
-  do (starting a JVM, running `screen -list`, waiting `[startup_queue] login_interval_ms` per bot, reading logs) usually takes far
+  do (starting a JVM, running `screen -list`, waiting `[startup_queue] bot_login_interval_ms` per bot, reading logs) usually takes far
   longer, so:
   * commands that trigger process operations or external probes (`/start`, `/stop`, `/restart`, `/pause`, `/unpause`,
     `/command`, the four `*all` commands, `/ping`, `/checkserver`, `/log`) always call `ctx.defer()` first; among them
@@ -186,12 +186,13 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     documentation): the first replaces the "thinking" placeholder and only the second is a new message. Long commands
     (the four `*all` ones and the single-bot start, stop and restart) are therefore sent as two messages: first an
     "executing /startall now, the full result follows when it finishes" progress line, so the user sees progress
-    immediately, and after it finishes the full report from `Report::render()`. `/startall`'s first reply also states
-    how many bots will be started and the expected duration, see `lib::handle_startall_notice()`.
+    immediately, and after it finishes the full report from `Report::render()`. `/startall`'s first reply also states how
+    many bots will be started, how many are already queued, the estimated duration and the result timeout, see
+    `lib::handle_startall_notice()`.
     The second reply is sent as a new message under Discord's defer behaviour; re-check this in a live deployment if
     changing the response flow.
   * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window. When a
-    batch start runs longer than that (many bots, a large `[startup_queue] login_interval_ms`) the followup always
+    batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval_ms`) the followup always
     fails, so the final report of a long command goes through `commands::say_final_report`: if it cannot be sent as a
     reply it is posted as an ordinary channel message (those are not bound to the interaction token) and a
     `LogText::ReportPostedToChannel` line records why, together with the failure reason.
@@ -227,7 +228,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 * `bot_dirs` is the single source of truth for the directory convention: `base_dir/bots/<Discord user ID>/<bot name>`,
   with the permission boundary at the user-ID level.
 * Do not touch a running bot without checking the session first: `/bot del`, `/bot rename`, `/token` and `/bot login`
-  all call `is_bot_screen_running` before doing anything (the text comes from one place, `refusal_if_running`, and a
+  all call `is_bot_screen_running` before doing anything (the text comes from one place, `refusal_if_not_stopped`, and a
   running bot is refused outright), because changing the token of a running bot has no effect, deleting a running
   directory destroys data, renaming a running directory loses its subsequent log lines, and logging in needs exclusive
   access to the credential file. The restart flow is stricter still: targets without a token are removed before
@@ -411,7 +412,7 @@ project's dedicated code for a deliberate failure, which a systemd unit can keep
 
 1. `create_bot_log_file(bot_dir)`: create this run's log file (named with a timestamp; on failure no session is
    launched).
-2. `reset_fishingbot_logs_dir(bot_dir)`: prepare FishingBot's raw log directory (`<bot_dir>/<logs_dir>/raw`, whose path
+2. `reset_fishingbot_logs_dir(bot_dir)`: prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, whose path
    and configuration it computes itself), pointing `raw/log0.log` at `/dev/null` so the content is discarded.
 3. `launch_bot_session(name, dir, log_path, game_logs_dir)`: start the session with `screen -dmS`, with a command shaped
    like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`.

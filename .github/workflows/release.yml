@@ -1,4 +1,5 @@
 name: Release
+run-name: Release ${{ github.ref_name }}
 
 # 推 v* 标签时编译并发布。
 on:

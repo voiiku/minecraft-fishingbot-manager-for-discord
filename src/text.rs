@@ -66,6 +66,8 @@ pub trait Text: Send + Sync {
     fn report_succeeded_label(&self) -> &'static str;
     /// "跳过明细"小节标题。
     fn report_skipped_label(&self) -> &'static str;
+    /// "排队中"小节标题（`/show status` 报告下方那一栏：还在启动队列里排着的机器人）。
+    fn report_queued_label(&self) -> &'static str;
     /// "失败明细"小节标题。
     fn report_failed_label(&self) -> &'static str;
     /// 整块内容的标签（原文里是 `【内容】:`）。
@@ -94,7 +96,7 @@ pub trait Text: Send + Sync {
     fn bot_pause_paused(&self) -> &'static str;
 
     // ========== FishingBot.jar 自己打印的固定文案（`utils/bot_status.rs`）==========
-    // 用来在机器人日志里认出"重连了"，不是我们发到 Discord 的话。
+    // 用于在机器人日志中识别"重连了"，不是本项目发往 Discord 的文案。
     // 这两句由 JAR 自己的语言资源决定（各部署都一样），所以不放进配置、不放 `[keywords]`：
     // `[i18n] language` 的取值会原样写进生成出来的 conf.json（`misc.language`），JAR 就按它说话，
     // 两边是同一个值，不会对不上。
@@ -104,7 +106,7 @@ pub trait Text: Send + Sync {
     // （上游原版没有这两条指令），就地改比重新编一份语言表更实际。
     /// JAR 断线自动重连提示的前缀（`bot-automatic-reconnect` 那句的开头）。
     fn jar_reconnect_prefix(&self) -> &'static str;
-    /// 同一句的后缀：与前缀要同时命中，免得日志里凑巧出现的半句话被当成状态。
+    /// 同一句的后缀：须与前缀同时命中，避免日志中偶然出现的半句话被判为状态。
     fn jar_reconnect_suffix(&self) -> &'static str;
 
     // ===================== 机器人名（`utils/bot_name.rs`） =====================
@@ -118,12 +120,16 @@ pub trait Text: Send + Sync {
     fn bot_start_missing_token(&self, bot_name: &str) -> String;
     /// `/start`：已经在跑。
     fn bot_start_already_running(&self, bot_name: &str) -> String;
+    /// 机器人已经在启动队列里排队（`/start`、`/bot login` 用它提前拒绝）。
+    fn bot_start_already_queued(&self, bot_name: &str) -> String;
     /// `/start`：命令已发送（登录要等 JVM 自己跑，所以措辞不夸大）。
     fn bot_start_command_sent(&self, bot_name: &str) -> String;
     /// `/stop`：本来就没在跑。
     fn bot_stop_not_running(&self, bot_name: &str) -> String;
     /// `/stop`：停止流程当场复核过，可以说"已成功停止"。
     fn bot_stop_succeeded(&self, bot_name: &str) -> String;
+    /// 机器人还没被拉起、只取消了它的排队启动（`/stop`、`/stopall` 用）。
+    fn bot_stop_cancelled_queue(&self, bot_name: &str) -> String;
     /// `/restart`：命令已发送（停止那半已确认）。
     fn bot_restart_command_sent(&self, bot_name: &str) -> String;
     /// `/command`：要发的指令是空的。
@@ -188,6 +194,8 @@ pub trait Text: Send + Sync {
     fn count_skipped_running(&self) -> &'static str;
     /// 计数行标签：跳过（缺少 Token）。
     fn count_skipped_missing_token(&self) -> &'static str;
+    /// "已取消"计数行标签（`/startall`：尚未拉起即被"停止全部机器人"取消的启动）。
+    fn count_start_cancelled(&self) -> &'static str;
     /// 计数行标签：启动失败。
     fn count_start_failed(&self) -> &'static str;
     /// 计数行标签：运行中账号。
@@ -303,10 +311,23 @@ pub trait Text: Send + Sync {
     fn command_unexpected_failure(&self) -> &'static str;
     /// 启动请求的第一条消息：明确说明请求已进入全局启动队列。
     fn command_start_queued_notice(&self, command_tag: &str) -> String;
-    /// `/startall` 的第一条消息：请求已进入队列，并给出这次要启动几台与预计耗时。
-    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String;
-    /// `/startall` 报告中的启动队列批次与登录间隔设置。
-    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String;
+    /// `/startall` 的第一条消息：要启动几台、队列里已有几台，以及耗时预估与等结果上限（分钟）。
+    fn command_startall_queued_notice(
+        &self,
+        bot_count: usize,
+        queued_bot_count: usize,
+        estimated_minutes: u64,
+        timeout_minutes: u64,
+    ) -> String;
+    /// 拉起单台时发生内部错误（panic），作为失败原因传给 [`Text::start_launch_failed`]。
+    fn start_internal_error_reason(&self) -> &'static str;
+    /// `/startall` 报告中的启动队列设置：每批最多几台、批内相邻两台的间隔、批与批之间的间隔。
+    fn command_start_queue_summary(
+        &self,
+        batch_size: usize,
+        bot_login_interval_ms: u64,
+        batch_login_interval_ms: u64,
+    ) -> String;
     /// `/log`：附件那一行的正文。
     fn command_log_attachment_body(
         &self,
@@ -346,6 +367,8 @@ pub trait Text: Send + Sync {
     fn read_bots_root_failed(&self, reason: &str) -> String;
     /// "运行中不许动"的拒绝文案。
     fn refusal_bot_running(&self, bot_name: &str) -> String;
+    /// 拒绝：机器人正在启动队列中排队（"运行中拒绝操作"的第二种情形）。
+    fn refusal_bot_queued(&self, bot_name: &str) -> String;
     /// 往会话注入指令失败；`reason` 为 `None` 表示 `screen` 返回了非 0 但没写原因。
     fn send_command_failed(&self, bot_name: &str, reason: Option<&str>) -> String;
     /// 发送停止信号（Ctrl+C）失败。
@@ -364,15 +387,19 @@ pub trait Text: Send + Sync {
     fn stop_succeeded_line(&self, bot_name: &str) -> String;
     /// 停止失败明细：收尾后会话还在。
     fn stop_still_running(&self, bot_name: &str) -> String;
-    /// 启动跳过明细：缺 Token，未拉起。
-    fn start_skipped_missing_token(&self, bot_name: &str) -> String;
     /// 启动失败明细：日志文件建不出来。
     fn start_log_file_failed(&self, bot_name: &str) -> String;
-    /// 启动成功明细：命令已发送、会话已出现。
-    fn start_command_sent(&self, bot_name: &str) -> String;
-    /// 启动失败明细：拉起之后会话就没了（要么从未出现，要么复核时已经退出）；
+    /// 启动成功明细：会话存活满宽限期，且日志已确认进服。
+    fn start_command_sent_confirmed(&self, bot_name: &str) -> String;
+    /// 启动成功明细：会话存活满宽限期，但日志尚未确认进服状态。
+    fn start_command_sent_unconfirmed(&self, bot_name: &str) -> String;
+    /// 启动失败明细：拉起之后会话就没了（复核时 screen 里没有它）；
     /// 常见原因是微软拒绝频繁登录（`login_with_xbox` 限流）或内存不足。
     fn start_failed(&self, bot_name: &str) -> String;
+    /// 启动被取消：尚未拉起即被"停止全部机器人"取消（`/start`、`/startall`、`/restartall` 用）。
+    fn start_cancelled(&self, bot_name: &str) -> String;
+    /// 等待启动结果超时：该机器人未回结果，已按"未确认"收尾（`/start`、`/startall`、`/restartall` 用）。
+    fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String;
     /// 重启失败明细：缺 Token，已保持原状。
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String;
     /// `/restart` 被拒：目标当前不在运行（要启动请用 `/start`）。
@@ -381,6 +408,8 @@ pub trait Text: Send + Sync {
     fn bot_candidate_running_note(&self) -> &'static str;
     /// autocomplete 候选的显示后缀：未运行。
     fn bot_candidate_stopped_note(&self) -> &'static str;
+    /// 候选列表里正在排队启动的机器人。
+    fn bot_candidate_queued_note(&self) -> &'static str;
     /// 重启失败明细：停止阶段会话没注销干净，跳过重启。
     fn restart_skipped_session_alive(&self, bot_name: &str) -> String;
     /// 拉起会话失败（`screen` 起不来）。
@@ -445,7 +474,7 @@ pub fn all_languages() -> &'static [&'static dyn Text] {
 ///（生产路径上 `install()` 一定先跑过），而现有测试断言里的英文正是以默认语言为基准的。
 ///
 /// 两个分支在这里写全（而不是 `unwrap_or`）："回落成哪种语言"要一眼能看见，
-/// 而它是谁由 `Language::default()` 一个地方说了算（`Language::implementation()` 是"语言 → 实现"
+/// 而该语言由 `Language::default()` 单点决定（`Language::implementation()` 是"语言 → 实现"
 /// 的唯一一处，`install()` 也从那里取，它是私有的，所以这里只写代码体不挂链接）。
 pub fn get() -> &'static dyn Text {
     match INSTALLED.get() {
@@ -584,11 +613,11 @@ mod tests {
 
         assert_eq!(
             zh_cn::ZH_CN.bot_login_succeeded("duck"),
-            "机器人 duck 登录凭据获取成功：登录凭据已保存（若存在旧凭据会被删除），正在启动（稍后请用 /show status 查看状态）"
+            "机器人 duck 的登录凭据已保存（若存在旧凭据会被删除），正在启动（可用 /show status 查看状态）"
         );
         assert_eq!(
             en_us::EN_US.bot_login_succeeded("duck"),
-            "Bot 'duck': sign-in credentials obtained and saved. Any previous token file was removed. The bot is starting; check /show status for its state."
+            "Bot 'duck': the sign-in credential is saved (any previous token file was removed) and the bot is starting; check /show status for its state."
         );
 
         assert_eq!(
@@ -616,16 +645,12 @@ mod tests {
             "Request accepted: /start duck. Any start operation will use the global queue. The complete result will follow in a separate message."
         );
         assert_eq!(
-            zh_cn::ZH_CN.command_startall_queued_notice(7, 125),
-            "已接受 /startall 请求；本次需要启动 7 台，预计约 2 分 5 秒；完成后会返回完整结果"
+            zh_cn::ZH_CN.command_startall_queued_notice(7, 2, 5, 10),
+            "已接受 /startall 请求；本次启动 7 台，其中启动队列中已有 2 台在等待；按当前分批设置，预计最长耗时 5 分钟，等待启动结果的超时时间为 10 分钟；完成后将返回完整结果"
         );
         assert_eq!(
-            zh_cn::ZH_CN.command_startall_queued_notice(0, 0),
-            "已接受 /startall 请求；本次需要启动 0 台，预计约 0 秒；完成后会返回完整结果"
-        );
-        assert_eq!(
-            en_us::EN_US.command_startall_queued_notice(7, 125),
-            "Request accepted: /startall. 7 bots to start, about 2m 5s; the complete result will follow in a separate message."
+            en_us::EN_US.command_startall_queued_notice(7, 2, 5, 10),
+            "Request accepted: /startall. 7 bots to start, 2 already waiting in the start queue; with the current batching settings the slowest run is about 5 min and the wait for launch results times out after 10 min; the complete result will follow in a separate message."
         );
         assert!(
             zh_cn::ZH_CN
@@ -640,12 +665,12 @@ mod tests {
             "英文通用错误提示应说明发生内部错误"
         );
         assert_eq!(
-            zh_cn::ZH_CN.command_start_queue_summary(3, 20_000),
-            "启动队列: 两次登录最小间隔 20000 毫秒，每批最多 3 台"
+            zh_cn::ZH_CN.command_start_queue_summary(3, 20_000, 30_000),
+            "启动队列: 每批最多 3 台，批内相邻两台间隔 20000 毫秒，批与批之间间隔 30000 毫秒"
         );
         assert_eq!(
-            en_us::EN_US.command_start_queue_summary(3, 20_000),
-            "Start queue: sign-ins at least 20000 ms apart, up to 3 per batch"
+            en_us::EN_US.command_start_queue_summary(3, 20_000, 30_000),
+            "Start queue: up to 3 per batch, 20000 ms between bots in a batch, 30000 ms between batches"
         );
     }
 

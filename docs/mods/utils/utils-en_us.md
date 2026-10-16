@@ -32,20 +32,37 @@
   `ScreenSession`, with the PID and whether it is a `(Dead ...)` shell, which still counts as running so that `/stop`
   can clean it up), `is_bot_screen_running`, `session_name`, `send_command_to_single_bot`,
   `send_stop_signal_to_session` and `force_quit_session`.
-* `running_bots`: the single source of who is running. Grouping by run state, the names of the running ones, a status
-  snapshot of the running bots (including the `/show status` header and rows) and the refusal text for running bots. Entry
-  points `split_bot_entries_by_is_running`, `all_running_bot_names`, `all_running_bot_infos`, `RunningBotInfo`
-  (`into_row`), `status_table_header` and `refusal_if_running`.
-* `startup`: starting (four explicit steps; targets without a token are not launched; only the raw details
-  `LaunchOutcome` are returned, which carries `into_report()` and `to_failure_text()`). Entry points
-  `start_bot_sessions` and `prepare_and_launch_bot` (the `/bot login` path); the launch steps themselves
-  (`launch_bot_session`, `launch_command_line` with `LaunchCommandConfig`) are internal to the module.
-
+* `running_bots`: the single source of the bot state (whether it is started comes from the session, whether it is
+  queued comes from the queue). Grouping by run state, the names of the running ones, a status snapshot (including the
+  `/show status` header and rows) and the refusal text for running or queued bots. Entry points
+  `split_bot_entries_by_is_running`, `all_running_bot_names`, `all_running_bot_infos`, `RunningBotInfo`
+  (`into_row`), `status_table_header` and `refusal_if_not_stopped`.
+* `startup`: starting. Launching one bot is "check the token -> create the log -> prepare the raw log
+  directory -> `screen -dmS`"; targets without a token are not launched. Batch starting is orchestrated by
+  `StartupQueue::start_bots()` (create the ledger -> `add_bots_to_queue` hands it over -> wait for its own entries -> take
+  the results and re-check them once -> `BotStartResults`, which carries `into_report()` and `to_reply_text()`), shared by
+  `/start`, `/startall`, `/restart` and `/restartall`; `/bot login` goes through
+  `StartupQueue::add_bot_for_login`; the launch steps themselves (`launch_bot_session`, `launch_command_line`) are
+  internal to the module. The command layer reads the queue through `pending_bot_count()` (how many are waiting now),
+  `slowest_start_duration(bot_count)` (the pacing-based estimate the first `/startall` receipt uses) and
+  `result_timeout()` (the waiting net). The first step of "stop every bot" is `StartupQueue::request_stop()`: the
+  starter thread takes
+  no new batch, and the batch it is working through records its remaining entries as `BotStartOutcome::Cancelled` (not a
+  failure; they go into the skipped details), so whoever waits on a ledger (`/start`, `/startall`) never hangs. An
+  entry is its own safety net too: if it leaves scope without anyone writing a result (the waiting list is cleared, it
+  is pulled out, the starter thread panics and unwinds), `QueuedBot::drop` records a cancellation, and
+  `wait_until_done()` has another net: a timeout the queue derives from its pacing (`StartupQueue::result_timeout`,
+  twice the slowest start of a full queue), which closes whatever has not reported back as unconfirmed. It needs no
+  configuration and cannot fall out of step with the pacing values.
 * `restart`: restarting. The "stop then start" orchestration shared by `/restart` and `/restartall` (only the raw
   details `RestartOutcome` are returned, carrying both the stop and the launch details). Entry point
   `restart_bot_sessions`.
 * `shutdown`: stopping sessions (only the raw details `StopOutcome` are returned, which carries `into_report()` and
-  `to_failure_text()`). Entry points `stop_single_bot_session` and `stop_all_bot_sessions`.
+  `to_failure_text()`). Entry points `stop_single_bot_session` and `stop_all_bot_sessions`; the latter means "stop
+  everything", in a fixed order: "ask the starter thread to launch nothing new -> clear the waiting list -> stop every
+  session -> sweep the sessions once more". That last sweep catches a session that only appeared after the first
+  snapshot (a bot the starter thread was in the middle of launching cannot be held back, only cleaned up afterwards).
+  (`/stopall`, the watchdog's disconnect wrap-up and the exit wrap-up all go through it.)
 * `bot_log_files`: creating and picking bot logs (FishingBot's raw log is handled in `startup`). Entry points
   `create_bot_log_file`, `create_timestamped_log_file`, `target_logs_dir` and `latest_log_path`.
 * `fishingbot_config`: generating the game-side config (FishingBot's `conf.json`): delete the old file, then take the
@@ -127,13 +144,14 @@ ago would immediately count as already running and the statistics would drift.
 * All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start
   queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most
   `[startup_queue] max_batch_size`; the next FIFO request is not processed until the current request completes. Two
-  sign-ins are at least `[startup_queue] login_interval_ms` apart: bots inside a batch are spaced by it, and the wait
-  between batches is it minus that batch's recheck wait (`timing.settle_per_bot_ms` times 2 times the batch size). A
+  sign-ins are at least `[startup_queue] bot_login_interval_ms` apart: bots inside a batch are spaced by it, and the wait
+  between batches is it minus that batch's recheck wait (at most one more `timing.check_grace_ms`, the per-bot
+  session-survival window). A
   partial batch is closed when the queue becomes idle, but the "last sign-in" timestamp is kept across commands, so
   consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process
   restarts. `/bot login` does not use this queue.
 * `start_bot_sessions` handles launches within a batch and spaces them; the queue dispatcher handles the wait between
-  batches, and `settle_per_bot_ms` still scales the session-recheck wait by the number of bots in that batch, with the
+  batches, and `check_grace_ms` is still the per-bot session-survival window the recheck observes, with the
   two snapshots separated by the same interval. The sign-in rate is the only thing that is limited, so one interval
   value covers both inside and between batches: the batch size only changes the length of the verification window and
   the JVM memory peak, not the total duration (total duration is about the number of bots times the interval). See
@@ -151,8 +169,8 @@ ago would immediately count as already running and the statistics would drift.
 ## 5. `reply`: the reply format is written in one place
 
 * Fields are sections: `basics` (basic information and list rows, pushed straight in), `succeeded`, `skipped`,
-  `failed` (details) and `content` (a whole block of content). `render()` omits whatever was not filled in, so an
-  empty section never leaves an empty title behind.
+  `queued`, `failed` (details) and `content` (a whole block of content). `render()` omits whatever was not filled in, so
+  an empty section never leaves an empty title behind.
 * `set_counts(&[(label, count)])` overwrites the basic information rows and generates `label: N` uniformly; non-count
   rows (a header, a list of names, an explanation) are pushed straight into `basics`.
 * `new()` and `set_title()`: there is only this one way to construct a report (what comes out is empty) and the title
@@ -175,11 +193,11 @@ There is no function in `utils` that "takes the whole config and picks fields ou
 the one or two fields it really uses, in two styles:
 
 * Taking parameters (the caller supplies the values, the function does not touch the config): used where the logic is
-  heavy enough to deserve a unit test. `launch_command_line` with `LaunchCommandConfig` (assembling the launch
+  heavy enough to deserve a unit test. `launch_command_line` (assembling the launch
   command) and `target_logs_dir` (pure string and path assembly), for example.
 * Reading only the fields it needs (`config::Config::get().table.field`): used for convenience functions with a line or two of
   logic. `session_name` reads `runtime.screen_prefix`; `create_bot_log_file` and `latest_log_path` read
-  `runtime.logs_dir`; `BotTokenStatus::from_dir` reads `runtime.token_file`; `BotDirEntry::find_by_name` reads
+  `runtime.bot_logs_dir`; `BotTokenStatus::from_dir` reads `runtime.token_file`; `BotDirEntry::find_by_name` reads
   `paths.bots_dir`; `stop_bot_sessions` reads `timing.stop_grace_ms` and `timing.stop_settle_ms`; `Report::render`
   reads `runtime.max_reply_chars`.
 
@@ -227,7 +245,7 @@ pause keyword for a session that never showed one. Both the start and the end of
 
 ### 7.1 Bot logs: only one file
 
-`<bot directory>/<runtime.logs_dir>/` holds exactly these two things:
+`<bot directory>/<runtime.bot_logs_dir>/` holds exactly these two things:
 
 * `year-month-day-hour-minute-second.log`: our log. `create_bot_log_file` creates it before the session is launched,
   and the session appends the JVM output through `grep -v -E` and `tee -a` (lines matching `keywords.filter_regex` are

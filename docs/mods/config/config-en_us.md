@@ -101,25 +101,34 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
   `conf.json` as `misc.language` (the same value, not mapped), so the two never have to be aligned by hand. This
   project implements `ENGLISH` (the default) and `CHINESE_SIMPLIFIED`; changing it and restarting is enough, no
   rebuild. See section 3.1.
-* `[runtime]`: `java_opts`, `screen_prefix`, `token_file`, `logs_dir`, `max_log_lines`, `max_reply_chars`,
-  `max_autocomplete_choices`. The runtime parameters of a single bot. `logs_dir` holds our logs only (FishingBot's
+* `[runtime]`: `java_opts`, `screen_prefix`, `token_file`, `bot_logs_dir`, `max_reply_log_lines`, `max_reply_chars`,
+  `max_autocomplete_choices`. The runtime parameters of a single bot. `bot_logs_dir` holds our logs only (FishingBot's
   own raw log sits beside it under `[raw_game_logs] dir_name` as `[raw_game_logs] file_name`, pointing at
   `discard_path`, see [utils-en_us.md section 7](../utils/utils-en_us.md#7-the-two-log-lines)); `max_reply_chars` is
   the length limit of a single reply (Discord hard-limits a message to 2000 characters, and an overlong one simply
   fails to send); `max_autocomplete_choices` caps the autocomplete suggestions for the bot-name options (1..=25,
   Discord's hard limit).
-* `[startup_queue]`: `max_batch_size`, `login_interval_ms` and `max_pending_requests` set the global FIFO queue's
-  maximum bots per batch, the minimum gap between two sign-ins and the maximum waiting requests (excluding the active
-  request). The table and all of its fields are required and every value must be greater than zero.
-  `login_interval_ms` is the only knob that decides the pace: bots inside a batch are spaced by it, and the wait between
-  batches is it minus `timing.settle_per_bot_ms` times 2 times the batch size. Microsoft rate-limits sign-ins per egress
-  IP, see [troubleshooting section 12](../../troubleshooting/troubleshooting-en_us.md) for the numbers.
-  `/start`, `/startall`, `/restart` and `/restartall` share this queue; `/bot login` does not use it. The dispatcher
-  remains alive while idle, closes a partial batch when the queue becomes idle, and drops pending work if the process
-  restarts; the login interval is kept across idle either way.
-* `[timing]`: `settle_per_bot_ms`, `stop_grace_ms`, `stop_settle_ms` and `watchdog_window_ms`. These per-flow waits are
-  in milliseconds. `settle_per_bot_ms` is the wait per bot before checking the session (the check runs twice, so the
-  total wait is twice the number of bots times it, and it is also the part the wait between batches subtracts);
+* `[startup_queue]`: `max_batch_size`, `bot_login_interval_ms`, `batch_login_interval_ms` and `max_pending_requests` set
+  the global FIFO queue's maximum bots per batch, the gap between two bots in the same batch (milliseconds), the wait
+  between two batches (milliseconds) and the maximum waiting requests (excluding the active request). The table and all
+  of its fields are required and every value must be greater than zero.
+  `bot_login_interval_ms` staggers the bots inside one batch; `batch_login_interval_ms` is the wait between batches: once a
+  batch is done (launched and rechecked), the next one waits at least this long - even when that batch held a single bot.
+  It counts from the moment the previous batch was popped, so the first command after a long idle does not wait.
+  Microsoft rate-limits sign-ins per egress IP, see
+  [troubleshooting section 12](../../troubleshooting/troubleshooting-en_us.md) for the numbers.
+  `/start`, `/startall`, `/restart` and `/restartall` share this queue; `/bot login` does not use it. At most
+  `max_pending_requests` bots are kept waiting, whatever does not fit is handed straight back to the caller (the receipt
+  says so), and pending work is dropped if the process restarts.
+  The timeout for waiting on launch results is not configurable: the queue derives it from this table and
+  `timing.check_grace_ms` (`StartupQueue::result_timeout`):
+  `2 * (ceil(max_pending_requests / max_batch_size) * max(batch_login_interval_ms, (max_batch_size - 1) * bot_login_interval_ms) + check_grace_ms)`.
+  Past it, whatever has not reported back is written into the reply as "unconfirmed" (and one line goes to the program
+  log); a slower per-bot stagger (Microsoft rate-limits sign-ins) or a bigger queue makes it grow on its own, so nobody
+  has to adjust it by hand.
+* `[timing]`: `check_grace_ms`, `stop_grace_ms`, `stop_settle_ms` and `watchdog_window_ms`. These per-flow waits are
+  in milliseconds. `check_grace_ms` is the wait per bot before checking the session (the check runs twice, so the
+  total wait is twice the number of bots in that batch times it; the wait between batches does not subtract it);
   `watchdog_window_ms` is the gateway watchdog's judging window, also used as the wait before rebuilding the
   connection; the REST probe interval (a third of it) and the first-handshake timeout (twice it) are derived from it
   instead of being separate keys, see [watchdog-en_us.md](../watchdog/watchdog-en_us.md).
@@ -241,13 +250,15 @@ It only looks at the three kinds of problem that make the program fail to run (s
 
 * Required entries must not be empty: `ping.default_ping_host`, `discord.token`, `keywords.*`,
   `command_echo.pause_echo`, `command_echo.unpause_echo`, `text.help`, `runtime.screen_prefix`, `runtime.token_file`
-  and `runtime.logs_dir` (the last three must also contain no spaces or slashes and must not be `.` or `..`),
+  and `runtime.bot_logs_dir` (the last three must also contain no spaces or slashes and must not be `.` or `..`),
   `raw_game_logs.discard_path`, and `raw_game_logs.dir_name` / `raw_game_logs.file_name` (these two must be plain names
   as well).
 * Numeric ranges: `ping.default_ping_port` must not be 0; `runtime.max_autocomplete_choices` must be between 1 and 25
-  (Discord's hard limit on suggestions); `startup_queue.max_batch_size`, `startup_queue.login_interval_ms`,
-  `startup_queue.max_pending_requests`, `ping.timeout_ms`, `runtime.max_log_lines`, `runtime.max_reply_chars`,
-  `timing.watchdog_window_ms`, `timing.settle_per_bot_ms`, `command_echo.wait_ms` and `command_echo.scan_lines` must be
+  (Discord's hard limit on suggestions); `startup_queue.max_batch_size`, `startup_queue.bot_login_interval_ms`,
+  `startup_queue.batch_login_interval_ms`, `startup_queue.max_pending_requests`,
+  `ping.timeout_ms`,
+  `runtime.max_reply_log_lines`, `runtime.max_reply_chars`,
+  `timing.watchdog_window_ms`, `timing.check_grace_ms`, `command_echo.wait_ms` and `command_echo.scan_lines` must be
   greater than 0 (a watchdog window of 0 degrades the decision - it can never prove "still connected"). The probe
   interval and the first-handshake timeout are derived from that window, so the "the probe must not be slower than the
   window" rule no longer exists.
@@ -265,7 +276,7 @@ clear message.
 
 Nothing else is policed: how large a timing value should be, which address to use, and whether a name may contain
 Chinese characters are all the user's judgement. `[discord]` has only one rule (the token must not be empty); `[log]`'s
-`debug` is a boolean switch with no rule; `[timing]` has two (`settle_per_bot_ms` greater than 0 and the gateway window
+`debug` is a boolean switch with no rule; `[timing]` has two (`check_grace_ms` greater than 0 and the gateway window
 greater than 0); `[command_echo]` has two (both echoes non-empty and neither containing the
 other, and both durations greater than 0).
 
@@ -282,9 +293,9 @@ other, and both durations greater than 0).
 In code there is one `Config` plus one struct per TOML table (`Config::ping`, `runtime`, `timing`, ...). Not to have
 one more layer, but to keep the name identical in three places:
 
-* the key in the config file: `logs_dir` under the `[runtime]` table;
-* the way the code reads it: `config::Config::get().runtime.logs_dir`;
-* a startup validation error: `配置项 runtime.logs_dir 不能为空`.
+* the key in the config file: `bot_logs_dir` under the `[runtime]` table;
+* the way the code reads it: `config::Config::get().runtime.bot_logs_dir`;
+* a startup validation error: `配置项 runtime.bot_logs_dir 不能为空`.
 
 Before flattening the structs into one big struct of concrete fields, you have to decide what happens to the TOML
 tables, and none of the three ways pays off:

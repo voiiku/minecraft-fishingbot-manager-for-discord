@@ -17,7 +17,7 @@ pub(crate) async fn log(
     #[autocomplete = "super::autocomplete_any_bot_names"]
     #[description = "bot name"]
     name: String,
-    #[description = "how many trailing lines to read (default 50, cap in runtime.max_log_lines)"]
+    #[description = "how many trailing lines to read (default 50, cap in runtime.max_reply_log_lines)"]
     lines: Option<i64>,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();

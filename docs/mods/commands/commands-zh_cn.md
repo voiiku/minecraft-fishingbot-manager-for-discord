@@ -29,9 +29,11 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 指令（四个 `*all` 与单机器人的 `start`、`stop`、`restart`）按两条发：
 
 1. 启动类指令（`/start`、`/restart`、`/startall`、`/restartall`）先
-   `ctx.say("已接受 /startall 请求；本次需要启动 N 台，预计约 X 分 Y 秒；完成后会返回完整结果")`
-  （N 与预计耗时由 `lib::handle_startall_notice()` 按"有 Token 且未运行"的账号数与 `[startup_queue] login_interval_ms` 算出）；其他长指令回
-   `已开始执行 …，执行完毕后会返回完整结果`。
+   `ctx.say("已接受 /startall 请求；本次启动 N 台，其中启动队列中已有 M 台在等待；按当前分批设置，预计最长耗时 X 分钟，等待启动结果的超时时间为 Y 分钟；完成后将返回完整结果")`
+   （N 由 `lib::handle_startall_notice()` 按"有 Token 且未运行"的账号数算出；M 是队列里现有的台数
+   （`StartupQueue::pending_bot_count()`，含别的指令排在前面的那些）；X 与 Y 按同一份节奏取值算：
+   `StartupQueue::slowest_start_duration()` 与 `StartupQueue::result_timeout()`，都取整到分钟）；
+   其他长指令回 `已开始执行 …，执行完毕后会返回完整结果`。
 2. 跑完再 `ctx.say(<Report::render() 的结果>)`，这是真正的新消息。
 
 查询类指令（`/show status`、`/show ...`、`/log`）只发第一条：结果直接替换掉占位。
@@ -194,18 +196,22 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 `commands/autocomplete.rs` 负责按权限取得候选机器人目录、查询运行状态、按命令 scope 筛选候选、组装显示名并转换成 Discord 响应。
 候选按指令语义分，不是一律"运行中"：
 
-* `/stop`、`/pause`、`/unpause`、`/command`、`/restart`：有权限且运行中。对没在跑的目标这些操作没
+* `/stop`：有权限的全部。排队等待启动的也能被它取消（此时回一句"已取消排队启动"），所以候选里也要有
+  排队中的；显示名带状态后缀。
+* `/pause`、`/unpause`、`/command`、`/restart`：有权限且运行中。对没在跑的目标这些操作没
   意义（`/restart` 会直接拒绝、`/stop` 只会回"无需停止"）。
-* `/start`、`/bot del`、`/bot rename`、`/bot login`：有权限且未运行。这几个的前提就是它已经停下
-  （`/start` 对在跑的目标会被拒；`/bot login` 同样如此，连"上次登录的会话还开着"它也一起拒）。
-* `/log`：有权限的全部。历史日志对两者都有意义，显示名带"（运行中）"或"（已停止）"后缀。
+* `/start`、`/bot del`、`/bot rename`、`/bot login`：有权限且既没在跑、也不在启动队列里。这几个的前提
+  就是它已经停下（`/start` 对在跑或排队中的目标会被拒；`/bot login` 同样如此，连"上次登录的会话还开着"
+  它也一起拒）。
+* `/log`：有权限的全部。历史日志对两者都有意义，显示名带"（运行中）"、"（排队中）"或"（已停止）"后缀。
 * `/bot add`、`/token`：没有候选。`/bot add` 要的是一个尚不存在的名字（列不出来）；`/token` 是
   Modal，Discord 不支持它带候选。
 
-细节：权限口径与服务端一致（管理员是全部机器人，其他人是自己 `bots/<用户ID>/` 下的）；运行状态取一次
-`screen -list` 快照（每次按键都会收到一次 autocomplete 交互，不能按台数反复查）；最多 `runtime.max_autocomplete_choices` 条
-（默认 25，Discord 硬上限，由 `src/commands/autocomplete.rs` 中的候选逻辑限制），运行中的排前面。候选只是建议：用户仍可手打任意名字，
-归属与会话是否在跑照旧由各 `handle_*` 判。
+细节：权限口径与服务端一致（管理员是全部机器人，其他人是自己 `bots/<用户ID>/` 下的）；状态取一次
+`screen -list` 快照与一次启动队列查询（每次按键都会收到一次 autocomplete 交互，不能按台数反复查）；最多
+`runtime.max_autocomplete_choices` 条（默认 25，Discord 硬上限，由 `src/commands/autocomplete.rs` 中的候选逻辑
+限制），在跑的排前面、其次是排队中的。候选只是建议：用户仍可手打任意名字，归属与会话是否在跑照旧由各
+`handle_*` 判。
 
 ## 3. 单机器人控制：`/start`、`/stop`、`/restart`、`/pause`、`/unpause`、`/command`、`/log`
 
@@ -292,7 +298,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    三个流程函数吃的都是 `&[BotDirEntry]`，单机就是一个元素的切片 —— 这也是"以后要支持一次多台"
    不用重写它们的原因（见 [CONTEXT 第 8 节](../../CONTEXTS/CONTEXT-zh_cn.md)）。
 
-   拉起相邻两台之间等 `[startup_queue] login_interval_ms`，全部拉起后再等台数乘 `timing.settle_per_bot_ms` 复核两遍（中间再等同样久，第二遍
+   拉起相邻两台之间等 `[startup_queue] bot_login_interval_ms`，全部拉起后再等台数乘 `timing.check_grace_ms` 复核两遍（中间再等同样久，第二遍
    还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功），见
    [utils.md 第 4 节](../utils/utils-zh_cn.md#4-startup--shutdown-的等待参数)。
 4. 失败判定都看 utils 返回的明细自己的方法（`outcome.has_failed_lines()` 为真就把
@@ -320,7 +326,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 ### 3.4 `/log` 的细节
 
-* 行数必须大于 0，且被 `runtime.max_log_lines` 封顶（一条指令不能把整份大日志拉回来）。
+* 行数必须大于 0，且被 `runtime.max_reply_log_lines` 封顶（一条指令不能把整份大日志拉回来）。
 * 只读最新那一份日志（`utils::bot_log_files::latest_log_path`，只认时间戳命名）：每个会话启动前
   `create_bot_log_file` 先建好文件，会话里 `grep -v -E` 过滤后 `tee -a` 追加。
 * FishingBot 自己的日志写在同层 `raw/log0.log`（指向 `/dev/null` 的符号链接，内容丢弃），所以磁盘上
@@ -371,7 +377,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 1. 路由层 `permitted_bot_dir_entry` 定位目录并判 `OwnerOrAdmin`（先 `find_by_name`，再看归属）；定位
    不到或没权限都按未找到回复，不暴露"该机器人在别人名下"这类信息。
-2. 会话在运行时拒绝删除（`refusal_if_running`，统一文案见 `utils::running_bots`），否则会删掉它正在
+2. 会话在运行时拒绝删除（`refusal_if_not_stopped`，统一文案见 `utils::running_bots`），否则会删掉它正在
    写入的数据目录。
 3. 用 `fs::remove_dir_all` 删除目录，成功与失败都会写后台日志。
 
@@ -382,7 +388,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 1. 校验新旧名字都合法、且与旧名不同。
 2. 路由层按旧名解析条目（`BotDirEntry::find_by_name`）并判 `OwnerOrAdmin`（口径是目录归属，管理员可
    跨目录）。
-3. 运行中的会话直接拒绝（`refusal_if_running`，与 `/bot del`、`/token` 同一条规矩）：运行中的进程会
+3. 运行中的会话直接拒绝（`refusal_if_not_stopped`，与 `/bot del`、`/token` 同一条规矩）：运行中的进程会
    继续往旧目录写数据，改名会把它接下来的日志写丢。要改名先 `/stop`。
 4. 全服重名校验（`is_bot_name_taken`）：名字被占了就报错，不自动换一个。
 5. 用 `fs::rename` 在同一个用户目录里换名字（新旧目录同属一个账号）。
@@ -418,7 +424,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    上一次还没结束的登录，别让用户去 `/stop` 掉自己的登录）。
 2. 已有凭据先挪到 `<凭据文件名>.renewing`：不挪的话 JAR 看到它就直接用、不打印设备码，`/bot login` 会变成
    "什么都没发生"。顺带收拾上一次被打断留下的残留（两个都在 → 删残留；只有 `.renewing` → 放回去）。
-3. 拉起会话：与 `/start` 走同一套（`utils::prepare_and_launch_bot`：建日志 → 准备 FishingBot 原始日志目录
+3. 拉起会话：与 `/start` 走同一套（`utils::StartupQueue::launch_bot_to_login`：建日志 → 准备 FishingBot 原始日志目录
    → `screen -dmS`），只是不按凭据状态拒绝 —— `/start` 的第零步正是拒掉无凭据的机器人，这也是这段流程必须
    另开一个入口的原因。失败就把旧凭据放回去再回错。
 4. 读日志尾部等设备码那一行（上游消息 `auth-create-refresh-token`，中英两版语言文件里都是英文原文，逐字见
@@ -501,18 +507,21 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   拆开（`split_bot_entries_by_is_running`）。一个有效账号都没有时回 `未配置任何有效账号，未启动。`
   （若还有缺 Token 的账号，会追一句提示）；全部在运行时回 `全部有效机器人均已运行`；否则调
   `utils::start_bot_sessions(&not_running_bot_entries)`，之后用 `Report::set_counts` 覆盖计数行
-  （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、启动失败）。没被启动的账号
-  都进 `skipped` 明细（已在运行与缺 Token 两种原因各一条），不算失败。
-* `/stopall`：`utils::stop_all_bot_sessions()` 拿原始明细（它自己就是 `all_bot_dir_entries()` 加分组
-  加停止的组合），报告由本模块的 `stopall::stop_all_bots()` 拼，只报成功与失败（计数行只有"成功停止"与
-  "停止失败"，原本未运行的机器人不进明细，`Report::skipped` 为空；"扫描机器人目录"这个字段只由
-  `/show allbots` 输出）。进程收到退出信号时，收尾在
+  （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、已取消、启动失败）。没被启动的账号
+  都进 `skipped` 明细（已在运行、缺 Token 与被取消三种原因各一条），不算失败：被取消的那些是"停止全部机器人"
+  （`/stopall`、掉线收尾、退出收尾）撤下来的（`BotStartOutcome::Cancelled`）。
+* `/stopall`：`utils::stop_all_bot_sessions()` 拿原始明细（它自己就是"请求启动线程停止拉起 + 清空启动队列 +
+  `all_bot_dir_entries()` 加分组加停止 + 再扫一遍晚到的会话"的组合），报告由本模块的 `stopall::stop_all_bots()`
+  拼，只报成功与失败（计数行只有"成功停止"与"停止失败"，原本未运行的机器人不进明细；等待列表里被取消的那些进
+  `Report::skipped`，没有排队时它为空；已经取走、正在拉的那批由触发它的 `/startall`／`/restartall` 回复报出
+  "启动被取消"；"扫描机器人目录"这个字段只由 `/show allbots` 输出）。进程收到退出信号时，收尾在
   `watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细，只是标题换成"收到退出信号，收尾结果"：
   报告先写程序日志，再发到各服务器的通报频道（发送有 30 秒总时限，超时就跳过并退出，下次启动不补发）。
 * `/restartall`：`all_bot_dir_entries()` 里只取在运行的那一组（未运行的不算重启对象）；没有时直接回
   `没有运行的机器人实例，无需重启`；否则调 `utils::restart_bot_sessions`，再用 `Report::set_counts`
   写运行中账号、已发送重启命令、重启失败（缺 Token 的目标会在重启失败明细里说明原因）。
-  报告只报成功与失败：重启目标是它自己选定的，没有"跳过"这一类，`Report::skipped` 为空。
+  报告只报成功与失败：重启目标是它自己选定的，没有"跳过"这一类；`Report::skipped` 只放被取消的启动
+  （"停止全部机器人"撤下来的那几条）。
 * `/commandall`：指令片段由命令层原样透传，这里用 `to_clean_bot_command` 拼成一条指令（与 `/command`
   同一口径），再逐条注入。`utils::all_running_bot_names()` 来自一次 `screen -list` 快照，命中即运行
   中，因此这里直接逐条注入，不再逐个机器人重复鉴权与探测会话；逐条统计成功数，失败的原文放进
@@ -535,7 +544,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 批量启动的瞬时内存峰值常高于云服务器可用内存，被 OOM 杀掉的进程不会出现在 `screen -list` 里，因此
 结果里会写"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。处理方式：调小 `runtime.java_opts` 的
-内存配额、调大 `timing.settle_per_bot_ms` 或 `[startup_queue] login_interval_ms`（等得更久或登录更慢），或稍后重复
+内存配额、调大 `timing.check_grace_ms` 或 `[startup_queue] bot_login_interval_ms`（等得更久或登录更慢），或稍后重复
 一次命令（JVM 内存占用会随时间优化）。
 
 ## 6. 查询：`/show status` 与 `/show botconfig|mybots|allbots|admins`
@@ -548,7 +557,8 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 ### 6.1 指令一览
 
 * `/show status`：`status::all_running_bots_status()`（内部走 `utils::running_bots::all_running_bot_infos()`）。
-  数据来自 `screen -list` 与各机器人最新一份过滤后的日志，回复形式是文本（一张表）。
+  数据来自 `screen -list`、各机器人最新一份过滤后的日志，以及一次启动队列查询（排队中的在报告下方
+  `[排队中]` 一栏），回复形式是文本（一张表）。
 * `/show botconfig`：`botconfig::fishingbot_config_view()`。数据来自 `paths.fishingbot_config_file_name`（所有
   机器人共用那份），回复形式是附件（文件名与全文）。
 * `/show mybots`：`mybots::my_bots_list(caller_id)`。数据是调用者自己用户目录下的机器人，文本回复。
@@ -561,6 +571,9 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   同一口径），再由 `utils::running_bots::all_running_bot_infos()` 用一次 `screen -list` 快照把不在跑
   的剔掉。所以出现在表里的都是配好 Token 且会话存在的机器人；Token 文件被删掉但进程还在跑的那种不在
   表里（`/stopall` 仍能收掉它）。
+* 排队与否由 `/show status` 自己问一次启动队列（`StartupQueue::bots_in_queue`，与 `/start`、`/stop`
+  同一口径）：排队中的机器人还没有会话，进不了上面那张表（没有在线 / 暂停 / 时长可报），所以在报告
+  下方新开一栏（`Report::queued`，小节标签是 `report_queued_label()`，中文 `[排队中]`）逐台列出。
 * 每个机器人的状态由 `utils::running_bots` 判定。连接状态分两种来源：会话是 `(Dead ...)` 残壳时不再读
   日志，直接显示"进程已结束"（JVM 已经被杀，日志最后一条可能还停在"在线"）；会话正常时从最新一份日志里
   读（`BotDirEntry::connection_status`：读一次就当场重新取一次，从末尾往回扫、有结论就停）。暂停状态取

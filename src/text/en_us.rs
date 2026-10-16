@@ -106,7 +106,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             ("name", "bot name"),
             (
                 "lines",
-                "how many trailing lines to read (default 50, cap in runtime.max_log_lines)",
+                "how many trailing lines to read (default 50, cap in runtime.max_reply_log_lines)",
             ),
         ],
     },
@@ -178,6 +178,10 @@ impl Text for EnUs {
 
     fn report_skipped_label(&self) -> &'static str {
         "[Skipped]"
+    }
+
+    fn report_queued_label(&self) -> &'static str {
+        "[Queued]"
     }
 
     fn report_failed_label(&self) -> &'static str {
@@ -261,6 +265,10 @@ impl Text for EnUs {
         format!("Error: bot '{bot_name}' is already running.")
     }
 
+    fn bot_start_already_queued(&self, bot_name: &str) -> String {
+        format!("Error: bot '{bot_name}' is already in the start queue; no need to start it again.")
+    }
+
     fn bot_start_command_sent(&self, bot_name: &str) -> String {
         format!("Start command sent for bot '{bot_name}'. Check /show status to confirm its state.")
     }
@@ -271,6 +279,10 @@ impl Text for EnUs {
 
     fn bot_stop_succeeded(&self, bot_name: &str) -> String {
         format!("Bot '{bot_name}' stopped successfully")
+    }
+
+    fn bot_stop_cancelled_queue(&self, bot_name: &str) -> String {
+        format!("Bot '{bot_name}' was cancelled from the start queue")
     }
 
     fn bot_restart_command_sent(&self, bot_name: &str) -> String {
@@ -373,8 +385,8 @@ impl Text for EnUs {
 
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
         format!(
-            "Bot '{bot_name}': sign-in credentials obtained and saved. Any previous token file was \
-             removed. The bot is starting; check /show status for its state."
+            "Bot '{bot_name}': the sign-in credential is saved (any previous token file was removed) and \
+             the bot is starting; check /show status for its state."
         )
     }
 
@@ -419,6 +431,10 @@ impl Text for EnUs {
 
     fn count_skipped_missing_token(&self) -> &'static str {
         "skipped (no token file)"
+    }
+
+    fn count_start_cancelled(&self) -> &'static str {
+        "cancelled"
     }
 
     fn count_start_failed(&self) -> &'static str {
@@ -526,7 +542,7 @@ impl Text for EnUs {
     }
 
     fn mybots_empty(&self) -> &'static str {
-        "No bots are associated with this account. Use /bot add to add one."
+        "No bots under this account yet. Use /bot add to add one."
     }
 
     fn mybots_row(&self, bot_name: &str, token_status: &str) -> String {
@@ -653,16 +669,33 @@ impl Text for EnUs {
         )
     }
 
-    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String {
+    fn command_startall_queued_notice(
+        &self,
+        bot_count: usize,
+        queued_bot_count: usize,
+        estimated_minutes: u64,
+        timeout_minutes: u64,
+    ) -> String {
         format!(
-            "Request accepted: /startall. {bot_count} bots to start, about {}; the complete result will follow in a separate message.",
-            expected_duration_text(expected_secs)
+            "Request accepted: /startall. {bot_count} bots to start, {queued_bot_count} already waiting in the start \
+             queue; with the current batching settings the slowest run is about {estimated_minutes} min and the wait \
+             for launch results times out after {timeout_minutes} min; the complete result will follow in a separate \
+             message."
         )
     }
 
-    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
+    fn start_internal_error_reason(&self) -> &'static str {
+        "internal error (see the program log)"
+    }
+
+    fn command_start_queue_summary(
+        &self,
+        batch_size: usize,
+        bot_login_interval_ms: u64,
+        batch_login_interval_ms: u64,
+    ) -> String {
         format!(
-            "Start queue: sign-ins at least {interval_ms} ms apart, up to {batch_size} per batch"
+            "Start queue: up to {batch_size} per batch, {bot_login_interval_ms} ms between bots in a batch, {batch_login_interval_ms} ms between batches"
         )
     }
 
@@ -744,6 +777,10 @@ impl Text for EnUs {
         format!("Error: bot '{bot_name}' is running. Stop it with /stop first.")
     }
 
+    fn refusal_bot_queued(&self, bot_name: &str) -> String {
+        format!("Error: bot '{bot_name}' is waiting in the start queue. Cancel that start first.")
+    }
+
     fn send_command_failed(&self, bot_name: &str, reason: Option<&str>) -> String {
         match reason {
             Some(reason) => {
@@ -782,16 +819,30 @@ impl Text for EnUs {
         format!("Bot {bot_name}: the session still exists after the stop")
     }
 
-    fn start_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("Bot {bot_name}: no token file, not launched")
-    }
-
     fn start_log_file_failed(&self, bot_name: &str) -> String {
         format!("Bot {bot_name}: cannot create the log file")
     }
 
-    fn start_command_sent(&self, bot_name: &str) -> String {
-        format!("Bot {bot_name}: start command sent, session appeared")
+    fn start_command_sent_confirmed(&self, bot_name: &str) -> String {
+        format!(
+            "Bot {bot_name}: start command sent, the session is up and the log confirms it joined"
+        )
+    }
+
+    fn start_command_sent_unconfirmed(&self, bot_name: &str) -> String {
+        format!(
+            "Bot {bot_name}: start command sent, the session is up but the state is not confirmed yet"
+        )
+    }
+
+    fn start_cancelled(&self, bot_name: &str) -> String {
+        format!("Bot {bot_name}: starting was cancelled (all bots were being stopped)")
+    }
+
+    fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
+        format!(
+            "Bot {bot_name}: timed out waiting for the launch result ({seconds} seconds); closed as unconfirmed (check the program log or /show status)"
+        )
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
@@ -816,6 +867,10 @@ impl Text for EnUs {
 
     fn bot_candidate_stopped_note(&self) -> &'static str {
         " (stopped)"
+    }
+
+    fn bot_candidate_queued_note(&self) -> &'static str {
+        " (queued)"
     }
 
     fn restart_skipped_session_alive(&self, bot_name: &str) -> String {
@@ -911,8 +966,8 @@ impl Text for EnUs {
                 format!("failed to register the SIGTERM handler: {reason}")
             }
             LogText::GatewayLostNeverReady => {
-                "never managed to handshake with Discord after startup (you may need to turn on a \
-                 TUN-mode proxy); every bot is being stopped, then we try to reconnect..."
+                "the handshake with Discord never completed after startup (a TUN-mode proxy may be \
+                 needed in the client); every bot is being stopped, then a reconnect is attempted..."
                     .to_string()
             }
             LogText::GatewayLostUnreachable => {
@@ -995,8 +1050,8 @@ impl Text for EnUs {
                 "the shutdown wrap-up went to {notified_guilds} server(s) (failed: {failed_guilds})"
             ),
             LogText::ShutdownReportNoContext => {
-                "no Discord context is available yet (this connection never handshaked), so the \
-                 shutdown wrap-up was only written to the program log"
+                "this connection never completed the handshake, so no Discord context is available; \
+                 the shutdown wrap-up was written to the program log only"
                     .to_string()
             }
             LogText::ShutdownReportTimeout { seconds } => format!(
@@ -1019,9 +1074,6 @@ impl Text for EnUs {
             }
             LogText::BotDeleted { bot_name } => format!("bot {bot_name} deleted successfully"),
             LogText::BotLogFirstLine => "--- bot starting ---".to_string(),
-            LogText::StartSkippedMissingToken { bot_name } => {
-                format!("bot {bot_name} has no token file, not launched")
-            }
             LogText::StartLogFileFailed { bot_name, reason } => {
                 format!("failed to create the log file of bot {bot_name}: {reason}")
             }
@@ -1032,17 +1084,20 @@ impl Text for EnUs {
             } => format!(
                 "launching the screen session of bot {bot_name} ({session_name}), log: {log_path}"
             ),
-            LogText::StartVerificationFailed {
-                bot_name,
-                session_seen_at_first_check,
-            } => format!(
-                "the start of bot {bot_name} failed the re-check: {}",
-                if session_seen_at_first_check {
-                    "the session appeared and then exited"
-                } else {
-                    "the session never appeared"
-                }
-            ),
+            LogText::StartLaunchPanicked { bot_name, reason } => {
+                format!("internal error while launching bot {bot_name}: {reason}")
+            }
+            LogText::StartResultTimeout { bot_name, seconds } => {
+                format!(
+                    "timed out after {seconds} seconds waiting for the launch result of bot {bot_name}; closed as unconfirmed"
+                )
+            }
+            LogText::StarterRestarting { reason } => {
+                format!("the startup thread crashed ({reason}); restarting it")
+            }
+            LogText::StartVerificationFailed { bot_name, reason } => {
+                format!("the start of bot {bot_name} failed the re-check: {reason}")
+            }
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "unexpected file '{file_name}' in the FishingBot log directory {dir} (if this keeps \
                  happening, FishingBot changed its log file name: update file_name in the \
@@ -1133,18 +1188,6 @@ impl Text for EnUs {
                 requirement_text(requirement)
             ),
         }
-    }
-}
-
-/// 配置校验里那一句"要求"（`ConfigFieldInvalid` / `ConfigFieldValueInvalid` 用）。
-///
-/// 单独一个函数是为了让"多条规则共用同一句话"只翻一次；`match` 穷尽，漏一条编译不过。
-/// Human-readable seconds for the `/startall` notice: `90` -> `1m 30s`.
-fn expected_duration_text(expected_secs: u64) -> String {
-    match (expected_secs / 60, expected_secs % 60) {
-        (0, secs) => format!("{secs}s"),
-        (minutes, 0) => format!("{minutes}m"),
-        (minutes, secs) => format!("{minutes}m {secs}s"),
     }
 }
 

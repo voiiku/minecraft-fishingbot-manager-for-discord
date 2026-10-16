@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use crate::text;
 use crate::utils::{
-    BotDirEntry, is_bot_screen_running, prepare_and_launch_bot, read_last_lines,
-    refusal_if_running, stop_single_bot_session, token_file_path,
+    BotDirEntry, StartupQueue, is_bot_screen_running, read_last_lines, refusal_if_not_stopped,
+    stop_single_bot_session, token_file_path,
 };
 
 /// JAR 设备码提示关键字。
@@ -72,7 +72,7 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
     // 避免打断登录中的会话或运行中的机器人。
     if is_bot_screen_running(bot_name) {
         let refusal = if bot_dir_entry.bot_token_status.is_ready() {
-            refusal_if_running(bot_name).expect_err("会话在跑时必然被拒")
+            refusal_if_not_stopped(bot_dir_entry).expect_err("会话在跑时必然被拒")
         } else {
             text::get().bot_login_already_running(bot_name)
         };
@@ -80,10 +80,15 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
         return Err(refusal);
     }
 
+    // 已在启动队列中排队的：等待其启动或先取消，避免与队列拉起的会话重名。
+    if StartupQueue::get_or_init().bot_in_queue(bot_dir_entry) {
+        return Err(text::get().bot_start_already_queued(bot_name));
+    }
+
     let replaced_token_path = move_existing_token_aside(bot_dir_entry)?;
 
-    // 拉起会话（这一步与 `/start` 的三步完全一样，只是不按凭据状态拒绝）。
-    let log_path = match prepare_and_launch_bot(bot_name, &bot_dir_entry.bot_dir_path) {
+    // 拉起会话（与 `/start` 的逐台拉起同一份实现，只是不按凭据状态拒绝）。
+    let log_path = match StartupQueue::add_bot_for_login(bot_name, &bot_dir_entry.bot_dir_path) {
         Ok(log_path) => log_path,
         Err(message) => {
             // 会话没起来：把旧凭据放回去，别让一次失败的登录把能用的凭据弄丢。
@@ -344,7 +349,7 @@ fn wait_for_device_code(session: &LoginSession) -> Option<(String, String)> {
 ///
 /// 真机上的那一行长这样（前面 `[时间] [WARNING] ` 那段是 JAR 自己的日志格式）：
 /// `Please log in with your Microsoft account using the following code AQHV33R4 at https://www.microsoft.com/link.`
-/// 网址末尾带一个句点，要去掉；代码按原文取（不校验形状，免得上游换了格式之后我们误判）。
+/// 网址末尾带句点，需去掉；代码按原文取（不校验形状，避免上游改变格式后误判）。
 fn parse_device_code_prompt(lines: &[String]) -> Option<(String, String)> {
     for line in lines {
         let Some(after_marker) = line.split(DEVICE_CODE_MARKER).nth(1) else {

@@ -1,23 +1,21 @@
-//! 回复的组装与渲染逻辑：报告容器 [`Report`] 与回复的长度限制。
+//! 组装与渲染回复报告。
 //!
 //! 需要输出报告的指令都用 [`Report`] 组装、由 [`Report::render`] 渲染，
-//! 只回一行的单个机器人指令用 [`Report::has_failed_lines`] 与 [`Report::to_failure_text`] 判断结果。
+//! 简短回复用结果类型上的 `has_failed_lines` 与 `to_failure_text`（启动那套定义在本文件）。
 //!
-//! 渲染受到 `runtime.max_reply_chars` 长度限制：Discord 对单条消息的硬上限（2000 字符），
-//! 长度按 UTF-16 码元数（见 [`Utf16Len::utf16_len`]），与 Discord 的口径一致。
-//! 超长会发送失败，所以超长时必需截断并写明省略了多少行。
+//! 新增输出类型时，在结构体中加入可选字段并同步更新 [`Report::new`] 与 [`Report::render`] 即可，
 //!
-//! 新增输出类型时，在结构体里加一个可选字段并同步更新 [`Report::new`] 与 [`Report::render`] 即可，
+//! 提供 [`IntoReplyText`]：业务结果直接转成回复文本 —— `Result<String, String>` 原样透出，
+//! 带明细的结果类型在这里渲染整段回复（例如 `startup::BotStartResults`：`into_report` 与 `to_reply_text` 定义在本文件）。
 //!
-//! 提供 [`IntoReplyText`]，把业务函数的 `Result<String, String>` 直接转成回复文本。
-//!
-//! 关于`/show status` ：因为/show status 只展示运行中的机器人状态，所以它定义在 [`super::running_bots`] 中
+//! 关于`/show status` 的回复文本：因为/show status 只展示运行中的机器人状态，所以它定义在 [`super::running_bots`] 中
 
 use crate::config;
 use crate::text;
+use crate::utils::bot_dirs::BotDirEntry;
 
 /// 通用报告体：标题、基础信息/列表行、各类明细、整块内容，全部可选。
-/// 约定：数组长度为0即视为未提供；单值字段用 None 表示未提供，渲染时未提供的部分不会出现。
+/// 约定：数组长度为0 / 值为 None 表示未提供，渲染时未提供的部分不会出现。
 #[derive(Debug)]
 pub struct Report {
     /// 标题；`None` 时省略标题与分隔线。
@@ -31,34 +29,44 @@ pub struct Report {
     pub succeeded: Vec<String>,
     /// 跳过明细行，如 已运行 的部分。
     pub skipped: Vec<String>,
+    /// 排队明细行，如 还在启动队列里排着的机器人（`/show status` 报告下方那一栏）。
+    pub queued: Vec<String>,
     /// 失败明细行。
     pub failed: Vec<String>,
     /// 整块原样内容：日志、配置、帮助文本等。
     pub content: Option<String>,
 }
 
+impl Default for Report {
+    /// 空报告（与 [`Report::new`] 同义）。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Report {
-    /// 新创建报告（全空）。
-    /// 新增输出类型时改这里与 [`Report::render`]。
+    /// 新创建报告。
     pub fn new() -> Self {
         Self {
             title: None,
             basics: Vec::new(),
             succeeded: Vec::new(),
             skipped: Vec::new(),
+            queued: Vec::new(),
             failed: Vec::new(),
             content: None,
         }
     }
 
-    /// 设置标题：`new()` 出来的是空报告，标题从这里补（有的要等流程跑完才知道）。
+    /// 为报告设置标题。
     pub fn set_title(&mut self, title: impl Into<String>) {
         self.title = Some(title.into());
     }
 
     /// 用一组 标签 + 数量 覆盖基础信息行，统一格式为「标签: N 个」。
-    /// 批量指令的计数行都使用它：一次性完全传递，传递顺序与实际回复一致；
-    /// 非计数的基础信息行（表头、名单、说明）直接往 `basics` 里 push，不使用本函数。
+    /// 如第一行-成功：2个，第二行-失败：1个
+    /// 批量指令的计数行使用它：一次性完全传递，传递顺序与实际回复一致。
+    /// 非计数信息（表头、名单、说明）直接向 `basics` 中 push，不使用本函数。
     pub fn set_counts(&mut self, counts: &[(&str, usize)]) {
         self.basics = counts
             .iter()
@@ -66,7 +74,7 @@ impl Report {
             .collect();
     }
 
-    /// 把report渲染成回复文本（`ctx.say` 直接发的就是它）：
+    /// 把report渲染成回复文本（`ctx.say` 发送它）：
     ///
     /// 1. 标题块：`title` 有值时：标题一行 + 一条分隔线；否则为空
     /// 2. 基础信息与列表行（计数、表头、名单、状态行…）：逐行加 `- `，与下面的明细行保持一致；
@@ -93,7 +101,7 @@ impl Report {
             blocks.push(header.join("\n"));
         }
 
-        // 3. 明细小节：成功 / 跳过 / 失败，各自非空才出现（标签自带括号，见 push_list_block）。
+        // 3. 明细小节：成功 / 跳过 / 排队 / 失败，各自非空才出现（标签自带括号，见 push_list_block）。
         Self::push_list_block(
             &mut blocks,
             text::get().report_succeeded_label(),
@@ -104,6 +112,7 @@ impl Report {
             text::get().report_skipped_label(),
             &self.skipped,
         );
+        Self::push_list_block(&mut blocks, text::get().report_queued_label(), &self.queued);
         Self::push_list_block(&mut blocks, text::get().report_failed_label(), &self.failed);
         // 4. 整块内容：先写前缀并换行，再把整块内容原样输出（不逐行加前缀）。
         if let Some(content) = &self.content {
@@ -163,8 +172,7 @@ impl Report {
 }
 
 /// 回复长度的标准： `reply_text.utf16_len()`。
-///
-/// 口径是 **UTF-16 code unit 数**：Discord 的 2000 上限按 UTF-16 码元计（一个 emoji / 非 BMP 字符占 2 个）。
+/// Discord 的 2000 上限按 UTF-16 码元计（一个 emoji / 非 BMP 字符占 2 个）。
 trait Utf16Len {
     fn utf16_len(&self) -> usize;
 }
@@ -175,7 +183,8 @@ impl Utf16Len for str {
     }
 }
 
-/// 业务层返回的`Result<String, String>` 转换为回复文本的标准。
+/// 业务结果转换为回复文本的标准。
+/// `Result<String, String>` 原样透出；带明细的结果类型（例如 `startup::BotStartResults`）在这里渲染整段回复。
 /// 业务函数返回的 无论Ok还是Err都会回复给用户，因此信息不得包含路径、会话名等内部细节。
 pub trait IntoReplyText {
     /// 转换为可直接回复的文本。
@@ -185,6 +194,158 @@ pub trait IntoReplyText {
 impl IntoReplyText for Result<String, String> {
     fn to_reply_text(self) -> String {
         self.unwrap_or_else(|msg| msg)
+    }
+}
+
+// 启动结果：类型、逐台结果、以及转报告 / 转回复文案都在这里。
+
+pub(crate) type BotStartEntry = (BotDirEntry, BotStartOutcome);
+
+/// 机器人启动结果：构造启动报告用的数据（机器人条目 + 启动结果）。
+#[derive(Debug, Default)]
+pub struct BotStartResults {
+    entries: Vec<BotStartEntry>,
+    /// 复核时日志已确认进服的机器人名（成功明细据此选说法）。
+    online_confirmed_bot_names: Vec<String>,
+}
+
+/// 单台机器人的启动结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BotStartOutcome {
+    /// 拉起命令发出去了（复核没过会被改写成 [`BotStartOutcome::Failure`]）。
+    Succeeded,
+    /// 机器人已经在运行，所以跳过（不算失败）。
+    Skipped,
+    /// 尚未拉起即被取消：`/stopall`（以及看门狗的掉线收尾、退出收尾）撤销了本次启动，
+    /// 因此不计入失败（见 [`crate::utils::stop_all_bot_sessions`]）。
+    Cancelled,
+    /// 启动遇到错误，带能直接进回复的一行。
+    Failure(String),
+}
+
+impl BotStartResults {
+    /// 向启动结果中添加一条新结果（全部启动后，循环调用）。
+    pub(super) fn push(&mut self, bot_dir_entry: BotDirEntry, outcome: BotStartOutcome) {
+        self.entries.push((bot_dir_entry, outcome));
+    }
+
+    /// 记下"复核时日志已确认进服"，成功明细据此选说法。
+    pub(super) fn mark_online_confirmed(&mut self, bot_name: &str) {
+        self.online_confirmed_bot_names.push(bot_name.to_string());
+    }
+
+    /// 逐条遍历（`reply.rs` 转报告时也要用）。
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &BotStartEntry> {
+        self.entries.iter()
+    }
+
+    /// 复核没过写回这一台；找不到就说明结果已经回包了。
+    pub(super) fn set_outcome(&mut self, bot_name: &str, outcome: BotStartOutcome) {
+        if let Some((_, stored)) = self
+            .entries
+            .iter_mut()
+            .find(|(bot_dir_entry, _)| bot_dir_entry.bot_name == bot_name)
+        {
+            *stored = outcome;
+        }
+    }
+
+    /// 有没有失败（与 [`StopOutcome::has_failed_lines`] 对称）。
+    pub(crate) fn has_failed_lines(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|(_, outcome)| matches!(outcome, BotStartOutcome::Failure(_)))
+    }
+
+    /// 是否有机器人在排队期间已由其他入口启动。
+    pub(crate) fn has_skipped_running_bots(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|(_, outcome)| matches!(outcome, BotStartOutcome::Skipped))
+    }
+
+    /// 拉起/复核失败的明细（按跑完顺序）。
+    ///
+    /// 给的是原始明细：`/restartall` 要把"停止阶段 + 启动阶段"的失败按顺序拼成一段。
+    pub(crate) fn failure_lines(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|(_, outcome)| match outcome {
+                BotStartOutcome::Failure(failure_line) => Some(failure_line.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 排队期间已由其他入口启动的机器人名（按跑完顺序）。
+    pub(crate) fn skipped_running_bot_names(&self) -> Vec<&str> {
+        self.entries
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, BotStartOutcome::Skipped))
+            .map(|(bot_dir_entry, _)| bot_dir_entry.bot_name.as_str())
+            .collect()
+    }
+
+    /// 有没有被取消的启动（"停止全部机器人"把这次启动撤了下来）。
+    pub(crate) fn has_cancelled_bots(&self) -> bool {
+        !self.cancelled_bot_names().is_empty()
+    }
+
+    /// 被取消的机器人名（按跑完顺序）。
+    pub(crate) fn cancelled_bot_names(&self) -> Vec<&str> {
+        self.entries
+            .iter()
+            .filter(|(_, outcome)| matches!(outcome, BotStartOutcome::Cancelled))
+            .map(|(bot_dir_entry, _)| bot_dir_entry.bot_name.as_str())
+            .collect()
+    }
+}
+
+// 启动结果转回复：启动模块只产出结果，回复文案与拼装都在这里（见 [`BotStartResults`]）。
+
+impl BotStartResults {
+    /// 报告：成功的与失败的都进报告；计数由调用方按指令口径 `set_counts`。
+    pub(crate) fn into_report(self) -> Report {
+        let mut report = Report::new();
+        let i18n_text = text::get();
+
+        for (bot_dir_entry, outcome) in self.iter() {
+            match outcome {
+                BotStartOutcome::Succeeded => report.succeeded.push(
+                    if self
+                        .online_confirmed_bot_names
+                        .contains(&bot_dir_entry.bot_name)
+                    {
+                        i18n_text.start_command_sent_confirmed(&bot_dir_entry.bot_name)
+                    } else {
+                        i18n_text.start_command_sent_unconfirmed(&bot_dir_entry.bot_name)
+                    },
+                ),
+                BotStartOutcome::Skipped => report
+                    .skipped
+                    .push(i18n_text.startall_skipped_running(&bot_dir_entry.bot_name)),
+                BotStartOutcome::Cancelled => report
+                    .skipped
+                    .push(i18n_text.start_cancelled(&bot_dir_entry.bot_name)),
+                BotStartOutcome::Failure(failure_line) => report.failed.push(failure_line.clone()),
+            }
+        }
+
+        report
+    }
+
+    /// 失败明细拼成单行错误提示（单个机器人指令直接拿它当 `Err`）。
+    pub(crate) fn to_failure_text(&self) -> String {
+        self.failure_lines().join(" / ")
+    }
+}
+
+impl IntoReplyText for BotStartResults {
+    /// 整段回复：成功 / 跳过（含被取消的）/ 失败三份明细。
+    ///
+    /// 标题与计数由调用方按指令口径加，所以要自己组装时走 [`BotStartResults::into_report`]。
+    fn to_reply_text(self) -> String {
+        self.into_report().render()
     }
 }
 

@@ -1,7 +1,7 @@
 //! `/bot del`：删除机器人及其数据目录。
 
 use crate::text;
-use crate::utils::{BotDirEntry, refusal_if_running, remove_dir_all_if_exists};
+use crate::utils::{BotDirEntry, refusal_if_not_stopped, remove_dir_all_if_exists};
 
 /// 删除机器人及其数据目录（`/bot del`）。
 ///
@@ -10,8 +10,8 @@ use crate::utils::{BotDirEntry, refusal_if_running, remove_dir_all_if_exists};
 pub(crate) fn delete_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String> {
     let bot_name: &str = &bot_dir_entry.bot_name;
 
-    // 运行中的机器人必须先停止，否则会删除它正在写入的数据目录。
-    refusal_if_running(bot_name)?;
+    // 运行中的机器人必须先停止，否则会删除其正在写入的数据目录；排队待启动的同样如此：队列会将其拉起。
+    refusal_if_not_stopped(bot_dir_entry)?;
 
     remove_dir_all_if_exists(&bot_dir_entry.bot_dir_path).map_err(|e| {
         log::warn!(

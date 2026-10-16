@@ -9,12 +9,13 @@
 //!    当配置解析成功后，语言会被立刻安装，此后的报错与日志都跟随配置语言（在语言成功安装前，默认使用英语报错/提示）
 //! 2. `ProcessLog::get_or_init()`：创建本次进程日志，并向终端与 `<部署目录>/logs/时间戳.log` 实时写入日志信息，日志创建完成后立刻写入进程信息；
 //! 3. `WATCHDOG.get_or_init()`：显式获取并自动初始化进程内唯一的看门狗
-//! 4. `regenerate_fishingbot_config()`：生成钓鱼机器人的配置，失败是永久错误，以退出码 1 退出；
-//! 5. `wait_for_attempt()` 等这一次尝试结束（正常运行时它一直挂着、不返回），三个结束方式：
+//! 4. `StartupQueue::get_or_init()`：初始化进程内唯一的启动队列（读配置、拉起启动线程），之后各指令直接取它；
+//! 5. `regenerate_fishingbot_config()`：生成钓鱼机器人的配置，失败是永久错误，以退出码 1 退出；
+//! 6. `wait_for_attempt()` 等这一次尝试结束（正常运行时它一直挂着、不返回），三个结束方式：
 //!    `client.start()` 返回（客户端被关停，token / Intent 非法等致命错误；普通掉线不会返回）
 //!    看门狗判定已经掉线。
 //!    收到系统退出信号。只有收到退出信号时才彻底结束（退出码 0）。
-//! 6. 掉线处理：看门狗检测到掉线-停止全部机器人-关闭旧连接-等一个判定窗口后尝试重连 → 回到第 5 步；
+//! 7. 掉线处理：看门狗检测到掉线-停止全部机器人-关闭旧连接-等一个判定窗口后尝试重连 → 回到第 6 步；
 //!    重连成功后向本机器人所在的所有服务器通报一次"何时掉线、现在恢复、机器人已停机"的通知。
 
 mod commands;
@@ -28,7 +29,7 @@ use poise::serenity_prelude as serenity;
 use commands::{Data, Error, register_commands};
 use minecraft_fishingbot_manager_for_discord::config;
 use minecraft_fishingbot_manager_for_discord::{
-    ProcessLog, WATCHDOG, Watchdog, regenerate_fishingbot_config, text,
+    ProcessLog, WATCHDOG, Watchdog, regenerate_fishingbot_config, text, utils::StartupQueue,
 };
 
 #[tokio::main]
@@ -45,13 +46,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 所有关于程序状态、信息获取与对不同生命周期的处理逻辑都通过看门狗进行。
     let watchdog = WATCHDOG.get_or_init();
 
-    // 4. 根据配置中的[fishingbot]表，重新生成钓鱼机器人的配置，会覆盖旧文件。
+    // 4. 初始化全局启动队列（进程内唯一，读配置并启动 *启动线程）。
+    // *启动线程：starter，一个独立的线程用于检测启动队列并执行启动逻辑，崩溃时会自动重新启动并写入日志（run_starter_forever()）。
+    // 崩溃时`start_single_batch`（执行启动的内部逻辑）会同时写入账本，最终的调用者会转化为文本并返回群聊以提醒。
+    let _startup_queue = StartupQueue::get_or_init();
+
+    // 5. 根据配置中的[fishingbot]表，重新生成钓鱼机器人的配置，会覆盖旧文件。
     // 失败是永久错误，以退出码 1 退出。
     if let Err(message) = regenerate_fishingbot_config() {
         watchdog.exit_on_permanent_failure(&message);
     }
 
-    // 5. 进入连接循环，每一轮就是一次尝试连接到Discord的过程，并阻塞等待不同失败结果以执行对应处理逻辑
+    // 6. 进入连接循环，每一轮就是一次尝试连接到Discord的过程，并阻塞等待不同失败结果以执行对应处理逻辑
     // 正常运行时会阻塞在第 8 步，直到客户端返回、看门狗判定掉线或收到退出信号。
     // 尝试连接的次数
     let mut attempt_times: u32 = 0;
@@ -68,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // 每次进入循环重新计时等待时长，旧的握手与探活都被重置为 None。
         watchdog.begin_connection_attempt(Instant::now());
 
-        // 6. 启动一个新的探活任务
+        // 7. 启动一个新的探活任务
         // 创建停止探活标志，每轮重置，用于判断是否应该提前结束。
         let stop_probe = Arc::new(AtomicBool::new(false));
         watchdog.probe(Arc::clone(&probe_http), Arc::clone(&stop_probe));
