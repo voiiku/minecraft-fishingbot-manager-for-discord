@@ -203,14 +203,14 @@ fn validate_runtime(runtime: &RuntimeConfig) -> Result<(), String> {
     for (field, value) in [
         ("screen_prefix", &runtime.screen_prefix),
         ("token_file", &runtime.token_file),
-        ("logs_dir", &runtime.logs_dir),
+        ("bot_logs_dir", &runtime.bot_logs_dir),
     ] {
         require_plain_name(format!("runtime.{field}"), value)?;
     }
 
-    if runtime.max_log_lines == 0 {
+    if runtime.max_reply_log_lines == 0 {
         return Err(invalid(
-            "runtime.max_log_lines",
+            "runtime.max_reply_log_lines",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -241,9 +241,15 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
-    if startup_queue.login_interval_ms == 0 {
+    if startup_queue.bot_login_interval_ms == 0 {
         return Err(invalid(
-            "startup_queue.login_interval_ms",
+            "startup_queue.bot_login_interval_ms",
+            text::ConfigRequirement::GreaterThanZero,
+        ));
+    }
+    if startup_queue.batch_login_interval_ms == 0 {
+        return Err(invalid(
+            "startup_queue.batch_login_interval_ms",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -260,9 +266,9 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
 /// 检查等待时间与看门狗时序。
 fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
     // 复核等待不能为 0，否则"拉起完立刻判定"，等于没复核。
-    if timing.settle_per_bot_ms == 0 {
+    if timing.check_grace_ms == 0 {
         return Err(invalid(
-            "timing.settle_per_bot_ms",
+            "timing.check_grace_ms",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -573,14 +579,14 @@ mod tests {
 
     /// `/log` 的行数上限为 0 时永远看不到日志，必须在启动时就拦下。
     #[test]
-    fn zero_max_log_lines_is_reported() {
+    fn zero_max_reply_log_lines_is_reported() {
         let (dir, text) = staged_example("max-log-lines");
-        let text = set_field(&text, "max_log_lines", "0");
+        let text = set_field(&text, "max_reply_log_lines", "0");
 
         let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
-            err.contains("runtime.max_log_lines"),
+            err.contains("runtime.max_reply_log_lines"),
             "报错应指出字段: {err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -633,14 +639,14 @@ mod tests {
 
     /// 复核等待写 0 会变成"拉起完立刻判定"，等于没复核：启动时就拦下。
     #[test]
-    fn zero_settle_per_bot_ms_is_reported() {
+    fn zero_check_grace_ms_is_reported() {
         let (dir, text) = staged_example("zero-settle-per-bot");
-        let text = set_field(&text, "settle_per_bot_ms", "0");
+        let text = set_field(&text, "check_grace_ms", "0");
 
         let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
-            err.contains("timing.settle_per_bot_ms"),
+            err.contains("timing.check_grace_ms"),
             "报错应指出字段: {err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -651,7 +657,7 @@ mod tests {
     fn zero_start_batch_timing_is_reported() {
         for (field, tag) in [
             ("max_batch_size", "zero-start-batch-size"),
-            ("login_interval_ms", "zero-start-interval"),
+            ("bot_login_interval_ms", "zero-start-interval"),
             ("max_pending_requests", "zero-start-queue-capacity"),
         ] {
             let (dir, text) = staged_example(tag);

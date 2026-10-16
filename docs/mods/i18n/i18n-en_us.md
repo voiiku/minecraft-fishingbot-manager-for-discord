@@ -152,8 +152,8 @@ Symbols follow the language:
   no full stop at the end of a sentence either.
 
 Asides (the explanation in brackets) are written `()` in both languages, for example the description of the `/log`
-option: `读取最新多少行 (默认 50，上限见配置 runtime.max_log_lines)` and
-`how many trailing lines to read (default 50, cap in runtime.max_log_lines)`. Three exceptions are marks that look
+option: `读取最新多少行 (默认 50，上限见配置 runtime.max_reply_log_lines)` and
+`how many trailing lines to read (default 50, cap in runtime.max_reply_log_lines)`. Three exceptions are marks that look
 like brackets but are not asides, and keep their own form:
 
 * Config table names copy the brackets: `[admins]`, `[keywords]`, `[raw_game_logs]`.

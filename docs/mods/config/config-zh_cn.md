@@ -78,18 +78,24 @@
   `i18n.Language` 的常量名，它也是写进 conf.json 的 `misc.language`（同一个值，不是映射过去的），所以
   不用手工对齐两处。本项目实现了 `ENGLISH`（默认）与 `CHINESE_SIMPLIFIED`；改配置加重启即生效，不需要
   重新编译。见 3.1 节。
-* `[runtime]`：`java_opts`、`screen_prefix`、`token_file`、`logs_dir`、`max_log_lines`、
-  `max_reply_chars`、`max_autocomplete_choices`。单个机器人的运行时参数。`logs_dir` 里只有我们的日志（FishingBot 自己的原始日志在
+* `[runtime]`：`java_opts`、`screen_prefix`、`token_file`、`bot_logs_dir`、`max_reply_log_lines`、
+  `max_reply_chars`、`max_autocomplete_choices`。单个机器人的运行时参数。`bot_logs_dir` 里只有我们的日志（FishingBot 自己的原始日志在
   同层 `[raw_game_logs] dir_name` 下的 `[raw_game_logs] file_name`，指向 `discard_path`，见
   [utils.md 第 7 节](../utils/utils-zh_cn.md#7-日志有两条线)）；`max_reply_chars` 是单条回复的长度上限（Discord 硬
   上限 2000，超长会直接发送失败）；`max_autocomplete_choices` 是机器人名选项自动候选的条数上限（1-25，Discord 硬上限）。
-* `[startup_queue]`：`max_batch_size`、`login_interval_ms`、`max_pending_requests`，分别是全局 FIFO 启动队列每批最多启动数量、两次登录之间的最小间隔（毫秒）和等待调度的请求上限（不包括正在执行的请求）。整张表与其中每个字段都必填，且每个值必须大于 0。
-  `login_interval_ms` 是唯一决定登录节奏的旋钮：批内相邻两台按它错峰，批间等的时间 = 它 − `timing.settle_per_bot_ms` × 2 × 本批台数。
+* `[startup_queue]`：`max_batch_size`、`bot_login_interval_ms`、`batch_login_interval_ms`、`max_pending_requests`，分别是全局 FIFO 启动队列每批最多启动数量、批内相邻两台的登录间隔（毫秒）、批与批之间的间隔（毫秒）和等待调度的请求上限（不包括正在执行的请求）。整张表与其中每个字段都必填，且每个值必须大于 0。
+  `bot_login_interval_ms` 管批内错峰：同一批里相邻两台按它隔开。`batch_login_interval_ms` 管批间：一批跑完（拉起 + 两遍会话复核）
+  之后，至少隔它才开下一批——即使上一批只有一台；它从"上一次取出一批"的时刻算起，所以空闲很久之后的第一条命令不必白等。
   微软按出口 IP 限制登录频率，取值理由见[故障提示第 12 节](../../troubleshooting/troubleshooting-zh_cn.md)。
-  `/start`、`/startall`、`/restart` 与 `/restartall` 共用队列；`/bot login` 不使用它。队列空闲时未满批次会关闭，
-  但登录间隔仍然保留（连续命令也绕不过限流）；程序重启会丢弃尚未执行的队列任务。
-* `[timing]`：`settle_per_bot_ms`、`stop_grace_ms`、`stop_settle_ms`、`watchdog_window_ms`。各流程等待时间（毫秒）。
-  `settle_per_bot_ms` 是每批复核会话前每台的等待（复核做两遍，总等待是 2 乘台数乘它，也是批间等待要扣掉的那部分）；
+  `/start`、`/startall`、`/restart` 与 `/restartall` 共用队列；`/bot login` 不使用它。队列最多暂存 `max_pending_requests` 台，
+  装不下的那部分当场退回给调用方（回复里会说明）；程序重启会丢弃尚未执行的队列任务。
+  等启动结果的兜底超时不用配置：它由这张表与 `timing.check_grace_ms` 算出来（`StartupQueue::result_timeout`）：
+  `2 × (⌈max_pending_requests / max_batch_size⌉ × max(batch_login_interval_ms, (max_batch_size - 1) × bot_login_interval_ms) + check_grace_ms × max_batch_size)`。
+  超时就把还没回结果的按"未确认"写进回复（同时记一条程序日志）；批内错峰越慢（微软限流）、队列容量越大，
+  它自动越长，不需要人为跟着调。
+* `[timing]`：`check_grace_ms`、`stop_grace_ms`、`stop_settle_ms`、`watchdog_window_ms`。各流程等待时间（毫秒）。
+  `check_grace_ms` 是每台拉起后的会话存活宽限期（复核分两次：拉起后立即判定一次，等满它再判定一次；
+  它是每台一份，不乘批大小）；
   `watchdog_window_ms` 是网关看门狗的判定窗口，掉线后也用作重建连接前的等待，REST 探活间隔（它的 1/3）与首次
   握手超时（它的 2 倍）由它派生，不再是独立配置项，见 [watchdog.md](../watchdog/watchdog-zh_cn.md)。
 * `[raw_game_logs]`：`dir_name`、`file_name`、`discard_path`。FishingBot.jar 自己那份原始日志的约定
@@ -185,12 +191,14 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 
 * 必填项不能为空：`ping.default_ping_host`、`discord.token`、`keywords.*`、`command_echo.pause_echo`、
   `command_echo.unpause_echo`、`text.help`、`runtime.screen_prefix`、`runtime.token_file`、
-  `runtime.logs_dir`（后三个还要求不含空格与斜杠、不能写成 `.` 或 `..`）、`raw_game_logs.discard_path`，
+  `runtime.bot_logs_dir`（后三个还要求不含空格与斜杠、不能写成 `.` 或 `..`）、`raw_game_logs.discard_path`，
   以及 `raw_game_logs.dir_name` 与 `raw_game_logs.file_name`（这两个同样要求是纯名字）。
 * 数值范围：`ping.default_ping_port` 不能是 0；`runtime.max_autocomplete_choices` 必须在 1 到 25 之间
-  （Discord 对候选条数的硬上限）；`startup_queue.max_batch_size`、`startup_queue.login_interval_ms`、
-  `startup_queue.max_pending_requests`、`ping.timeout_ms`、`runtime.max_log_lines`、`runtime.max_reply_chars`、
-  `timing.watchdog_window_ms`、`timing.settle_per_bot_ms`、`command_echo.wait_ms`、`command_echo.scan_lines`
+  （Discord 对候选条数的硬上限）；`startup_queue.max_batch_size`、`startup_queue.bot_login_interval_ms`、
+  `startup_queue.batch_login_interval_ms`、`startup_queue.max_pending_requests`、
+  `ping.timeout_ms`、
+  `runtime.max_reply_log_lines`、`runtime.max_reply_chars`、
+  `timing.watchdog_window_ms`、`timing.check_grace_ms`、`command_echo.wait_ms`、`command_echo.scan_lines`
   必须大于 0（看门狗判定窗口为 0 会让判定退化，永远证明不了"还连着"；探活间隔与首次握手超时由窗口派生，
   所以没有再写一条"探活不能比窗口慢"的规则）。
 
@@ -206,7 +214,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 
 除此之外一律不管：时间参数该设多大、地址写哪个、名字里能不能用中文，都是使用者的判断。`[discord]`
 只有 token 一条规则（不能为空）；`[log]` 的 `debug` 是布尔开关，没有规则；`[timing]` 有两条
-（`settle_per_bot_ms` 大于 0、网关窗口大于 0）；`[command_echo]` 有两条（两条回显
+（`check_grace_ms` 大于 0、网关窗口大于 0）；`[command_echo]` 有两条（两条回显
 非空且不能互相包含、两项时间都大于 0）。
 
 ## 6. 模板（`template`）
@@ -221,9 +229,9 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 代码里是一个 `Config` 加每个 TOML 表一个结构体（`Config::ping`、`runtime`、`timing` 等）。这不是为了
 多套一层，而是为了让三个地方的名字完全一样：
 
-* 配置文件里的键：`[runtime]` 表下的 `logs_dir`；
-* 代码里读它的写法：`config::Config::get().runtime.logs_dir`；
-* 启动校验的报错：`配置项 runtime.logs_dir 不能为空`。
+* 配置文件里的键：`[runtime]` 表下的 `bot_logs_dir`；
+* 代码里读它的写法：`config::Config::get().runtime.bot_logs_dir`；
+* 启动校验的报错：`配置项 runtime.bot_logs_dir 不能为空`。
 
 把结构体拍平成"只有具体字段的大结构体"之前，得先决定拿 TOML 的表怎么办，三条路都不划算：
 

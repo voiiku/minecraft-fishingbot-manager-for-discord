@@ -227,22 +227,23 @@ Options such as the bot name `name` offer suggestions while the user types (a na
 builds display labels, and adapts the Discord interaction. Suggestions follow the meaning of the command rather than
 always being "the running ones":
 
-* `/stop`, `/pause`, `/unpause`, `/command`, `/restart`: permitted and running. For a target that is not running these
-  operations are meaningless (`/restart` refuses outright and `/stop` only answers "no need to stop").
-* `/start`, `/bot del`, `/bot rename`, `/bot login`: permitted and not running. Their precondition is that it has
-  stopped (`/start` refuses a running target; so does `/bot login`, which also refuses while "the session of a previous
-  login is still open").
-* `/log`: everything permitted. Historical logs are useful for both, and the display name gets a "(running)" or
-  "(stopped)" suffix.
+* `/stop`: everything permitted. A bot waiting to start can be cancelled by it too (the reply then says it was cancelled
+  from the start queue), so the queued ones have to be among the suggestions; the display name carries the state suffix.
+* `/pause`, `/unpause`, `/command`, `/restart`: permitted and running. For a target that is not running these
+  operations are meaningless (`/restart` refuses outright and a stopped bot only answers "no need to stop").
+* `/start`, `/bot del`, `/bot rename`, `/bot login`: permitted and neither running nor waiting in the start queue. Their
+  precondition is that it has stopped (`/start` refuses a running or queued target; so does `/bot login`, which also
+  refuses while "the session of a previous login is still open").
+* `/log`: everything permitted. Historical logs are useful for both, and the display name gets a "(running)", "(queued)"
+  or "(stopped)" suffix.
 * `/bot add`, `/token`: no suggestions. `/bot add` wants a name that does not exist yet (nothing to list) and `/token`
   is a Modal, which Discord does not support suggestions for.
 
 Details: the permission rule matches the server side (admins get every bot, everyone else the ones under their own
-`bots/<user ID>/`); the run state comes from one `screen -list` snapshot (every keystroke produces an autocomplete
-interaction, so it must not probe per bot); at most `runtime.max_autocomplete_choices` entries (default 25, Discord's
-hard limit, enforced by the candidate logic in `src/commands/autocomplete.rs`), with the running ones first. The
-suggestions are only suggestions: the user can still
-type any name, and ownership plus
+`bots/<user ID>/`); the state comes from one `screen -list` snapshot plus one start-queue lookup (every keystroke produces
+an autocomplete interaction, so it must not probe per bot); at most `runtime.max_autocomplete_choices` entries (default
+25, Discord's hard limit, enforced by the candidate logic in `src/commands/autocomplete.rs`), with the running ones first
+and the queued ones next. The suggestions are only suggestions: the user can still type any name, and ownership plus
 whether the session is running are decided by the `handle_*` functions as before.
 
 ## 3. Single-bot control: `/start`, `/stop`, `/restart`, `/pause`, `/unpause`, `/command`, `/log`
@@ -344,8 +345,8 @@ other; startup validates this, otherwise that echo line cannot be attributed to 
    several bots at once later" will not need them rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
    section 8).
 
-   Between two neighbouring launches it waits `[startup_queue] login_interval_ms`, and after launching them all it waits
-   (count x `timing.settle_per_bot_ms`) to check twice, with the same wait in between again, because the JVM may exit by itself one or two seconds after
+   Between two neighbouring launches it waits `[startup_queue] bot_login_interval_ms`, and after launching them all it waits
+   (count x `timing.check_grace_ms`) to check twice, with the same wait in between again, because the JVM may exit by itself one or two seconds after
    starting and a single check would report "started and gone" as a success; see
    [utils-en_us.md](../utils/utils-en_us.md) section 4.
 4. Failure is always decided by the methods on the details utils returns (when `outcome.has_failed_lines()` is true,
@@ -376,7 +377,7 @@ other; startup validates this, otherwise that echo line cannot be attributed to 
 
 ### 3.4 The details of `/log`
 
-* The line count must be greater than 0 and is capped by `runtime.max_log_lines` (one command must not pull a whole
+* The line count must be greater than 0 and is capped by `runtime.max_reply_log_lines` (one command must not pull a whole
   large log back).
 * Only the newest log is read (`utils::bot_log_files::latest_log_path`, which only accepts timestamp-shaped names):
   `create_bot_log_file` creates the file before every session launch, and the session appends through `grep -v -E` and
@@ -438,7 +439,7 @@ four subcommands); `/token` is a separate top-level command that collects its in
 1. The routing layer's `permitted_bot_dir_entry` locates the directory and checks `OwnerOrAdmin` (`find_by_name` first,
    then ownership); when it cannot be located or is not permitted it answers as not found and never reveals that "this
    bot belongs to someone else".
-2. Deleting is refused while the session is running (`refusal_if_running`, with the wording from
+2. Deleting is refused while the session is running (`refusal_if_not_stopped`, with the wording from
    `utils::running_bots`), otherwise it would delete the data directory the bot is writing to.
 3. The directory is removed with `fs::remove_dir_all`, and both success and failure are written to the background log.
 
@@ -449,7 +450,7 @@ The order is deliberate; do not reshuffle it:
 1. Check that both the old and the new name are legal and that they differ.
 2. The routing layer resolves the entry by the old name (`BotDirEntry::find_by_name`) and checks `OwnerOrAdmin` (the
    rule is directory ownership, and admins may cross directories).
-3. A running session is refused outright (`refusal_if_running`, the same rule as `/bot del` and `/token`): a running
+3. A running session is refused outright (`refusal_if_not_stopped`, the same rule as `/bot del` and `/token`): a running
    process keeps writing to the old directory and renaming would lose the logs from then on. Stop it first with
    `/stop`.
 4. The server-wide duplicate check (`is_bot_name_taken`): if the name is taken it is an error, and no other name is
@@ -492,7 +493,7 @@ Stage one (`login::begin_login`, a few seconds):
    directly and never prints a device code, which turns `/bot login` into "nothing happened". It also deals with
    leftovers from an interrupted attempt at the same time (both present -> delete the leftover; only `.renewing` ->
    put it back).
-3. Launch the session: the same path as `/start` (`utils::prepare_and_launch_bot`: create the log -> prepare
+3. Launch the session: the same path as `/start` (`utils::StartupQueue::launch_bot_to_login`: create the log -> prepare
    FishingBot's raw log directory -> `screen -dmS`), except that it does not refuse over the credential status - step
    zero of `/start` is exactly refusing a bot without a credential, which is why this flow needs an entry point of its
    own. On failure the old credential is put back and the error is returned.
@@ -594,14 +595,18 @@ file missing, left as it is" rather than disappearing silently.
   `未配置任何有效账号，未启动。` (with an extra note when there are also accounts missing a token); when all of them
   are running it replies `全部有效机器人均已运行`; otherwise it calls
   `utils::start_bot_sessions(&not_running_bot_entries)` and then overwrites the count rows with `Report::set_counts`
-  (valid accounts in total, start commands sent, skipped (already running), skipped (token missing), start failures).
-  Every account that was not started goes into the `skipped` details (one entry each for "already running" and "token
-  missing") and does not count as a failure.
-* `/stopall`: `utils::stop_all_bot_sessions()` returns the raw details (it is itself the combination of
-  `all_bot_dir_entries()`, grouping and stopping), and the report is assembled by this module's
-  `stopall::stop_all_bots()`; it reports only successes and failures (its only count rows are "stopped" and "stop
-  failed"; bots that were not running are not listed, so `Report::skipped` is empty; the "scanned bot directories"
-  field is output only by `/show allbots`). When the process receives an exit signal, the wrap-up assembles the same
+  (valid accounts in total, start commands sent, skipped (already running), skipped (token missing), cancelled, start
+  failures). Every account that was not started goes into the `skipped` details (one entry each for "already running",
+  "token missing" and "cancelled") and does not count as a failure: the cancelled ones are the starts that "stop every
+  bot" (`/stopall`, the disconnect wrap-up, the exit wrap-up) pulled back (`BotStartOutcome::Cancelled`).
+* `/stopall`: `utils::stop_all_bot_sessions()` returns the raw details (it is itself the combination of "ask the starter
+  thread to launch nothing new", "clear the waiting list", `all_bot_dir_entries()`, grouping, stopping, and one more
+  sweep for late sessions), and the report is assembled by this module's `stopall::stop_all_bots()`; it reports only
+  successes and failures (its only count rows are "stopped" and "stop failed"; bots that were not running are not listed,
+  while the cancelled entries from the waiting list go into `Report::skipped`, which is empty when nothing was queued;
+  the batch that was already taken out and is being launched is reported by the `/startall` / `/restartall` reply that
+  triggered it, as "starting was cancelled"; the "scanned bot directories" field is output only by `/show allbots`). When
+  the process receives an exit signal, the wrap-up assembles the same
   details on the spot inside `watchdog::Watchdog::exit_on_shutdown_signal()`, with the title swapped for "shutdown
   signal received, wrap-up"; the report is written to the program log and also sent to every server's notice channel,
   with a 30-second overall limit on that send (past it the send is dropped and the process exits; nothing is resent on
@@ -610,8 +615,8 @@ file missing, left as it is" rather than disappearing silently.
   restart target); with none it replies `没有运行的机器人实例，无需重启`; otherwise it calls
   `utils::restart_bot_sessions` and then writes the running accounts, restart commands sent and restart failures with
   `Report::set_counts` (a target without a token explains itself in the restart failure details). The report only has
-  successes and failures: the targets were picked by this command itself, so there is no "skipped" kind and
-  `Report::skipped` is empty.
+  successes and failures: the targets were picked by this command itself, so there is no "skipped" kind;
+  `Report::skipped` only holds the cancelled starts (the ones "stop every bot" pulled back).
 * `/commandall`: the command fragment is passed through as it is by the command layer, and here it is assembled into
   one command with `to_clean_bot_command` (the same convention as `/command`) before being injected one by one.
   `utils::all_running_bot_names()` comes from one `screen -list` snapshot, and a hit means it is running, so the
@@ -638,7 +643,7 @@ file missing, left as it is" rather than disappearing silently.
 The transient memory peak of a batch start is often higher than a cloud server's available memory, and a process killed
 by the OOM killer never shows up in `screen -list`, so the result says "Bot X: failed to start (usually because
 Microsoft refuses frequent logins, or out of memory)". What to do: lower the memory allowance in `runtime.java_opts`, raise
-`timing.settle_per_bot_ms` or `[startup_queue] login_interval_ms` (watching longer or signing in slower), or repeat the command later
+`timing.check_grace_ms` or `[startup_queue] bot_login_interval_ms` (watching longer or signing in slower), or repeat the command later
 (JVM memory usage improves over time).
 
 ## 6. Queries: `/show status` and `/show botconfig|mybots|allbots|admins`
@@ -651,7 +656,8 @@ Microsoft refuses frequent logins, or out of memory)". What to do: lower the mem
 ### 6.1 The command list
 
 * `/show status`: `status::all_running_bots_status()` (through `utils::running_bots::all_running_bot_infos()` internally).
-  The data comes from `screen -list` and each bot's newest filtered log, and the reply is text (a table).
+  The data comes from `screen -list`, each bot's newest filtered log, and one start-queue lookup (the queued bots get a
+  `[Queued]` section below the report), and the reply is text (a table).
 * `/show botconfig`: `botconfig::fishingbot_config_view()`. The data comes from `paths.fishingbot_config_file_name`
   (the copy every bot shares) and the reply is an attachment (a file name and the full text).
 * `/show mybots`: `mybots::my_bots_list(caller_id)`. The data is the bots under the caller's own user directory, as
@@ -666,6 +672,10 @@ Microsoft refuses frequent logins, or out of memory)". What to do: lower the mem
   running using one `screen -list` snapshot. So everything in the table has a configured token and an existing session;
   a bot whose token file was deleted while the process is still running is not in the table (`/stopall` can still clean
   it up).
+* Whether a bot is queued is asked by `/show status` itself, once, from the start queue (`StartupQueue::bots_in_queue`,
+  the same wording as `/start` and `/stop`): a queued bot has no session yet, so it cannot be in the table above (no
+  online / pause / uptime to report) and gets its own section below the report (`Report::queued`, with the section label
+  `report_queued_label()`, `[Queued]`), one bot per line.
 * Each bot's status is decided by `utils::running_bots`. The connection status has two sources: when the session is a
   `(Dead ...)` shell the log is not read at all and "process finished" is shown directly (the JVM has been killed and
   the last log line may still say "online"); when the session is normal it is read from the newest log

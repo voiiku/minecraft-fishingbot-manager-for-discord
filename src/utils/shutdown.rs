@@ -1,6 +1,9 @@
 //! 进程内收尾：`/stop`、`/stopall`、进程退出收尾，以及重启流程的停止阶段
 //! （[`crate::utils::restart_bot_sessions`] 直接复用这里的 [`stop_bot_sessions`]）。
 //!
+//! "全部停止"（[`stop_all_bot_sessions`]）先清空启动队列：上述入口的语义都是全停，排队待启动的机器人一并撤销，
+//! 否则启动线程会继续将其拉起。
+//!
 //! 流程固定为：发送 Ctrl+C → 等 JVM 自己退出 → 强杀未退出的 → 复核一次。单机与批量同一段代码，
 //! 耗时是常数，因此不会超出 systemd 的 `TimeoutStopSec`。
 //! 主进程被强杀或卡死时由 systemd 按 `KillMode=control-group` 收掉整个 cgroup，保证不留占着账号的孤儿 JVM。
@@ -18,6 +21,7 @@ use super::running_bots::split_bot_entries_by_is_running;
 use super::screen::{
     active_screen_sessions, force_quit_session, send_stop_signal_to_session, session_name,
 };
+use super::startup::StartupQueue;
 
 /// 停止过程的内部明细，供启动管道判断哪些可以重新拉起。
 /// 实现了根据自身状态，获取相应回复/文案的方法，必须由外部显式调用（工具函数层不返回成品报告）。
@@ -82,15 +86,60 @@ impl StopOutcome {
 }
 
 /// 停止全部运行中的机器人，包含 Token 已失效的孤儿进程。
-/// 用于 `/stopall` 与进程退出收尾。只返回原始明细（[`StopOutcome`]），报告由调用方拼装。
-pub fn stop_all_bot_sessions() -> Result<StopOutcome, String> {
-    let (running_bot_entries, _) = split_bot_entries_by_is_running(&all_bot_dir_entries()?);
-    Ok(stop_bot_sessions(&running_bot_entries))
+/// 用于 `/stopall` 与进程退出收尾（含看门狗的掉线收尾）。只返回原始明细（[`StopOutcome`]），报告由调用方拼装。
+///
+/// 顺序固定为：请求启动线程停止拉起 → 清空等待列表 → 关闭全部会话。
+/// 关闭后再次扫描会话：启动线程可能在首次快照之后才拉起某一台（正在拉起的这一台无法拦截），由该遍收尾。
+pub(crate) fn stop_all_bot_sessions() -> Result<StopOutcome, String> {
+    let startup_queue = StartupQueue::get_or_init();
+    // 1. 请求停止：启动线程不再取新批；正在处理的批次把剩余条目记为"取消"（见 `starter.rs`）。
+    startup_queue.request_stop();
+    // 2. 清空等待列表：还没被取走的那些就此取消（等账本的人由账本回收，见 `ledger.rs`）。
+    startup_queue.remove_all_bots_from_queue();
+
+    let all_bot_entries = all_bot_dir_entries()?;
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(&all_bot_entries);
+
+    // 3. 关掉全部会话（所有停止入口的唯一实现：注入 Ctrl+C → 超时强杀 → 复核）。
+    let mut outcome = stop_bot_sessions(&running_bot_entries);
+
+    // 4. 再扫一遍：首次快照之后才出现的会话在这里收掉（第一遍未停掉的不重试，结论已在明细中）。
+    let late_outcome = stop_bot_sessions(&late_running_bot_entries(
+        &all_bot_entries,
+        &running_bot_entries,
+    ));
+    outcome
+        .stopped_bot_names
+        .extend(late_outcome.stopped_bot_names);
+    outcome
+        .still_running_bot_names
+        .extend(late_outcome.still_running_bot_names);
+    outcome.failure_lines.extend(late_outcome.failure_lines);
+
+    Ok(outcome)
+}
+
+/// 第二遍要收的机器人：首次扫描之后新出现的会话（按名字排除首次已处理的那些）。
+/// 无新出现的会话时返回空，第二遍不会额外等待退出。
+fn late_running_bot_entries(
+    all_bot_entries: &[BotDirEntry],
+    already_handled: &[BotDirEntry],
+) -> Vec<BotDirEntry> {
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(all_bot_entries);
+
+    running_bot_entries
+        .into_iter()
+        .filter(|bot_dir_entry| {
+            !already_handled
+                .iter()
+                .any(|handled| handled.bot_name == bot_dir_entry.bot_name)
+        })
+        .collect()
 }
 
 /// 停止单个机器人对应的会话（`/stop` 用）。
 /// 调用方负责先确认该会话确实在运行，并把已鉴权的条目传进来；同样只返回原始明细。
-pub fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> StopOutcome {
+pub(crate) fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> StopOutcome {
     stop_bot_sessions(&[bot_dir_entry])
 }
 

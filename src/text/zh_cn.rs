@@ -99,7 +99,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             ("name", "机器人名"),
             (
                 "lines",
-                "读取最新多少行 (默认 50，上限见配置 runtime.max_log_lines)",
+                "读取最新多少行 (默认 50，上限见配置 runtime.max_reply_log_lines)",
             ),
         ],
     },
@@ -165,6 +165,10 @@ impl Text for ZhCn {
 
     fn report_skipped_label(&self) -> &'static str {
         "[跳过明细]"
+    }
+
+    fn report_queued_label(&self) -> &'static str {
+        "[排队中]"
     }
 
     fn report_failed_label(&self) -> &'static str {
@@ -249,21 +253,29 @@ impl Text for ZhCn {
         format!("错误:机器人 '{bot_name}' 已在运行中，无需启动！")
     }
 
+    fn bot_start_already_queued(&self, bot_name: &str) -> String {
+        format!("错误:机器人 '{bot_name}' 已在启动队列中，无需重复启动")
+    }
+
     fn bot_start_command_sent(&self, bot_name: &str) -> String {
-        format!("已发送机器人 '{bot_name}' 的启动命令(启动状态请用 /show status 确认)")
+        format!("已发送机器人 '{bot_name}' 的启动命令（启动状态请用 /show status 确认）")
     }
 
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 未在运行，无需停止！")
+        format!("错误:机器人 '{bot_name}' 未在运行，无需停止")
     }
 
     fn bot_stop_succeeded(&self, bot_name: &str) -> String {
         format!("已成功停止机器人 '{bot_name}'")
     }
 
+    fn bot_stop_cancelled_queue(&self, bot_name: &str) -> String {
+        format!("已取消机器人 '{bot_name}' 的排队启动")
+    }
+
     fn bot_restart_command_sent(&self, bot_name: &str) -> String {
         format!(
-            "已发送机器人 '{bot_name}' 的重启命令(已确认成功停止，启动状态请用 /show status 确认)"
+            "已发送机器人 '{bot_name}' 的重启命令（已确认成功停止，启动状态请用 /show status 确认）"
         )
     }
 
@@ -361,7 +373,7 @@ impl Text for ZhCn {
 
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
         format!(
-            "机器人 {bot_name} 登录凭据获取成功：登录凭据已保存（若存在旧凭据会被删除），正在启动（稍后请用 /show status 查看状态）"
+            "机器人 {bot_name} 的登录凭据已保存（若存在旧凭据会被删除），正在启动（可用 /show status 查看状态）"
         )
     }
 
@@ -397,11 +409,15 @@ impl Text for ZhCn {
     }
 
     fn count_skipped_running(&self) -> &'static str {
-        "跳过 (已在运行)"
+        "跳过（已在运行）"
     }
 
     fn count_skipped_missing_token(&self) -> &'static str {
-        "跳过 (缺少 Token)"
+        "跳过（缺少 Token）"
+    }
+
+    fn count_start_cancelled(&self) -> &'static str {
+        "已取消"
     }
 
     fn count_start_failed(&self) -> &'static str {
@@ -508,7 +524,7 @@ impl Text for ZhCn {
     }
 
     fn mybots_empty(&self) -> &'static str {
-        "该账号名下还没有任何机器人(使用 /bot add 添加)"
+        "该账号名下暂无机器人（可用 /bot add 添加）"
     }
 
     fn mybots_row(&self, bot_name: &str, token_status: &str) -> String {
@@ -627,15 +643,33 @@ impl Text for ZhCn {
         )
     }
 
-    fn command_startall_queued_notice(&self, bot_count: usize, expected_secs: u64) -> String {
+    fn command_startall_queued_notice(
+        &self,
+        bot_count: usize,
+        queued_bot_count: usize,
+        estimated_minutes: u64,
+        timeout_minutes: u64,
+    ) -> String {
         format!(
-            "已接受 /startall 请求；本次需要启动 {bot_count} 台，预计约 {}；完成后会返回完整结果",
-            expected_duration_text(expected_secs)
+            "已接受 /startall 请求；本次启动 {bot_count} 台，其中启动队列中已有 {queued_bot_count} 台在等待；\
+             按当前分批设置，预计最长耗时 {estimated_minutes} 分钟，等待启动结果的超时时间为 {timeout_minutes} 分钟；\
+             完成后将返回完整结果"
         )
     }
 
-    fn command_start_queue_summary(&self, batch_size: usize, interval_ms: u64) -> String {
-        format!("启动队列: 两次登录最小间隔 {interval_ms} 毫秒，每批最多 {batch_size} 台")
+    fn start_internal_error_reason(&self) -> &'static str {
+        "内部错误（见程序日志）"
+    }
+
+    fn command_start_queue_summary(
+        &self,
+        batch_size: usize,
+        bot_login_interval_ms: u64,
+        batch_login_interval_ms: u64,
+    ) -> String {
+        format!(
+            "启动队列: 每批最多 {batch_size} 台，批内相邻两台间隔 {bot_login_interval_ms} 毫秒，批与批之间间隔 {batch_login_interval_ms} 毫秒"
+        )
     }
 
     fn command_log_attachment_body(
@@ -708,6 +742,10 @@ impl Text for ZhCn {
         format!("错误:机器人 '{bot_name}' 正在运行，请先停止它")
     }
 
+    fn refusal_bot_queued(&self, bot_name: &str) -> String {
+        format!("错误:机器人 '{bot_name}' 正在启动队列中排队，请先取消它的排队启动")
+    }
+
     fn send_command_failed(&self, bot_name: &str, reason: Option<&str>) -> String {
         match reason {
             Some(reason) => format!("错误:向机器人 '{bot_name}' 发送指令失败: {reason}"),
@@ -744,24 +782,34 @@ impl Text for ZhCn {
         format!("机器人 {bot_name}: 停止后会话仍然存在")
     }
 
-    fn start_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 缺少 Token 文件，未启动")
-    }
-
     fn start_log_file_failed(&self, bot_name: &str) -> String {
         format!("机器人 {bot_name}: 无法创建日志文件")
     }
 
-    fn start_command_sent(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 启动命令已发送，会话已出现")
+    fn start_command_sent_confirmed(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 已确认进服")
+    }
+
+    fn start_command_sent_unconfirmed(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 会话已存在但尚未确认状态（可稍后用/show status 确认）")
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
         format!("机器人 {bot_name}: 启动失败(常见原因是微软拒绝频繁登录或内存不足)")
     }
 
+    fn start_cancelled(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 启动被取消")
+    }
+
+    fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
+        format!(
+            "机器人 {bot_name}: 等待启动结果超时（{seconds} 秒），已按未确认处理（请查看日志或用 /show status 确认）"
+        )
+    }
+
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 缺少 Token 文件，重启会登录失败，已保持原状(先 /token 再重启)")
+        format!("机器人 {bot_name}: 缺少 Token 文件，拒绝重启，若希望停止请用/stop 命令")
     }
 
     fn restart_not_running(&self, bot_name: &str) -> String {
@@ -774,6 +822,10 @@ impl Text for ZhCn {
 
     fn bot_candidate_stopped_note(&self) -> &'static str {
         "(已停止)"
+    }
+
+    fn bot_candidate_queued_note(&self) -> &'static str {
+        "(排队中)"
     }
 
     fn restart_skipped_session_alive(&self, bot_name: &str) -> String {
@@ -865,7 +917,7 @@ impl Text for ZhCn {
                 format!("注册 SIGTERM 处理失败: {reason}")
             }
             LogText::GatewayLostNeverReady => {
-                "启动后未与 Discord 握手成功(可能你需要开启TUN模式代理)，正在停止全部机器人，随后尝试重建连接……".to_string()
+                "未能在启动后与 Discord 完成握手（可能需要在客户端启用 TUN 模式代理）；正在停止全部机器人，随后尝试重建连接……".to_string()
             }
             LogText::GatewayLostUnreachable => {
                 "已经连续一个判定窗口无法访问 Discord，正在停止全部机器人，随后尝试重建连接……"
@@ -925,7 +977,7 @@ impl Text for ZhCn {
             LogText::DiscordClientEnded => "与 Discord 的连接已结束 (客户端正常返回)".to_string(),
             LogText::DiscordClientError { error } => format!("与 Discord 的连接发送错误: {error}"),
             LogText::ShutdownReportTitle => "进程退出报告".to_string(),
-            LogText::ShutdownSignalReportTitle => "收到退出信号，收尾结果".to_string(),
+            LogText::ShutdownSignalReportTitle => "收到来自系统的退出信号，停止结果".to_string(),
             LogText::ShutdownReportNoticeFailed { guild_name, reason } => {
                 format!("向服务器 {guild_name} 发退出收尾报告失败: {reason}")
             }
@@ -936,7 +988,7 @@ impl Text for ZhCn {
                 "退出收尾报告已发往 {notified_guilds} 个服务器(发送失败 {failed_guilds} 次)"
             ),
             LogText::ShutdownReportNoContext => {
-                "还没有可用的 Discord 上下文 (本次连接没握手成功)，退出收尾报告只写进程序日志".to_string()
+                "本次连接未完成握手，没有可用的 Discord 上下文；退出收尾报告仅写入程序日志".to_string()
             }
             LogText::ShutdownReportTimeout { seconds } => format!(
                 "退出收尾报告 {seconds} 秒内没发完，跳过剩余发送并退出 (下次启动不补发)"
@@ -957,9 +1009,6 @@ impl Text for ZhCn {
             }
             LogText::BotDeleted { bot_name } => format!("成功删除机器人 {bot_name} "),
             LogText::BotLogFirstLine => "--- 启动机器人 ---".to_string(),
-            LogText::StartSkippedMissingToken { bot_name } => {
-                format!("机器人 {bot_name} 缺少 Token 文件，未启动")
-            }
             LogText::StartLogFileFailed { bot_name, reason } => {
                 format!("机器人 {bot_name} 的日志文件创建失败: {reason}")
             }
@@ -970,17 +1019,16 @@ impl Text for ZhCn {
             } => format!(
                 "尝试启动机器人 {bot_name} ， Screen 会话 ({session_name})，日志: {log_path}"
             ),
-            LogText::StartVerificationFailed {
-                bot_name,
-                session_seen_at_first_check,
-            } => format!(
-                "机器人 {bot_name} 启动复核失败: {}",
-                if session_seen_at_first_check {
-                    "会话出现后又退出"
-                } else {
-                    "会话从未出现"
-                }
+            LogText::StartLaunchPanicked { bot_name, reason } => format!(
+                "拉起机器人 {bot_name} 时发生内部错误：{reason}"
             ),
+            LogText::StartResultTimeout { bot_name, seconds } => format!(
+                "等待机器人 {bot_name} 的启动结果超时（{seconds} 秒），已按未确认处理"
+            ),
+            LogText::StarterRestarting { reason } => {
+                format!("启动线程异常退出（{reason}），正在重启它")
+            }
+            LogText::StartVerificationFailed { bot_name, reason } => format!("机器人 {bot_name} 启动复核没过: {reason}"),
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "FishingBot 日志目录 {dir} 内存在意料之外的文件 '{file_name}' (若反复出现说明 FishingBot 更改了日志文件名，\
                  请把配置 [raw_game_logs] 的 file_name 更新成这个名字)"
@@ -1060,15 +1108,6 @@ impl Text for ZhCn {
                 requirement,
             } => format!("配置项 {field} = {value} {}", requirement_text(requirement)),
         }
-    }
-}
-
-/// 把秒数说成人话（`/startall` 回执里的\"预计约 …\"）：`90` → `1 分 30 秒`。
-fn expected_duration_text(expected_secs: u64) -> String {
-    match (expected_secs / 60, expected_secs % 60) {
-        (0, secs) => format!("{secs} 秒"),
-        (minutes, 0) => format!("{minutes} 分"),
-        (minutes, secs) => format!("{minutes} 分 {secs} 秒"),
     }
 }
 

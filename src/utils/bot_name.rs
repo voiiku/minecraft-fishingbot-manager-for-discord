@@ -4,8 +4,7 @@
 
 use crate::text;
 
-/// 将一段文本过滤为"当目录名用的机器人名"：`raw_bot_name.to_clean_bot_name()`。
-/// 做成 trait：以方便`&str` 与 `String` 直接调用，
+/// `&str` 与 `String` 直可接调用 .to_clean_bot_name() 方法
 pub trait ToCleanBotName {
     /// 去首尾空白 + 转小写；只允许字母、数字、下划线与连字符。
     /// 出现别的字符直接返回 `Err`,直接回复给用户
@@ -29,7 +28,7 @@ impl ToCleanBotName for str {
     }
 }
 
-/// 目录名里允许出现的字符。白名单放在这一处，[`ToCleanBotName`] 与它的测试共用。
+/// 名中允许出现的字符白名单。
 fn is_bot_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }

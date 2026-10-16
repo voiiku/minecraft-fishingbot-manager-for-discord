@@ -1,6 +1,8 @@
-//! 运行状态分组、运行中的名字、在跑机器人的状态快照、运行中拒绝文案。
-//! 只查一次 `screen -list` 快照（[`active_screen_sessions`]），之后所有「在不在运行」的判断都基于同一份快照；
-//! 机器人的状态判定在 [`super::bot_status`]，而`/show status` 的回复格式在本模块。
+//! 状态口径（是否启动看会话、是否排队看队列）、运行状态分组、运行中的名字、`/show status` 的状态快照、
+//! 运行中 / 排队中拒绝文案。
+//! 「是否启动」只查一次 `screen -list` 快照（[`active_screen_sessions`]），之后所有「在不在运行」的判断都基于同一份快照；
+//! 「是否排队」只查一次启动队列（[`super::startup::StartupQueue`]），与日志无关。
+//! 在线 / 暂停的判定在 [`super::bot_status`]，而 `/show status` 的回复格式在本模块。
 
 use std::collections::HashMap;
 
@@ -9,6 +11,7 @@ use crate::text;
 use super::bot_dirs::{BotDirEntry, token_ready_bot_dir_entries};
 use super::bot_status::{BotPauseStatusMemory, ConnectionStatus, PauseStatus};
 use super::screen::{ScreenSession, active_screen_sessions, is_bot_screen_running, session_name};
+use super::startup::StartupQueue;
 use super::uptime::{format_uptime, process_elapsed_seconds};
 
 /// `/show status` 表头与数据行共用的分隔符。
@@ -134,12 +137,19 @@ pub fn all_running_bot_infos() -> Result<Vec<RunningBotInfo>, String> {
         .collect())
 }
 
-/// 如果该机器人正在运行，给出拒绝文案（供"运行中拒绝操作"的指令统一使用）。
+/// 如果该机器人不是"已停止"（有会话，或正在排队启动），给出拒绝文案
+/// （供"运行中拒绝操作"的指令统一使用）。
 /// 几个拒绝运行时执行的指令的回复文本都复用它（`/bot del`、`/token`、`/bot rename` 都用它）。
-/// 该机器人正在运行时返回 `Err`，否则 `Ok(())`。
-pub fn refusal_if_running(bot_name: &str) -> Result<(), String> {
+/// 该机器人正在运行或排队中时返回 `Err`，否则 `Ok(())`。
+pub fn refusal_if_not_stopped(bot_dir_entry: &BotDirEntry) -> Result<(), String> {
+    let bot_name: &str = &bot_dir_entry.bot_name;
+
     if is_bot_screen_running(bot_name) {
         return Err(text::get().refusal_bot_running(bot_name));
+    }
+    // 排队中的机器人会被拉起：此时修改其凭据或目录会与正在进行的启动冲突。
+    if StartupQueue::get_or_init().bot_in_queue(bot_dir_entry) {
+        return Err(text::get().refusal_bot_queued(bot_name));
     }
 
     Ok(())
@@ -152,7 +162,7 @@ mod tests {
     use crate::utils::bot_status::ConnectionStatus;
 
     /// 没在跑时返回 `None`：这里用非法名字让"拼会话名"这一步先失败，所以不必装真配置
-    ///（另一支 —— 真在跑 —— 要读配置里的 `screen_prefix` 与 `logs_dir`，单测碰不到）。
+    ///（另一支 —— 真在跑 —— 要读配置里的 `screen_prefix` 与 `bot_logs_dir`，单测碰不到）。
     #[test]
     fn from_entry_is_none_when_the_session_is_missing() {
         let bot_dir_entry = BotDirEntry {

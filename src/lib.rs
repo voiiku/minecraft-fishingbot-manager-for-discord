@@ -9,7 +9,7 @@ mod general;
 mod process_log;
 mod show;
 pub mod text;
-mod utils;
+pub mod utils;
 mod watchdog;
 
 /// 测试辅助函数。
@@ -35,8 +35,8 @@ use crate::show::{
 use crate::utils::IntoReplyText;
 
 pub use utils::{
-    BotDirEntry, RequiredPermission, all_bot_dir_entries, bot_dir_entries_of_owner, has_permission,
-    split_bot_entries_by_is_running,
+    BotDirEntry, RequiredPermission, StartupQueue, all_bot_dir_entries, bot_dir_entries_of_owner,
+    has_permission, split_bot_entries_by_is_running,
 };
 
 pub use watchdog::{WATCHDOG, Watchdog, WatchdogSlot};
@@ -238,7 +238,7 @@ pub fn handle_bot_control(
 }
 
 /// 处理管理员批量指令。
-/// `/startall` 的第一条回执：这次要启动几台、预计多久。权限：所有人可用（真正的启动在
+/// `/startall` 的第一条回执：这次要启动几台。权限：所有人可用（真正的启动在
 /// [`handle_all_bots_control`] 里检查管理员权限）。
 pub fn handle_startall_notice() -> String {
     planned_startall_notice()

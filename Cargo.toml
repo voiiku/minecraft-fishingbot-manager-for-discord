@@ -1,6 +1,6 @@
 [package]
 name = "minecraft-fishingbot-manager-for-discord"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Manage Minecraft FishingBot instances through Discord commands"
 license = "MIT"

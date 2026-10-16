@@ -66,9 +66,9 @@ Reconnect messages and the replies to `/pause` and `/unpause` are fixed JAR text
 
 * Microsoft rate-limits sign-ins per egress IP. `/start`, `/startall`, `/restart` and `/restartall` share a global start
   queue. The shipped example config leaves at least 20 seconds between two sign-ins
-  (`[startup_queue] login_interval_ms`); tune `max_batch_size` and `login_interval_ms` as needed. See section 12 for the
+  (`[startup_queue] bot_login_interval_ms`); tune `max_batch_size` and `bot_login_interval_ms` as needed. See section 12 for the
   mechanism, how the real gap between two sign-ins is computed, and the recommended values.
-* The transient memory peak during a batch start may exceed the server’s available memory. A process killed this way will not appear in `screen -list`, so the result may say: “Bot X: failed to start (usually because Microsoft refuses frequent logins, or out of memory)”. To mitigate this, reduce the memory allocation in `runtime.java_opts`, increase `timing.settle_per_bot_ms` and `[startup_queue] login_interval_ms`, or retry later (JVM memory usage decreases over time).
+* The transient memory peak during a batch start may exceed the server’s available memory. A process killed this way will not appear in `screen -list`, so the result may say: “Bot X: failed to start (usually because Microsoft refuses frequent logins, or out of memory)”. To mitigate this, reduce the memory allocation in `runtime.java_opts`, increase `timing.check_grace_ms` and `[startup_queue] bot_login_interval_ms`, or retry later (JVM memory usage decreases over time).
 
 ## 12. The same bot fails to start every time (Microsoft sign-in rate limit)
 
@@ -82,17 +82,17 @@ reads `access_token` straight out of the response, so it throws, and the process
 launch. Whether that is reported as a failure depends on the verification window:
 
 * Verification is two `screen -list` snapshots taken **after the whole batch is up, plus
-  `2 x timing.settle_per_bot_ms x batch size`**. The smaller the batch, the closer that window sits to the launch:
+  one `timing.check_grace_ms`**. The smaller the batch, the closer that window sits to the launch:
   with `max_batch_size = 1` (one bot per batch) and for the trailing partial batch the only check happens about
-  `2 x timing.settle_per_bot_ms` after launch, so "rejected by a 429 after 2-5 seconds" is often invisible and gets
+  one `timing.check_grace_ms` after launch, so "rejected by a 429 after 2-5 seconds" is often invisible and gets
   reported as a success.
 
 The real gap between two sign-ins (what the rate limit actually sees) is set by the single key
-`[startup_queue] login_interval_ms`:
+`[startup_queue] bot_login_interval_ms`:
 
-* two bots inside one batch: `login_interval_ms`;
-* last bot of a batch -> first bot of the next batch: `login_interval_ms` (the wait between batches is it minus
-  2 x `timing.settle_per_bot_ms` x batch size).
+* two bots inside one batch: `bot_login_interval_ms`;
+* last bot of a batch -> first bot of the next batch: `bot_login_interval_ms` (the wait between batches is it minus
+  one `timing.check_grace_ms`).
 
 Empirical values for one egress IP: **one sign-in every 20 seconds (about 3 per minute) is stable**; one every 12
 seconds (5 per minute) loses the last one; several sign-ins within a few seconds trip a penalty window, and every
@@ -101,7 +101,7 @@ another instance, a manual login) spend the same budget.
 
 What to do:
 
-1. Set `[startup_queue] login_interval_ms` to 18-20 seconds (the shipped example uses 20000). `max_batch_size` does not
+1. Set `[startup_queue] bot_login_interval_ms` to 18-20 seconds (the shipped example uses 20000). `max_batch_size` does not
    change the pace: it only changes the length of the verification window and the JVM memory peak.
 2. Wait 3-5 minutes before starting the failed bot again (`/start <bot name>` or `/restart <bot name>`); do not retry
    immediately.
@@ -131,7 +131,7 @@ At startup, this program validates the config and rejects unknown fields. After 
 
 Fields touched by this slimming (the shipped template is already updated):
 
-* `[startup_queue] batch_cooldown_ms` is now `login_interval_ms`: the meaning changed from "cooldown between batches"
+* `[startup_queue] batch_cooldown_ms` is now `bot_login_interval_ms`: the meaning changed from "cooldown between batches"
   to "the minimum gap between two sign-ins" (bots inside a batch are spaced by it), and it replaces the former
   `[timing] stagger_ms`.
 * `[timing]` no longer has `probe_interval_ms` and `first_handshake_timeout_ms`: they are derived from

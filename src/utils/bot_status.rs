@@ -21,7 +21,7 @@ use crate::config;
 use crate::text;
 
 use super::bot_dirs::BotDirEntry;
-use super::bot_log_files::latest_log_path;
+use super::bot_logs::latest_log_path;
 use super::fs::{read_last_lines, read_lines_backwards_until};
 
 /// 机器人到游戏服务器的连接状态：正常运行时只可能是这四种。
@@ -184,9 +184,8 @@ impl BotPauseStatus {
 /// 进程内保存的"所有在跑的机器人的状态"，按机器人名存，惰性存储，只在调用时更新。
 /// 这是本项目唯一的进程级可变状态
 /// 约定：只有能确认到命令成功执行的函数会改它（`/pause`、`/unpause` 里的 [`BotPauseStatusMemory::update_bot_pause_status`]），别处只读。
-/// 手动操作（如/command bot /pause）不会更新它（因为自由指令是不可预测的），那种情况下 `/show status` 可能显示旧值，直到下一次 `/pause`、`/unpause` 成功执行。
-/// 同一台机器人的 `/pause` 与 `/unpause` 几乎同时到达时，状态按窗口里**最后**那条回显记
-///（[`PauseCommand::last_confirmed_pause_command`]），不是"谁最后写谁赢"。
+/// 手动操作（如/command bot /pause）不会更新它，因为自由指令是不可预测的。
+/// 同一台机器人的 `/pause` 与 `/unpause` 同时到达时，状态按最新回显记录。
 static ALL_RUNNING_BOTS_PAUSE_STATUSES: LazyLock<Mutex<HashMap<String, BotPauseStatus>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -386,7 +385,7 @@ mod tests {
     /// 单行判定：只认在线关键词（重连那对由下一条测）；"进程已结束"不在这里判。
     /// 整段流程（实时读日志、读到结论就停、三种"读不到"报错）在
     /// [`connection_status_of_log`] 里，它要读真配置，所以这里只测这个吃参数的单行判定；
-    /// "往回读、读到结论就停"那一半由 `bot_log_files` 的测试覆盖。
+    /// "往回读、读到结论就停"那一半由 `bot_logs` 的测试覆盖。
     #[test]
     fn connection_keywords_are_recognized() {
         let keywords = keywords();

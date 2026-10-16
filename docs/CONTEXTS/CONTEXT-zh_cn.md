@@ -90,11 +90,11 @@
    滤），游戏内指令片段走 `utils::ToCleanBotCommand`。同一份文本全链路只清洗一次，第二处不该再出现
    `trim()`。配置这一侧同理：字符串值由 `config::Config::from_toml_text` 统一 trim 一次，读配置的人递原值。两条不变的
    规矩：机器人名的口径唯一来源是 `utils::bot_name`；需要业务状态才能判的检查
-   （Token 是否存在、会话在不在跑、权限与目录归属、`max_log_lines` 封顶）一律留在业务层。数字是命令层
+   （Token 是否存在、会话在不在跑、权限与目录归属、`max_reply_log_lines` 封顶）一律留在业务层。数字是命令层
    唯一的转换：`/log` 的行数在命令层解析并校验后转 `usize`，`/ping` 的端口同理，校验不过当场回用法提示
    （Discord 的整数 option 只有有符号 64 位，所以 option 声明成 `i64`）。
 8. 配置只在需要它的地方读，而且只读需要的那几个字段：逻辑重、值得单测的函数吃参数
-   （`launch_command_line` 加 `LaunchCommandConfig`）；只有一两行逻辑的便利函数直接读
+   （`launch_command_line` 的取值全靠参数传入）；只有一两行逻辑的便利函数直接读
    `config::Config::get().表.字段`（例如 `session_name` 只读 `runtime.screen_prefix`、
    `BotTokenStatus::from_dir` 只读 `runtime.token_file`）；状态判定
    `BotDirEntry::connection_status()` 是这类做法里的重逻辑版本，关键词是全局固定的一份（一半在配置的
@@ -108,7 +108,7 @@
 * 停止必须彻底：所有停止入口只走 `utils::stop_bot_sessions`（Ctrl+C、等待、强杀、复核），绝不允许留下占着
   游戏账号的孤儿 JVM；systemd 侧靠 `KillMode=control-group` 兜底。
 * 日志两条线，磁盘上只有一份机器人日志：
-  * 机器人日志：`<机器人目录>/<runtime.logs_dir>/年-月-日-时-分-秒.log`，拉起会话前建好
+  * 机器人日志：`<机器人目录>/<runtime.bot_logs_dir>/年-月-日-时-分-秒.log`，拉起会话前建好
     （`create_bot_log_file`），会话里 `grep -v -E` 过滤后 `tee -a` 追加；`/log` 与 `/show status` 读它；
   * FishingBot 自己的日志：同层 `raw/log0.log`，一个指向 `/dev/null` 的符号链接。它建不出日志文件会
     拒绝启动，所以给它一个能写但什么都不存的目标。不要改成保留一份原始日志；
@@ -144,7 +144,7 @@
     `Report::render()` 的完整结果。
     第二条消息按 Discord defer 规则作为新消息发送；如改动该行为，需在真实部署中回归验证。
   * 交互令牌只有 15 分钟：所有 defer 后的回复必须在这个窗口内发出。批量启动跑得比它久时（台数多、
-    `[startup_queue] login_interval_ms` 大）followup 一定失败，所以长指令的最终报告走
+    `[startup_queue] bot_login_interval_ms` 大）followup 一定失败，所以长指令的最终报告走
     `commands::say_final_report`：发不出去就改发普通频道消息（普通消息不受交互令牌约束），并留一条
     `LogText::ReportPostedToChannel` 日志说明原因与失败原因。
 * 敏感输入必须走 Modal，不能当指令参数：斜杠指令的每次调用都会在频道里生成一条消息（Discord 的
@@ -169,7 +169,7 @@
 * 配置只在启动时读一次：运行中改配置不生效，重启进程才生效（刻意不做热重载）。
 * `bot_dirs` 是目录口径的唯一来源：`base_dir/bots/Discord用户ID/机器人名`，权限边界在用户 ID 那一层。
 * 运行中不许动要先查会话：`/bot del`、`/bot rename`、`/token`、`/bot login` 动手前都先
-  `is_bot_screen_running`（`refusal_if_running` 一处出文案，运行中直接拒绝）：改成运行中的 Token 不会生效、
+  `is_bot_screen_running`（`refusal_if_not_stopped` 一处出文案，运行中直接拒绝）：改成运行中的 Token 不会生效、
   删运行中的目录会毁掉数据、改运行中的目录名会把它接下来的日志写丢、登录要先独占凭据文件。重启流程更严：
   缺 Token 的目标在停止之前就剔掉（重启是先停再起，白停一次会把还在钓鱼的账号弄下线）。
 * 凭据只由 JAR 写，本项目不自己实现微软登录：`/bot login` 拉起的会话就是该机器人平时的会话，它把 JAR
@@ -303,7 +303,7 @@
 `utils::startup::start_bot_sessions` 里是四个连续的显式步骤，每个机器人都走一遍：
 
 1. `create_bot_log_file(bot_dir)`：建这次运行的日志文件（时间戳命名，失败就不拉会话）。
-2. `reset_fishingbot_logs_dir(bot_dir)`：准备 FishingBot 的 raw 日志目录（`<bot_dir>/<logs_dir>/raw`，
+2. `reset_fishingbot_logs_dir(bot_dir)`：准备 FishingBot 的 raw 日志目录（`<bot_dir>/<bot_logs_dir>/raw`，
    路径与配置都由它自己算），让 `raw/log0.log` 指向 `/dev/null`，内容丢弃。
 3. `launch_bot_session(name, dir, log_path, game_logs_dir)`：用 `screen -dmS` 起会话，命令形如
    `java … | grep -v -E '<filter_regex>' | tee -a '<log_path>'`。
@@ -383,7 +383,8 @@ src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_
 4. `/log` 用附件而不是截断：2000 字符装不下 100 行日志，截断后信息量损失太大；附件既能全量给出，又天然
    带上文件名。私密性由 `defer_ephemeral()` 加每条回复的显式 `.ephemeral(true)` 保证。
 5. 长指令分两条消息回复（`*all` 与单机器人 start、stop、restart）：先回一条回执（启动类回"已接受 … 请求"，
-   `/startall` 还会给出这次要启动几台与预计耗时，见 `lib::handle_startall_notice()`；其余回"已开始执行 …"），
+   `/startall` 还会给出这次要启动几台、队列里已有几台、预估耗时与等结果的超时，见
+   `lib::handle_startall_notice()`；其余回"已开始执行 …"），
    跑完再回完整报告。
    这是 Discord 官方文档写明的 defer 行为（第一条替换占位、第二条起是新消息）。
 6. 游戏侧配置由本程序生成、模板随仓库走：FishingBot 只认 JSON、又没有逐项覆盖的命令行参数，所以

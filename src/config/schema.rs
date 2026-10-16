@@ -80,7 +80,7 @@ pub struct KeywordsConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawGameLogsConfig {
-    /// 原始日志的目录名：`<机器人目录>/<runtime.logs_dir>/<它>`。
+    /// 原始日志的目录名：`<机器人目录>/<runtime.bot_logs_dir>/<它>`。
     pub dir_name: String,
     /// 原始日志文件名。
     pub file_name: String,
@@ -134,9 +134,9 @@ pub struct RuntimeConfig {
     /// refreshToken 文件名；文件权限限制为 `0600`。
     pub token_file: String,
     /// 机器人日志目录名。
-    pub logs_dir: String,
+    pub bot_logs_dir: String,
     /// `/log` 返回的最大行数。
-    pub max_log_lines: usize,
+    pub max_reply_log_lines: usize,
     /// 单条回复字符上限，超出时按行截断。
     pub max_reply_chars: usize,
     /// 自动候选（autocomplete）单次返回的最大条数；不超过 [`MAX_AUTOCOMPLETE_CHOICES`]。
@@ -149,12 +149,19 @@ pub struct RuntimeConfig {
 pub struct StartupQueueConfig {
     /// 每批最多启动的机器人数量。
     pub max_batch_size: usize,
-    /// 两次登录之间的最小间隔（毫秒）。
+    /// 批内相邻两台的登录间隔（毫秒）。
     ///
-    /// 微软按出口 IP 限制登录频率（见 `docs/troubleshooting/troubleshooting-zh_cn.md` 第 12 节），所以节奏
-    /// 只留这一个旋钮：批内相邻两台按它错峰，批间等的时间 = 它 − `timing.settle_per_bot_ms` × 2 × 本批台数。
-    pub login_interval_ms: u64,
+    /// 微软按出口 IP 限制登录频率（见 `docs/troubleshooting/troubleshooting-zh_cn.md` 第 12 节），
+    /// 这个值管"同一批里相邻两台之间"的错峰。
+    pub bot_login_interval_ms: u64,
+    /// 批与批之间的间隔（毫秒）。
+    ///
+    /// 一批跑完（拉起 + 复核）之后至少隔它才开下一批——即使上一批只有一台。
+    pub batch_login_interval_ms: u64,
     /// 全局队列最多暂存的启动请求数量。
+    ///
+    /// 它同时决定等结果的兜底超时（队列排满时最慢的一次启动 × 2，见
+    /// [`crate::utils::StartupQueue::result_timeout`]）：排队的台数越多，这个超时越长，不单独配置。
     pub max_pending_requests: usize,
 }
 
@@ -162,8 +169,11 @@ pub struct StartupQueueConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingConfig {
-    /// 每台机器人启动后的等待时间（毫秒）。
-    pub settle_per_bot_ms: u64,
+    /// 每台机器人拉起后的会话存活宽限期（毫秒）。
+    ///
+    /// 复核据此判定"拉起来了没有"：拉起后立即判定一次（会话消失或残壳即失败），
+    /// 过了宽限期会话仍存活即算启动成功；此刻是否已进服由日志另行说明，不参与判定。
+    pub check_grace_ms: u64,
     /// 等待 JVM 优雅退出的时间（毫秒），超时后强杀。
     pub stop_grace_ms: u64,
     /// 强制退出后、重新启动前的等待时间（毫秒）。
@@ -234,7 +244,7 @@ mod tests {
         assert!(config.ping.timeout_ms > 0);
         assert!(!config.runtime.screen_prefix.trim().is_empty());
         assert!(config.timing.watchdog_window_ms > 0);
-        assert!(config.timing.settle_per_bot_ms > 0);
+        assert!(config.timing.check_grace_ms > 0);
         // 探活间隔与首次握手超时由判定窗口派生：一个窗口里至少能探一次，握手超时覆盖一整轮。
         assert!(config.timing.probe_interval() > Duration::ZERO);
         assert!(config.timing.probe_interval() <= config.timing.watchdog_window());
@@ -244,7 +254,7 @@ mod tests {
         );
         let startup_queue = &config.startup_queue;
         assert!(startup_queue.max_batch_size > 0);
-        assert!(startup_queue.login_interval_ms > 0);
+        assert!(startup_queue.bot_login_interval_ms > 0);
         assert!(startup_queue.max_pending_requests > 0);
         assert!(!config.command_echo.pause_echo.trim().is_empty());
         assert!(!config.command_echo.unpause_echo.trim().is_empty());

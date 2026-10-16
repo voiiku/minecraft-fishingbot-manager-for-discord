@@ -29,7 +29,8 @@ pub(crate) async fn start(
 #[poise::command(slash_command)]
 pub(crate) async fn stop(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_running_bot_names"]
+    // 排队等待启动的也能被 `/stop` 取消，所以候选给全部状态（标注里能看出它是在跑还是排队）。
+    #[autocomplete = "super::autocomplete_any_bot_names"]
     #[description = "bot name"]
     name: String,
 ) -> Result<(), Error> {

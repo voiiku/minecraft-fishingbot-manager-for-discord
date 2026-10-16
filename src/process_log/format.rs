@@ -68,7 +68,7 @@ mod tests {
         assert_eq!(format_record("T", Level::Error, ""), None);
     }
 
-    /// 正文里的 CRLF 不该把 `\r` 带进日志文件（`lines()` 已经帮我们去掉了）。
+    /// 正文中的 CRLF 不应把 `\r` 带进日志文件（`lines()` 已将其去掉）。
     #[test]
     fn carriage_returns_are_dropped() {
         assert_eq!(

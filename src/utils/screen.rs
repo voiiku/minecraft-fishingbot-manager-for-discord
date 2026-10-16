@@ -10,7 +10,7 @@ use crate::text;
 use super::bot_name::ToCleanBotName;
 
 /// 清洗原始机器人名 + 只读 `runtime.screen_prefix` 这一个字段，拼出 screen 会话名（形如 `fb_机器人名`）。
-/// 名字非法（含特殊字符）时返回 `Err`：这种目录名不可能有我们用同一口径拉起的会话。
+/// 名字非法（含特殊字符）时返回 `Err`：此类目录名不可能有以同一口径拉起的会话。
 pub fn session_name(raw_bot_name: &str) -> Result<String, String> {
     let clean_bot_name = raw_bot_name.to_clean_bot_name()?;
 

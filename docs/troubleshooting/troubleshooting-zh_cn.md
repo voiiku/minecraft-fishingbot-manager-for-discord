@@ -69,11 +69,11 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
 ## 11. `/startall` 有一些机器人启动失败
 
 * 微软按出口 IP 限制登录频率。`/start`、`/startall`、`/restart` 与 `/restartall` 共用全局启动队列：
-  随仓库发布的示例配置是两次登录至少间隔 20 秒（`[startup_queue] login_interval_ms`），可自行调整
-  `max_batch_size` 与 `login_interval_ms`；机制、真实登录间隔的算法与推荐取值见第 12 节。
+  随仓库发布的示例配置是两次登录至少间隔 20 秒（`[startup_queue] bot_login_interval_ms`），可自行调整
+  `max_batch_size` 与 `bot_login_interval_ms`；机制、真实登录间隔的算法与推荐取值见第 12 节。
 * 批量启动的瞬时内存峰值可能超过服务器可用内存，被杀掉的进程不会出现在 `screen -list` 里，所以结果里会
   显示"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。缓解办法：把配置中的 `runtime.java_opts` 内存
-  配额调小，或把 `timing.settle_per_bot_ms` 与 `[startup_queue] login_interval_ms` 调大，或稍后重试（JVM
+  配额调小，或把 `timing.check_grace_ms` 与 `[startup_queue] bot_login_interval_ms` 调大，或稍后重试（JVM
   内存占用会随时间下降）。
 
 ## 12. 每次启动都固定失败同一台机器人（微软登录限流）
@@ -85,21 +85,21 @@ FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以�
 按**出口 IP** 限流，超限返回 `HTTP 429`。FishingBot 不检查状态码、直接取响应里的 `access_token`，于是抛异常，
 进程在启动后 2~5 秒自己退出。它会不会被算成失败，取决于复核窗口：
 
-* 复核 = 两遍 `screen -list` 快照，发生在**整批拉起完 + `2 × timing.settle_per_bot_ms × 本批台数`**之后。
+* 复核 = 两次会话快照（拉起后立即一次、等满 `timing.check_grace_ms` 一次），**整批拉起完**就进入复核。
   台数越少窗口越贴近启动瞬间：`max_batch_size = 1`（每台单独一批）与收尾的不足一批都只有约
-  `2 × timing.settle_per_bot_ms`，所以"2~5 秒后被 429 拒"常常来不及看见，被报成成功。
+  一个 `timing.check_grace_ms`，所以"2~5 秒后被 429 拒"常常来不及看见，被报成成功。
 
-真实登录间隔（限流看的就是它）由 `[startup_queue] login_interval_ms` 一个键决定：
+真实登录间隔（限流看的就是它）由 `[startup_queue] bot_login_interval_ms` 一个键决定：
 
-* 批内相邻两台：`login_interval_ms`；
-* 上一批最后一台 → 下一批第一台：`login_interval_ms`（批间等的时间 = 它 − 2 × `timing.settle_per_bot_ms` × 本批台数）。
+* 批内相邻两台：`bot_login_interval_ms`；
+* 上一批最后一台 → 下一批第一台：`bot_login_interval_ms`（批间等的时间 = 它 − 本批已耗时，复核最多占一个 `timing.check_grace_ms`）。
 
 同一出口 IP 上的经验值：**≥20 秒一次（约 3 次/分）稳定**；12 秒一次（5 次/分）会掉最后一次；几秒内连发会直接
 触发惩罚窗口，之后几十秒内的登录全部被拒。同一出口 IP 上其它登录（官方启动器、另一个实例、手动登录）也占额度。
 
 处置：
 
-1. 把 `[startup_queue] login_interval_ms` 设到 18~20 秒（示例配置给的是 20000）。`max_batch_size` 取多少不影响
+1. 把 `[startup_queue] bot_login_interval_ms` 设到 18~20 秒（示例配置给的是 20000）。`max_batch_size` 取多少不影响
    节奏，它只改变复核窗口的长度与 JVM 启动时的内存峰值。
 2. 失败的那台等 3~5 分钟再补（`/start <机器人名>` 或 `/restart <机器人名>`），不要立刻重试。
 3. 要真正提速只有两条路：用多个出口 IP；或让 JAR 复用 Minecraft access token（有效期 24 小时），
@@ -128,7 +128,7 @@ pgrep -af "java .*-refreshToken"      # 根据你配置文件中定义的 Token 
 
 本次精简动过的字段（示例配置模板已同步）：
 
-* `[startup_queue] batch_cooldown_ms` 改名为 `login_interval_ms`：含义从"批间冷却"变成"两次登录之间的
+* `[startup_queue] batch_cooldown_ms` 改名为 `bot_login_interval_ms`：含义从"批间冷却"变成"两次登录之间的
   最小间隔"（批内相邻两台按它错峰），原来的 `[timing] stagger_ms` 被它取代。
 * `[timing]` 删除了 `probe_interval_ms` 与 `first_handshake_timeout_ms`：它们由 `watchdog_window_ms`
   派生（探活间隔是窗口的 1/3，首次握手超时是窗口的 2 倍）。

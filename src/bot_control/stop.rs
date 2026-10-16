@@ -1,7 +1,7 @@
 //! `/stop`：停止单个机器人。
 
 use crate::text;
-use crate::utils::{BotDirEntry, is_bot_screen_running, stop_single_bot_session};
+use crate::utils::{BotDirEntry, StartupQueue, is_bot_screen_running, stop_single_bot_session};
 
 /// 停止单个机器人（`/stop`）。
 ///
@@ -9,6 +9,14 @@ use crate::utils::{BotDirEntry, is_bot_screen_running, stop_single_bot_session};
 /// 停止流程与 `/stopall` 共用，并会复核会话是否退出。
 pub(crate) fn stop_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String> {
     let bot_name: &str = &bot_dir_entry.bot_name;
+
+    // 还在启动队列里排着的：撤下来就等于停住了（这时候它还没有会话）。
+    // 先撤队列再判会话：撤不到（刚好被拉起）也不算错误，接着按会话停。
+    let cancelled =
+        StartupQueue::get_or_init().remove_bots_from_queue(std::slice::from_ref(bot_dir_entry));
+    if cancelled.iter().any(|(_, removed)| *removed) {
+        return Ok(text::get().bot_stop_cancelled_queue(bot_name));
+    }
 
     // 会话不存在时无需停止。
     if !is_bot_screen_running(bot_name) {

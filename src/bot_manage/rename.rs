@@ -3,7 +3,7 @@
 use std::fs;
 
 use crate::text;
-use crate::utils::{BotDirEntry, ToCleanBotName, is_bot_name_taken, refusal_if_running};
+use crate::utils::{BotDirEntry, ToCleanBotName, is_bot_name_taken, refusal_if_not_stopped};
 
 /// 重命名机器人（`/bot rename`）。
 ///
@@ -20,8 +20,8 @@ pub(crate) fn rename_bot(
         return Err(text::get().bot_rename_same_name().to_string());
     }
 
-    // 拒绝运行中的机器人
-    refusal_if_running(clean_old_bot_name)?;
+    // 拒绝运行中（或排队等待启动）的机器人
+    refusal_if_not_stopped(bot_dir_entry)?;
 
     // 全服重名校验。
     if is_bot_name_taken(&clean_new_bot_name) {

@@ -8,16 +8,16 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use crate::text;
-use crate::utils::{BotDirEntry, refusal_if_running, token_file_path};
+use crate::utils::{BotDirEntry, refusal_if_not_stopped, token_file_path};
 
-/// 写入 refreshToken；运行中的机器人须先停止。权限由路由层检查。
+/// 写入 refreshToken；运行中（或排队等待启动）的机器人须先停止。权限由路由层检查。
 pub(crate) fn update_bot_token_file(
     bot_dir_entry: &BotDirEntry,
     raw_token: String,
 ) -> Result<String, String> {
     let bot_name: &str = &bot_dir_entry.bot_name;
 
-    refusal_if_running(bot_name)?;
+    refusal_if_not_stopped(bot_dir_entry)?;
 
     let token_file_path = token_file_path(&bot_dir_entry.bot_dir_path);
 
