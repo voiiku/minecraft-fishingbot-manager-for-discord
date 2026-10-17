@@ -4,8 +4,8 @@
 
 * **本项目暂时不支持离线模式的服务器或单人游戏**。
 * **本项目暂时只支持运行在 64 位 Linux 系统下**。
-* 想使用 QQ？可以考虑 [QQ 版本（已停更）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
-* 由于 [FishingBot](https://github.com/MrKinau/FishingBot) 的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（已计划于26.4加入），本项目暂时无法正确处理暂停钓鱼功能的逻辑(已经实现)，其余功能不受影响。
+* 想使用 QQ？可以考虑 [QQ 版本（已停止功能更新）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
+* 由于 [FishingBot](https://github.com/MrKinau/FishingBot) 的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于26.4加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），暂时无法正确处理暂停钓鱼功能(逻辑已经实现)，其余功能不受影响。
 
 ## 1. 项目概要
 
