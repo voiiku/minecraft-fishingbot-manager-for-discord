@@ -71,9 +71,9 @@ filter_regex = "([+][0-9.]+XP|is now AFK.|is no longer AFK.|is now away from key
 [command_echo]
 # The line the JAR prints when it receives `/pause` or `/unpause`.
 # The defaults match the English build.
-# CHINESE_SIMPLIFIED: pause_echo = "已暂停钓鱼"
+# Will be deprecated (once a pause command is added to the original Fishingbot)
 pause_echo = "Fishing paused"
-# CHINESE_SIMPLIFIED: unpause_echo = "已恢复钓鱼"
+# Will be deprecated (once a pause command is added to the original Fishingbot)
 unpause_echo = "Fishing resumed"
 # How long to wait before reading the log for that echo, in milliseconds.
 # Affects: the reply delay of `/pause` and `/unpause`.
