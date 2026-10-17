@@ -2,7 +2,7 @@
 [简体中文](i18n-zh_cn.md) | **English**
 
 * Mechanism: `src/text.rs` (`Language`, the `Text` trait, `install`, `get`) and `src/text/*.rs` (one file per
-  language: `en_us.rs` is the default language, `zh_cn.rs` is Simplified Chinese; plus four submodules: `bootstrap`
+  language: `en_us.rs` is the English implementation, `zh_cn.rs` is Simplified Chinese; plus four submodules: `bootstrap`
   (English during bootstrap), `log_text` (`LogText`), `requirement` (`ConfigRequirement`) and `setup_failure` (which
   text a setup failure uses, and whether it counts as permanent)).
 * Config: `[i18n] language = "ENGLISH"` (what the example config ships; change it to `CHINESE_SIMPLIFIED` for a
@@ -36,8 +36,8 @@ Deliberately not included:
   must be fixed English lives in `bootstrap`, see section 4.
 * Code comments, `docs/` and command names (Discord only allows lowercase ASCII). Exceptions: the first paragraph of
   a command's `///` and an option's `#[description]` become the text sent to Discord, and those two are written in
-  English (the same sentence as in the default language table, see
-  [commands-en_us.md section 1.7.1](../commands/commands-en_us.md#171-what-the-copy-inside-the-macro-is-the-english-fallback)).
+  English (the same sentence as in the `en_us.rs` table, see
+  [commands-en_us.md section 1.7.1](../commands/commands-en_us.md#171-what-the-copy-inside-the-macro-is-the-english-copy)).
 * The example config's comments are fixed English: they are for people who edit the config by copying the template,
   and they are kept apart from the Chinese code comments. Only the few entries whose value changes with the language
   and must be changed for a Chinese deployment carry one extra `# CHINESE_SIMPLIFIED:` line (the two `command_echo`
@@ -84,7 +84,8 @@ and you set `[i18n] language` to the matching language (when the texts really di
 1. Add a file under `src/text/` implementing every method of `Text`. A trait rather than a
    `HashMap<&str, &str>` precisely so that a missing translation fails the build.
 2. Add `mod <file name>;` to `src/text.rs`, add an enum variant to `Language`, and add a branch to the `match` in
-   `Language::implementation()` (both the `install()` and the `get()` fallbacks come from there).
+   `Language::implementation()` (that is where `install()` takes the implementation; an uninstalled `get()` panics in
+   a production build and uses the English implementation in a test build).
 3. Add the language name to `Language::supported_names()`. That is the single source of valid values: config
    validation, error texts, the example config and this document all take it from there, so there are never two lists
    to drift apart. Copy the value from FishingBot's own `i18n.Language` enum constants - it is also what goes into
@@ -95,7 +96,7 @@ No business layer and no config parsing changes are needed: the business layer o
 ## 3. Why not external language files (`.ftl`, `gettext`, a language pack toml)
 
 * This project wants one binary plus one config to run: an external language pack is a third file that has to travel
-  along, and losing it falls back to the default language.
+  along, and losing it leaves the program without any texts.
 * Compile-time completeness beats a run-time lookup: a missed translation is a build error, not an empty string or a
   bare key shown to a user in chat.
 * Two dependencies less (no Fluent, no `rust-i18n`).
@@ -105,7 +106,7 @@ implementations are in the binary, change the config). That fits the trade-offs 
 meant to be changed without a rebuild (`/help`) lives in the config as `text.help` anyway, so an English user who
 wants `/help` in English just replaces `text.help` (it was always meant to be written by the user).
 
-## 4. How it is read, and the fallback
+## 4. How it is read, and behavior before installation
 
 * Business layers and utils always call `text::get().xxx(...)` (they do not touch the framework, only this).
 * Log and console texts go through `text::get().log_text(LogText::...)`. There are many of those and they have a
@@ -113,21 +114,21 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
   files is exhaustive, so a missing translation, or a variant implemented on one side only, does not compile (the
   same guarantee as method-by-method). The level (`info!`, `warn!`) is still decided at the call site, because that
   is semantics rather than text.
-* Without an installed language, `get()` falls back to the default (English). The default language is defined in
-  exactly one place, `Language::default()`, and `get()` writes both branches out in full (no `unwrap_or`) so that
-  "which language do we fall back to" is visible at a glance. Unit tests therefore do not each have to install a
-  language, and text assertions fall into two kinds:
+* `text::get()` only returns an installed implementation. A production build panics when none is installed (an
+  entry-point ordering error); a test build returns the English implementation so tests do not each have to call
+  `install()`. `Language` has no `Default` implementation; the first call in `validate()` is `validate_language`,
+  whose error text is fixed English, and the config entry then prints it to the terminal and exits with code 1. Text
+  assertions therefore fall into two kinds:
   1. Wiring (which table this sentence comes from, and that it follows the language): expected values come from
-     `text::get()` (the JAR echoes, a bot name error, ...), so changing the default language does not turn them red;
+     `text::get()` (the JAR echoes, a bot name error, ...), so changing the test language does not turn them red;
   2. Wording (sentences assembled from a field, a value and a requirement, such as config errors): pinned to
-     fragments of the default language (English).
+     fragments of the English implementation.
 
-  That is a different thing from the deployment default: the example config ships `language = "ENGLISH"` (the same
-  as the fallback language in code; change it to `CHINESE_SIMPLIFIED` for a Chinese deployment), which only decides
-  which language a new deployment runs in and says nothing about whether the code's fallback is English. It is also
-  the value written into the generated `conf.json` as `misc.language` (the same value, not a mapped one, see
-  [config.md section 3.2](../config/config-en_us.md)), so the jar speaks the same language and the two can
-  no longer disagree.
+  The example config's `language = "ENGLISH"` only decides which language a new deployment runs in (change it to
+  `CHINESE_SIMPLIFIED` for a Chinese deployment); it has nothing to do with the English implementation used in a test
+  build before installation. It is also the value written into the generated `conf.json` as `misc.language` (the same
+  value, not a mapped one, see [config.md section 3.2](../config/config-en_us.md)), so the jar speaks the same language
+  and the two can no longer disagree.
 * When the language is installed decides which messages can only be bootstrap English:
   1. `config::Config::get_or_init()` installs once right after parsing succeeds, so config validation errors are in the configured
      language too;
@@ -136,8 +137,9 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
      `install()`, because it would have no effect and would only blur "where is the language chosen";
   3. Anything sent before step 1 is fixed English: the config file is missing, cannot be read or fails to parse, the
      template cannot be generated, the executable path cannot be located, `[i18n] language` is itself wrong, and the
-     `expect` for calling `config::Config::get()` before the config is loaded (`bootstrap::CONFIG_NOT_LOADED`). No language
-     is available then, and English is the most neutral fallback. They all live in `crate::text::bootstrap`
+     `expect` for calling `config::Config::get()` before the config is loaded (`bootstrap::CONFIG_NOT_LOADED`), and
+     `bootstrap::TEXT_NOT_INSTALLED` when text is requested before a language is installed. No language
+     has been chosen then, so those hints are written in English. They all live in `crate::text::bootstrap`
      (alongside the language tables but not implementing `Text`). The single criterion: is this note a product of the
      config not having been read successfully.
 * Registration-time texts such as command descriptions read the same `get()`: `commands::all_commands()` calls it
@@ -192,7 +194,7 @@ The following text is provided through `Text` and the related enums:
 
 Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions.
 
-`Text` currently has 151 methods (including `log_text`), 27 command descriptions, plus 74 `LogText` variants and 20
+`Text` currently has 162 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants and 19
 `ConfigRequirement` variants, all of them with a call site. You can check that yourself (the first command cuts the
 `pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so a signature written
 across lines cannot be missed - that is how `command_log_attachment_body` is written; that first command also lists
@@ -200,24 +202,24 @@ methods without a call site, and prints nothing when all is well; the last two c
 and since the `match` is exhaustive the names that appear in a language file are exactly the variants):
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 151
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 162
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
-grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 74
-grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 20
+grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
+grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 19
 ```
 
-The English implementation `src/text/en_us.rs` matches the Chinese one completely (151 methods, 27 command
-descriptions, 74 and 20 enum variants, not one missing: a missing method or `match` branch does not compile, a missing
+The English implementation `src/text/en_us.rs` matches the Chinese one completely (162 methods, 27 command
+descriptions, 77 and 19 enum variants, not one missing: a missing method or `match` branch does not compile, a missing
 command description fails a test). To confirm English really comes up, set `language = "ENGLISH"` in the config and
 run once; the unit test `text::tests::english_impl_is_english` asserts against the English implementation directly
 (it does not call `install`, because `OnceLock` is process-wide and installing would disturb other tests running in
 parallel).
 
 The wording follows the Chinese: to change a text, change `zh_cn.rs` first (the original of both content and layout),
-then align `en_us.rs` line by line, and finally sync the fallback in `commands/*.rs`, which is word for word the same
-as the English table. The English table has a second role, "the default language" (where `get()` falls back to, and
-the baseline of wording assertions), but that is about the mechanism, not about which file is the original.
+then align `en_us.rs` line by line, and finally sync the English copy in `commands/*.rs`, which is word for word the
+same as the English table. A test process may not install a language, so `get()` returns the English implementation
+and wording assertions use English as their baseline; this does not change the status of the Chinese original.
 
 ### Command metadata (command descriptions, option descriptions, the `/token` modal)
 

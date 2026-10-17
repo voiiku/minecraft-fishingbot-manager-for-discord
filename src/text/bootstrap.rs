@@ -1,4 +1,4 @@
-//! 配置加载完成前使用的英文提示：部署者看得到的引导文案，以及"配置还没装载就取用"这类内部不变量说明。
+//! 配置加载完成前使用的英文提示，以及进程入口调用顺序错误时的内部不变量说明。
 
 use super::Language;
 
@@ -7,6 +7,14 @@ use super::Language;
 /// 内部不变量消息，只有代码写错才会出现；那时没有语言可选，固定英文。
 pub const CONFIG_NOT_LOADED: &str = "config not loaded yet: call minecraft_fishingbot_manager_for_discord::config::Config::get_or_init() \
      at the process entry point before using any other API";
+
+/// 语言还没安装就取文案：进程入口没有走 `config::Config::get_or_init()`，属于调用顺序错误。
+pub const TEXT_NOT_INSTALLED: &str = "text language not installed yet: config::Config::get_or_init() installs it before any text is requested";
+
+/// `i18n.language` 的取值非法：此时还没有语言实现，报错固定英文（格式与其它配置项一致）。
+pub fn language_invalid(message: &str) -> String {
+    format!("config item i18n.language {message}")
+}
 
 /// 首次运行：模板已生成，提示改完再启动。
 pub fn config_template_created(path: &str) -> String {

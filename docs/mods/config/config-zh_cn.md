@@ -19,7 +19,7 @@
 3. 文件存在时读文本，`Config::from_toml_text` 先把 TOML 解析成值树、递归去掉所有字符串值两头的空白，再用
    Serde 的 `Deserialize` 实现直接映射成运行时 `Config`（这是全链路唯一一次清洗）；其中 `[paths]` 那三个键
    由 `Paths` 自己的反序列化实现展开成以 `base_dir` 为根的路径。这一步只负责格式解析与结构转换，不负责所有配置规则。
-4. `validate` 再检查字段取值、范围与运行环境（例如必填项、端口范围、目录和 JAR 是否存在）。
+4. `validate` 先校验 `i18n.language`：失败信息固定英文、不调用 `text::get()`；合法就安装语言，再检查其余字段的取值、范围与运行环境（例如必填项、端口范围、目录和 JAR 是否存在）。
 5. 任何一步失败都以"配置项 + 字段名 + 要求"的形式报错退出，不带着错值跑起来。
 6. 通过后写入 `OnceLock`，只在启动时读一次并常驻内存。运行中改配置文件不影响已经在跑的进程，想让新
    配置生效就重启进程。
@@ -170,8 +170,8 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 * `[i18n]`：`language` 必须是支持的语言取值 —— 也就是 FishingBot 自己 `i18n.Language` 的常量名
   （本项目实现 `ENGLISH` 与 `CHINESE_SIMPLIFIED`；上游还有的 `CHINESE_TRADITIONAL`、`FRENCH` 等会被拒，
   因为我们没写那些语言的文案）。可选值由 `text::Language` 一处定义，报错里会全部列出来。值要完全一致
-  （大小写敏感，跟 jar 的枚举名一样；前后空白会被忽略）。示例配置里写的是 `ENGLISH`（与代码里的默认语言
-  一致；给中文 jar 部署时改成 `CHINESE_SIMPLIFIED`），两种语言都编在二进制里，改这一行重启即生效。
+  （大小写敏感，跟 jar 的枚举名一样；前后空白会被忽略）。示例配置里写的是 `ENGLISH`（给中文 jar 部署时
+  改成 `CHINESE_SIMPLIFIED`），两种语言都编在二进制里，改这一行重启即生效。
 * `[log] debug` 决定"是否连框架的日志一起收"。`false`（默认）时本项目自己打的日志 `INFO` 起、第三方库
   （serenity、poise）`WARN` 起，因为它们按心跳节奏打 `INFO`，会淹没启动、指令、回复这些关键行；
   `true` 时两边都放到 `DEBUG`（即全部放开；比 `DEBUG` 更细的 `TRACE` 仍然拿不到）。
@@ -190,6 +190,9 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 
 校验按表拆开：`Config` 的每个字段（即每张 TOML 表）一个 `validate_<表名>` 函数，`validate()` 里只有这些
 调用，按启动时的先后顺序排下来；`[log]` 只有一个布尔开关 `debug`，没有校验函数。
+
+语言是第一个校验项：`validate()` 先调用 `validate_language`，它只解析 `i18n.language`，失败信息固定英文、
+不调用 `text::get()`；语言合法后立刻 `install()`，其余按表拆开的 `validate_<表名>` 才使用配置语言。
 
 只覆盖"写错就无法启动"的三类问题（见 `validate.rs` 的模块文档）：
 

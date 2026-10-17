@@ -65,7 +65,7 @@ src/
 │   ├── show.rs                     /show status|botconfig|mybots|allbots|admins
 │   └── general.rs                  /help /ping /checkserver /whoami
 ├── text.rs                     text entry: one language per process (`[i18n] language`) + command metadata rewrite
-├── text/                       en_us (the default language) / zh_cn (one to one, only literals differ)
+├── text/                       en_us (English) / zh_cn (one to one, only literals differ)
 │                               + bootstrap (English during bootstrap) / log_text / requirement (two enums with data)
 │                               + setup_failure (which text a setup failure uses, and whether it is permanent)
 ├── watchdog.rs                 gateway watchdog (submodules below)
@@ -215,8 +215,10 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`). Only text that is already written out in
   full uses a bare noun (`help`, `whoami`).
 * Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both mean "the one
-  copy in this process". A missing config `expect`s (that is an internal invariant); a missing language falls back to
-  the default (English, `Language::default()`). The process entry installs both once
+  copy in this process". A missing config `expect`s (that is an internal invariant); a missing language makes
+  `text::get()` panic in a production build (an entry-point ordering error) and return English in a test build.
+  `Language` has no `Default` implementation, and an unsupported `[i18n] language` fails startup validation and
+  exits. The process entry installs both once
   (`config::Config::get_or_init()` installs `text::install()` along the way). The watchdog takes a different route:
   `WATCHDOG` in `src/watchdog.rs` is a process-wide slot and consumers call `WATCHDOG.get_or_init()` once (the first
   call creates it from the config). Poise's event callbacks are plain fn pointers that cannot capture anything, so
@@ -225,9 +227,9 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   then constants, types and functions; the process entry (`lib.rs`, `main.rs`) follows it too, so "which submodules
   does this file have" is visible at the very top.
 * The line that becomes visible text is written in English: the first paragraph of a command's `///` and an option's
-  `#[description]` are the fallbacks the poise macro bakes into the binary (they only show when the language table is
-  missing an entry), so they are English and word for word identical to the sentence in `en_us.rs` (the default
-  language is English, and a test compares them word for word); the paragraphs after the first stay Chinese, details in
+  `#[description]` are the copies the poise macro bakes into the binary (they only show when the language table is
+  missing an entry), so they are English and word for word identical to the sentence in `en_us.rs` (a test compares
+  them word for word); the paragraphs after the first stay Chinese, details in
   [commands-en_us.md](../commands/commands-en_us.md) section 1.7.1.
 * One piece of text is cleaned once over its whole path: the command layer only reads values (argument names start
   with `raw_`) and whoever really needs a value cleans it (`clean_*`).

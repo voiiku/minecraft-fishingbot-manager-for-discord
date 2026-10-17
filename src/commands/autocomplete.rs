@@ -164,6 +164,13 @@ fn select_candidates(
 mod tests {
     use super::*;
 
+    /// 测试二进制里的语言是进程级单例：需要文案的测试先装一次英语。
+    fn install_english_text() {
+        minecraft_fishingbot_manager_for_discord::text::install(
+            minecraft_fishingbot_manager_for_discord::text::Language::English,
+        );
+    }
+
     /// 测试用候选上限（真实上限来自 `runtime.max_autocomplete_choices`）。
     const TEST_MAX_CHOICES: usize = 25;
 
@@ -193,6 +200,7 @@ mod tests {
 
     #[test]
     fn scopes_filter_states_and_keep_running_candidates_first() {
+        install_english_text();
         let candidates = sample_candidates();
 
         assert_eq!(
@@ -213,6 +221,7 @@ mod tests {
 
     #[test]
     fn prefix_matching_is_case_insensitive_and_empty_prefix_matches_all() {
+        install_english_text();
         let candidates = sample_candidates();
         assert_eq!(
             values(&candidates, "DU", BotNameScope::AnyState),
@@ -224,6 +233,7 @@ mod tests {
 
     #[test]
     fn any_state_display_name_marks_state_but_value_stays_plain() {
+        install_english_text();
         let pairs = select_candidates(
             &sample_candidates(),
             "",
@@ -256,6 +266,7 @@ mod tests {
 
     #[test]
     fn candidates_are_capped_at_the_platform_limit() {
+        install_english_text();
         let many: Vec<(String, bool, bool)> = (0..TEST_MAX_CHOICES + 10)
             .map(|index| (format!("bot{index:02}"), index % 3 == 0, index % 3 == 1))
             .collect();

@@ -8,6 +8,7 @@ use minecraft_fishingbot_manager_for_discord::{Watchdog, handle_whoami};
 /// `/whoami` ：任何调用者都能拿到自己的用户 ID（权限要求是 `Everyone`）。
 #[test]
 fn whoami_reply_contains_the_caller_id() {
+    text::install(Language::English);
     let caller_id = 123_456_789_012_345_678u64;
 
     let reply = handle_whoami(caller_id);

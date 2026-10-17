@@ -18,12 +18,11 @@ pub use setup_failure::{failure_is_permanent, setup_failure_log_text};
 use std::sync::OnceLock;
 
 /// 支持的语言；名称与 FishingBot 的语言常量一致。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     /// 简体中文，对应 JAR 的 `CHINESE_SIMPLIFIED`。
     ChineseSimplified,
-    /// 英语，也是默认语言。
-    #[default]
+    /// 英语。
     English,
 }
 
@@ -473,19 +472,26 @@ pub fn all_languages() -> &'static [&'static dyn Text] {
 
 /// 当前语言的文案（进程入口在 [`crate::config::Config::get_or_init`] 里用 [`install`] 选定一次）。
 ///
-/// 没装过语言时回落到默认语言（英语）：单元测试因此不必每个都装一次语言
-///（生产路径上 `install()` 一定先跑过），而现有测试断言里的英文正是以默认语言为基准的。
-///
-/// 两个分支在这里写全（而不是 `unwrap_or`）："回落成哪种语言"要一眼能看见，
-/// 而该语言由 `Language::default()` 单点决定（`Language::implementation()` 是"语言 → 实现"
-/// 的唯一一处，`install()` 也从那里取，它是私有的，所以这里只写代码体不挂链接）。
+/// 语言没有安装时直接 panic：这是进程入口的调用顺序错误，不存在语言回落。
+/// 单元测试进程通常不安装语言，测试构建因此单独返回英语实现（见 `uninstalled_language`）。
 pub fn get() -> &'static dyn Text {
     match INSTALLED.get() {
-        // 装过：进程内那一份（`install` 只生效第一次）。
         Some(i18n_text) => *i18n_text,
-        // 没装过：默认语言（英语）。
-        None => Language::default().implementation(),
+        None => uninstalled_language(),
     }
+}
+
+/// 未安装语言时的实现：生产构建 panic，测试构建返回英语。
+#[cfg(not(test))]
+fn uninstalled_language() -> &'static dyn Text {
+    panic!("{}", bootstrap::TEXT_NOT_INSTALLED)
+}
+
+/// 未安装语言时的实现：生产构建 panic，测试构建返回英语。
+#[cfg(test)]
+fn uninstalled_language() -> &'static dyn Text {
+    // 测试进程通常不装语言；固定用英语，避免每个测试都调用 `install()`。
+    &en_us::EN_US
 }
 
 /// 选定语言；进程内只生效第一次（与"配置只在启动时读一次"一致）。
@@ -616,12 +622,5 @@ mod tests {
                 "name() 要写回 supported_names() 里的同一个取值"
             );
         }
-    }
-
-    /// 没装过语言时 `get()` 返回默认英语。
-    #[test]
-    fn get_falls_back_to_the_default_language() {
-        assert_eq!(Language::default(), Language::English);
-        assert_eq!(get().report_succeeded_label(), "[Success]");
     }
 }

@@ -1,4 +1,7 @@
 //! 启动配置校验：检查必填字段、取值范围与命令安全相关的字符串。
+//!
+//! [`validate`] 的第一个调用是语言校验：此时还没有文案实现，语言错误固定英文；语言合法后立刻安装，
+//! 其余校验的错误才能按配置语言格式化。
 
 use crate::text;
 
@@ -12,15 +15,24 @@ use super::schema::{
 /// shell 命令里未加引号的内联取值禁止出现的字符（`runtime.java_opts`）。
 const SHELL_UNSAFE: &[char] = &['\'', '"', '`', '$', ';', '&', '|', '<', '>', '\n', '\r'];
 
-/// 校验整份配置：每张表一个校验函数，这里只按顺序调用它们。
+/// 校验语言名并在合法后安装语言；失败信息固定英文，不使用 `text::get()`。
+fn validate_i18n(i18n: &I18nConfig) -> Result<(), String> {
+    let language = text::Language::from_name(&i18n.language)
+        .map_err(|message| text::bootstrap::language_invalid(&message))?;
+    text::install(language);
+
+    Ok(())
+}
+
+/// 校验整份配置：语言第一，安装后再按表校验其余字段。
 pub(super) fn validate(config: &Config) -> Result<(), String> {
+    validate_i18n(&config.i18n)?;
     validate_discord(&config.discord)?;
     validate_paths(&config.paths)?;
     validate_fishingbot(&config.fishingbot)?;
     validate_admins(&config.admins)?;
     validate_keywords(&config.keywords)?;
     validate_command_echo(&config.command_echo)?;
-    validate_i18n(&config.i18n)?;
     validate_runtime(&config.runtime)?;
     validate_startup_queue(&config.startup_queue)?;
     validate_timing(&config.timing)?;
@@ -102,18 +114,6 @@ fn validate_discord(discord: &DiscordConfig) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-/// 检查语言名是否受支持。
-fn validate_i18n(i18n: &I18nConfig) -> Result<(), String> {
-    crate::text::Language::from_name(&i18n.language)
-        .map(|_| ())
-        .map_err(|message| {
-            invalid(
-                "i18n.language",
-                text::ConfigRequirement::LanguageUnknown { message: &message },
-            )
-        })
 }
 
 /// 检查管理员 ID 与显示名称；名单可以为空。
@@ -474,7 +474,7 @@ mod tests {
         (dir, text)
     }
 
-    /// 跑一遍 `load_from` 的核心流程：解析 + 校验。
+    /// 跑一遍 `load_from` 的核心流程：解析 + 校验（含语言校验与安装）。
     fn load_text(text: &str) -> Result<Config, String> {
         let config = Config::from_toml_text(text)?;
         validate(&config)?;
@@ -521,7 +521,7 @@ mod tests {
         let err = load_text(&text).expect_err("目录不存在应当报错");
 
         assert!(err.contains("paths.base_dir"), "报错应指出字段: {err}");
-        // 措辞断言钉默认语言（英语）的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
+        // 措辞断言钉英语实现的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
         assert!(
             err.contains("does not exist or is not a directory"),
             "报错应说明原因: {err}"
@@ -554,7 +554,7 @@ mod tests {
             err.contains("command_echo.unpause_echo"),
             "报错应指出字段: {err}"
         );
-        // 措辞断言钉默认语言（英语）的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
+        // 措辞断言钉英语实现的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
         assert!(
             err.contains("must not be equal to or overlap"),
             "报错应说明原因: {err}"
@@ -680,7 +680,7 @@ mod tests {
 
         let err = validate_admins(&admins).expect_err("非数字键应当报错");
 
-        // 措辞断言钉默认语言（英语）的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
+        // 措辞断言钉英语实现的片段（见 `docs/mods/i18n/i18n-zh_cn.md`）。
         assert!(
             err.contains("is not a Discord user ID"),
             "报错应说明键要是 Discord 用户 ID: {err}"

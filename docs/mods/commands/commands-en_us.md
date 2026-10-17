@@ -107,8 +107,8 @@ the closure has to be `Send + 'static` (it must not borrow `ctx`), so every comm
   neither set visible. The decision reads the creation time out of the command Ids, so no state file is involved.
 * A command description comes from the first paragraph of the function's doc comment (poise's rule: the macro does not
   accept `description = "..."`, only `description_localized`). That first paragraph is written in English (the same
-  sentence as in the default language table) and the details go into the paragraphs after it. Why, how the length is
-  counted and what the fallback language is: section 1.7.
+  sentence as in the `en_us.rs` table) and the details go into the paragraphs after it. Why, how the length is
+  counted and why the English copy is needed: section 1.7.
 * Context aliases: `Context<'a>` (ordinary commands) and `ApplicationContext<'a>` (commands that need a Modal, since a
   Modal only exists in the context of slash commands).
 * Only `slash_command` is used; there is no `!prefix` command, because that needs the `MESSAGE_CONTENT` privileged
@@ -155,22 +155,22 @@ The texts themselves live in the language files (`COMMAND_TEXTS` in `src/text/zh
 `name_path` must match the command name here word for word (a subcommand is written as `"bot add"`). Adding or changing
 a command means updating both languages, and the overwrite test below lists whatever is missing.
 
-#### 1.7.1 What the copy inside the macro is: the English fallback
+#### 1.7.1 What the copy inside the macro is: the English copy
 
-The first paragraph of the `///` and an option's `#[description = "..."]` are the fallbacks that only show when the
+The first paragraph of the `///` and an option's `#[description = "..."]` are the copy that only shows when the
 table is missing an entry (the macro only accepts literals and they cannot be replaced). The rule is to always write
-them in English, word for word identical to the sentence in the `en_us.rs` table, so the fallback can never be in the
-other language and no second copy has to be maintained (that English sentence is the one in the default language table;
-the default language is in [i18n-en_us.md](../i18n/i18n-en_us.md) section 4).
+them in English, word for word identical to the sentence in the `en_us.rs` table, so a missing entry can never be in
+the other language and no second copy has to be maintained (that English sentence is the one in the `en_us.rs` table).
 
-* Why English: the default language is English (`Language::default()`), and when the fallback matches it a missing
+* Why English: the macro copy must match the `en_us.rs` table; a test process that installs no language also gets
+  the English implementation from `text::get()` (see [i18n-en_us.md section 4](../i18n/i18n-en_us.md)), so a missing
   entry cannot mix languages.
 * The paragraphs after the first stay Chinese: they are notes for the maintainer and are not sent to users (poise only
   treats the first paragraph as the `description`; the rest become the local `Command::help_text`).
 * Three tests pin this down (all in `src/commands.rs`):
   * `every_command_and_option_has_text_in_every_language`: the table is complete (anything missing is listed).
-  * `fallback_texts_match_the_default_language_table`: the fallback in the macro equals the sentence in the default
-    language table (word for word).
+  * `macro_texts_match_the_english_table`: the macro copy equals the sentence in the `en_us.rs` table (word for
+    word).
   * `every_description_fits_discords_100_character_limit`: a description is no longer than 100 characters (Discord's
     limit; option descriptions have no compile-time check).
 

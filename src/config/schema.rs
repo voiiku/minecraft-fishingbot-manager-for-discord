@@ -420,7 +420,7 @@ port = 25565
         let err = read_paths("fishingbots", "FishingBot.jar", "conf.json")
             .expect_err("相对 base_dir 应当报错");
 
-        // 措辞断言钉默认语言（英语）的片段（默认语言是 `Language::default()`，见 `docs/mods/i18n/i18n-zh_cn.md`）。
+        // 措辞断言钉英语实现的片段（测试进程未安装语言时 `text::get()` 返回英语，见 `docs/mods/i18n/i18n-zh_cn.md`）。
         assert!(
             err.contains("absolute path"),
             "报错应说明要写绝对路径: {err}"
@@ -438,7 +438,7 @@ port = 25565
             "conf.json",
         )
         .expect_err("绝对 jar 应当报错");
-        // 措辞断言同 `relative_base_dir_is_rejected`：钉默认语言（英语）的片段。
+        // 措辞断言同 `relative_base_dir_is_rejected`：钉英语实现的片段。
         assert!(
             err.contains("relative path"),
             "报错应说明要写相对路径: {err}"

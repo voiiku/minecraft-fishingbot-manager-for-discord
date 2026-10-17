@@ -22,8 +22,9 @@
    (the only cleanup in the whole chain). The three keys of `[paths]` are expanded into paths rooted at `base_dir` by
    `Paths`'s own `Deserialize` implementation. This step handles format parsing and structure conversion only, not every
    configuration rule.
-4. `validate` checks field values, ranges and the runtime environment (for example required values, port ranges, and
-   whether the configured directory and JAR exist).
+4. `validate` first checks `i18n.language`: the error text is fixed English and does not call `text::get()`; when
+   valid, the language is installed and the remaining fields are checked (values, ranges and the runtime environment,
+   for example required values, port ranges, and whether the configured directory and JAR exist).
 5. Any failing step exits with an error shaped as "config entry + field name + requirement"; the process never runs
    with a bad value.
 6. On success the config is written into a `OnceLock`: read once at startup, kept in memory. Editing the config file
@@ -221,9 +222,9 @@ matching language too.
   (this project implements `ENGLISH` and `CHINESE_SIMPLIFIED`; upstream values such as `CHINESE_TRADITIONAL` and
   `FRENCH` are rejected, because we have not written those texts). The valid values are defined in one place,
   `text::Language`, and the error lists them all. The value must match exactly (case sensitive, like the jar's enum
-  names; surrounding whitespace is ignored). The example config ships `ENGLISH` (the same as the default language in
-  code; change it to `CHINESE_SIMPLIFIED` for a Chinese jar deployment); both languages are compiled into the binary,
-  so changing this line and restarting is enough.
+  names; surrounding whitespace is ignored). The example config ships `ENGLISH` (change it to `CHINESE_SIMPLIFIED` for
+  a Chinese jar deployment); both languages are compiled into the binary, so changing this line and restarting is
+  enough.
 * `[log] debug` decides "whether the framework logs are collected too". With `false` (the default) our own records
   start at `INFO` and third-party crates (serenity, poise) at `WARN`, because they print `INFO` on every heartbeat and
   would drown the important lines (startup, commands, replies); with `true` both go down to `DEBUG` (everything is
@@ -247,6 +248,10 @@ matching language too.
 Validation is split per table: every field of `Config` (that is, every TOML table) gets one `validate_<table>`
 function, and `validate()` holds nothing but those calls, in start-up order; `[log]` only has the boolean `debug`
 switch and no validator.
+
+The language is checked first: `validate()` calls `validate_language` before anything else. It only parses
+`i18n.language`; its error text is fixed English and does not call `text::get()`. Once valid the language is installed,
+and the per-table `validate_<table>` functions then use the configured language.
 
 It covers only the three kinds of problem that make the program fail to run (see the module docs of `validate.rs`):
 

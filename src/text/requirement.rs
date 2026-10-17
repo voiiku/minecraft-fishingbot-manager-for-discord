@@ -41,8 +41,4 @@ pub enum ConfigRequirement<'a> {
     OneOf(&'a [&'a str]),
     /// `fishingbot.default_protocol` 必须写 `AUTOMATIC` 或版本号（形如 `1.20.4`）。
     McVersionOrAutomatic,
-    /// `[i18n] language` 写了个不认识的取值。
-    ///
-    /// 语言名无效；错误文案由 [`crate::text::Language::from_name`] 生成。
-    LanguageUnknown { message: &'a str },
 }

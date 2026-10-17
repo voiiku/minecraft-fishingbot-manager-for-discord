@@ -1255,8 +1255,5 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
         ConfigRequirement::McVersionOrAutomatic => {
             "must be a version string like 1.20.4, or AUTOMATIC to detect it".to_string()
         }
-        // 这句话由 `Language::from_name` 生成、固定英文（说"语言"的消息在语言还没定的时候没法翻译），
-        // 所以两种语言都原样透传，不再包一层。
-        ConfigRequirement::LanguageUnknown { message } => message.to_string(),
     }
 }

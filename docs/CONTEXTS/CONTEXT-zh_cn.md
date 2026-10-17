@@ -79,7 +79,7 @@
    几项额外带一行 `# CHINESE_SIMPLIFIED:` 提示，见 [docs/mods/i18n/i18n-zh_cn.md 第 1 节](../mods/i18n/i18n-zh_cn.md)。例外：会变成可见文案的那一
    行写英文，即命令 `///` 的第一段与
    选项的 `#[description]`，它们会被 poise 宏当成要发给 Discord 的说明（宏只认字面量、运行期换不掉），
-   所以这两处写英文，且与 `en_us.rs` 表里那句逐字相同（兜底语言等于默认语言，见
+   所以这两处写英文，且与 `en_us.rs` 表里那句逐字相同（缺项时的英文副本，不是语言回落，见
    [docs/mods/commands/commands-zh_cn.md 第 8.1 节](../mods/commands/commands-zh_cn.md)）；第一段之后的段落仍是中文（只给维护者看，不会发给
    用户）。凡是涉及谁校验、谁负责的地方，必须点名是哪一层（命令层、指令入口层、业务层、utils 原语），
    例如"权限在业务层校验：本函数由 [`crate::handle_all_bots_control`] 调用，它先判
@@ -242,9 +242,10 @@
   `/unpause` 的回显则由配置 `[command_echo]` 提供（补丁构建才有那两句，见 §2 第一条）。唯一固定英文的
   是配置还没读出来时的那些提示（`text::bootstrap`：配置文件
   读不出来或解析不了、生成模板、找到已存在的配置文件、可执行文件路径、`language` 写了个不认识的取值，还有 `config::Config::get()` 的
-  `CONFIG_NOT_LOADED` 不变量消息；它们都是英文），因为那时无语言可选。语言表的兜底（`text::get()` 没装过
-  语言时）用的是默认语言，也就是英语（`Language::default()` 一处定义；示例配置里写的 `language = "ENGLISH"` 与它一致，中文 jar
-  就改成 `CHINESE_SIMPLIFIED`，两者互不影响）。
+  `CONFIG_NOT_LOADED` 与语言未安装时的 `TEXT_NOT_INSTALLED` 不变量消息；它们都是英文），因为那时语言还没确定。`text::get()` 未安装语言时，
+  生产构建直接 panic（进程入口的调用顺序错误）；测试构建固定返回英语。`Language` 不再实现
+  `Default`，配置里的 `language` 不受支持时启动校验直接报错退出。示例配置写 `language = "ENGLISH"` 只决定新部署运行哪种语言，中文 jar 改成
+  `CHINESE_SIMPLIFIED`。
   措辞以中文为准：改文案先改 `zh_cn.rs`（内容与排版的原稿），再把 `en_us.rs` 逐条对齐，最后同步
   `commands/*.rs` 里那份与英文表逐字相同的兜底（顺序也写在两个语言文件的模块头里）。
   排版约定：面向用户与部署者的文案符号随语言（中文全角、英文半角），句尾不留句号（叹号保留）；补充说明
@@ -350,7 +351,7 @@ src/process_log.rs          程序日志：终端 + <部署目录>/logs/时间�
 src/config.rs               外置配置：运行时结构 Config 与 Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
 src/config/                 schema / parse / validate / template
 src/text.rs                 文案入口：一个进程一种语言（`[i18n] language` 启动时选定一次）
-src/text/                   en_us（默认语言）/ zh_cn（两份一一对应，只换字面量）
+src/text/                   en_us（英语）/ zh_cn（两份一一对应，只换字面量）
                             + bootstrap（引导期英文）/ log_text / requirement（数据型枚举）
                             + setup_failure（装配失败：按成因选文案 + 判是不是永久错）
 src/bot_control/            单机器人业务（一指令一文件）
@@ -439,7 +440,7 @@ src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_
 
 **代码与文案**
 
-* `src/text.rs`：删除 `add_and_login_messages_are_exact_in_both_languages`（原 593–676 行）及其残留注释，共 -89 行；保留的文本测试均为结构性（语言名解析、英文实现、重连前后缀非空且中英不同、`log_text` 拼装、语言名可解析、未安装时回落默认语言）。
+* `src/text.rs`：删除 `add_and_login_messages_are_exact_in_both_languages`（原 593–676 行）及其残留注释，共 -89 行；保留的文本测试均为结构性（语言名解析、英文实现、重连前后缀非空且中英不同、`log_text` 拼装、语言名可解析、未安装时返回英语实现）。
 * `src/text/zh_cn.rs`（9 处）：156（"带斜杠是指令/也不用加引号" → "为指令/无需加引号"）、392（`错误:` 补空格、"JAR 参数不正确"）、655（"按当前分批设置，预计最长耗时…等待启动结果的超时时间"）、798（"微软对频繁登录限流"、`(` 前补空格）、807（全角括号改半角）、812（"重启会登录失败，因此不作改动 (如需停止请使用 /stop)"）、939（`服务器 (` 补空格）、1031（"启动复核未通过"）、1135（全角冒号改 `:`）。
 * `src/text/en_us.rs`（6 处）：407（`Common causes:` 直陈罗列）、844 与 1092（`closed as unconfirmed` → `marked unconfirmed`）、850（`Microsoft throttles frequent logins, or because it ran out of memory`）、856（`no token file, so … ; left unchanged`）、1099（`did not pass the re-check`）。
 * `/show status` 的简化已由用户提交为 `093d1a4`：删 `RunningBotInfo`、`status_table_header()`、`into_row()`，新增 `all_running_bot_status_rows()` 与私有 `status_row()`，表头在 `show/status.rs` 就地拼。

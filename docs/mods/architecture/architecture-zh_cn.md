@@ -62,7 +62,7 @@ src/
 │   ├── show.rs                     /show status|botconfig|mybots|allbots|admins
 │   └── general.rs                  /help /ping /checkserver /whoami
 ├── text.rs                     文案入口：一个进程一种语言（`[i18n] language`）+ 指令元数据改写
-├── text/                       en_us（默认语言）/ zh_cn（两份一一对应，只换字面量）
+├── text/                       en_us（英语）/ zh_cn（两份一一对应，只换字面量）
 │                               + bootstrap（引导期英文）/ log_text / requirement（两个数据型枚举）
 │                               + setup_failure（装配失败归到哪条文案、算不算永久错）
 ├── watchdog.rs                 网关看门狗（子模块见下）
@@ -194,15 +194,16 @@ src/
   `checkserver_report`）；当附件发出去的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。只有
   整段已经写好的文本用裸名词（`help`、`whoami`）。
 * 全局单例访问器同名：配置 `config::Config::get()`、文案 `text::get()`，都表示"取进程内那一份"。配置没装就
-  `expect` panic（那是内部不变量）；文案没装则回落到默认语言（英语，`Language::default()`）。两者由进程入口
+  `expect` panic（那是内部不变量）；文案没装时生产构建 panic（入口顺序错误），测试构建固定返回英语。
+  `Language` 不实现 `Default`，`[i18n] language` 不受支持时启动校验直接报错退出。两者由进程入口
   各装一次（`config::Config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs`
   的 `WATCHDOG` 是进程级槽位，使用方调一次 `WATCHDOG.get_or_init()`（首次按配置创建）；事件回调只收函数指针、
   捕获不了闭包，因此也从同一入口取同一份，其余方法都吃 `&self`。
 * 文件内的顺序固定：模块文档（`//!`）、`mod` 声明、`use`、对外转出（`pub use`）、常量与类型与函数；
   进程入口（`lib.rs`、`main.rs`）也照此，于是"这个文件里有哪些子模块"在文件最上面就能看到。
 * 会变成可见文案的那一行写英文：命令的 `///` 第一段与选项的 `#[description]` 是 poise 宏烘进二进制的
-  兜底（语言表缺项时才会露出来），所以写英文，且与 `en_us.rs` 表里那句逐字相同（默认语言是英语，有
-  测试逐字比对）；第一段之后的段落仍是中文，细节见 [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-宏里那一份算什么英文兜底)。
+  兜底（语言表缺项时才会露出来），所以写英文，且与 `en_us.rs` 表里那句逐字相同（英文表是其中一份实现，有
+  测试逐字比对）；第一段之后的段落仍是中文，细节见 [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-宏里那一份算什么英文副本)。
 * 同一份文本全链路只清洗一次：命令层只取值（参数名以 `raw_` 起），谁真正要用谁清洗（`clean_*`）。
 * 注释里的记号一眼可辨：`?` 开头是待实跑确认的开放问题（确认后删记号、留结论）；`!` 开头是待填但有
   回落路径；`⚠️` 用在语言表里提醒硬约定。

@@ -116,9 +116,8 @@ impl Config {
             Err(message) => Self::exit_on_error(message),
         };
 
-        // 解析成功后，先安装语言，然后由 validate 校验各个字段的合法性。
-        text::install(text::Language::from_name(&config.i18n.language).unwrap_or_default());
-
+        // 解析成功后在 validate 里先校验语言（不使用 text::get），语言合法后由它安装，
+        // 再校验其余字段；非法语言在这里以报错文案返回，随后打印到终端并以 1 退出。
         if let Err(message) = validate::validate(&config) {
             Self::exit_on_error(message);
         }

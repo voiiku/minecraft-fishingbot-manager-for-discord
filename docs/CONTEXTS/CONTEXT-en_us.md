@@ -101,7 +101,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    visible text are written in English, namely the first paragraph of a command's `///` and an option's
    `#[description]`, because the poise macro treats them as the description to send to Discord (the macro only accepts
    literals and cannot swap them at run time), so those two places are in English and match the line in the `en_us.rs`
-   table word for word (the fallback language equals the default language, see
+   table word for word (the English copy used when a table entry is missing, not a language fallback, see
    [docs/mods/commands/commands-en_us.md section 8.1](../mods/commands/commands-en_us.md)); the paragraphs after the
    first one stay in Chinese (for maintainers only, never sent to users). Wherever it matters who validates something
    or who is responsible, name the layer explicitly (command layer, command entry layer, business layer, utils
@@ -332,13 +332,16 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   `[command_echo]` configuration (only the patched build has those two lines, see the first item of section 2). The only
   fixed English is the hints printed before the configuration has been read (`text::bootstrap`: the configuration file
   cannot be read or parsed, template generation, an existing configuration file having been found, the executable path, an unknown `language` value, and the
-  `CONFIG_NOT_LOADED` invariant message of `config::Config::get()`; all of them are English), because no language can be
-  chosen at that point. When `text::get()` has no
-  language installed, the fallback is the default language, which is English (defined in one place,
-  `Language::default()`; the `language = "ENGLISH"` written in the example configuration matches it, and a Chinese
-  deployment changes it to `CHINESE_SIMPLIFIED` - the two do not affect each other).
+  `CONFIG_NOT_LOADED` invariant message of `config::Config::get()` and the `TEXT_NOT_INSTALLED` invariant message
+  when text is requested before a language is installed; all of them are English), because no language has
+  been chosen at that point. When `text::get()` runs before a language is installed, a production build panics because
+  that is an entry-point ordering error; a test build returns the English implementation so tests do not each have to
+  install one. `Language` has no `Default` implementation, and an unsupported `language` value fails startup validation
+  and exits: there is no language fallback. The example configuration's
+  `language = "ENGLISH"` only decides which language a new deployment runs in; a Chinese deployment changes it to
+  `CHINESE_SIMPLIFIED`.
   The Chinese wording is authoritative: to change a text, change `zh_cn.rs` first (the original of both content and
-  layout), then align `en_us.rs` item by item, and finally sync the fallback in `commands/*.rs` that is word-for-word
+  layout), then align `en_us.rs` item by item, and finally sync the English copy in `commands/*.rs` that is word-for-word
   identical to the English table (the order is also written in the module headers of the two language files).
   Layout conventions: the symbols of user- and deployer-facing texts follow the language (full width in Chinese, half
   width in English) and no full stop is left at the end of a sentence (exclamation marks stay); extra explanations use
@@ -465,7 +468,7 @@ src/process_log.rs          program log: terminal + <deployment dir>/logs/<times
 src/config.rs               external configuration: the runtime Config plus Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
 src/config/                 schema / parse / validate / template
 src/text.rs                 text entry: one language per process (chosen once at start-up from `[i18n] language`)
-src/text/                   en_us (default language) / zh_cn (the two correspond one to one, only literals differ)
+src/text/                   en_us (English) / zh_cn (the two correspond one to one, only literals differ)
                             + bootstrap (English during bootstrap) / log_text / requirement (data-style enum)
                             + setup_failure (setup failure: pick the text by cause + decide whether it is permanent)
 src/bot_control/            single-bot business (one file per command)

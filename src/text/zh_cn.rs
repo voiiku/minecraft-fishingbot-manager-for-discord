@@ -1169,7 +1169,5 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
         ConfigRequirement::McVersionOrAutomatic => {
             "必须写 AUTOMATIC (自动探测) 或版本号 (例如 1.20.4)".to_string()
         }
-
-        ConfigRequirement::LanguageUnknown { message } => message.to_string(),
     }
 }

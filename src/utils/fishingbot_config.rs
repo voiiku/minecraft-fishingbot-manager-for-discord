@@ -112,7 +112,7 @@ fn fishingbot_config_json(
     fishingbot: &FishingBotConfig,
     language_name: &str,
 ) -> Result<String, String> {
-    let language = Language::from_name(language_name).unwrap_or_default();
+    let language = Language::from_name(language_name)?;
     // 将模板文本转化为可解析的结构体
     let mut fishingbot_config: Value =
         serde_json::from_str(FISHINGBOT_CONFIG_TEMPLATE).map_err(|e| {

@@ -264,6 +264,13 @@ async fn say_final_report(ctx: Context<'_>, report: &str) -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    /// 测试二进制里的语言是进程级单例：需要文案的测试先装一次英语。
+    fn install_english_text() {
+        minecraft_fishingbot_manager_for_discord::text::install(
+            minecraft_fishingbot_manager_for_discord::text::Language::English,
+        );
+    }
+
     /// 把指令树摊平成 `(指令路径, 选项名列表)`：路径形如 `"start"`、`"bot add"`。
     fn command_paths(
         commands: &[poise::Command<Data, Error>],
@@ -294,8 +301,8 @@ mod tests {
     /// 验证注册前已替换为语言表中的说明。
     #[test]
     fn command_descriptions_come_from_the_language_table() {
+        install_english_text();
         let commands = all_commands();
-        // 未安装语言时使用英文默认值。
         let command_texts = minecraft_fishingbot_manager_for_discord::text::get().command_texts();
 
         let start = commands
@@ -378,14 +385,15 @@ mod tests {
         collected
     }
 
-    /// 宏里的兜底文案与默认语言（英语）表里那句逐字相同。
+    /// 宏里的文案副本与 `en_us.rs` 表里那句逐字相同。
     ///
-    /// `///` 首段与 `#[description]` 是 poise 宏在编译期烘进去的兜底：语言表里缺项时会真的注册到
-    /// Discord。让兜底等于默认语言的文案，兜底就不可能"是另一种语言"（默认语言见 `Language::default()`）；
-    /// 这条同时把这份重复钉住，改了 `en_us.rs` 那句却忘了改宏里的，这里会红。
-    /// 测试进程没装过语言 → `text::get()` 就是默认语言，所以本地化后的那一份就是英语。
+    /// `///` 首段与 `#[description]` 是 poise 宏在编译期烘进去的副本：语言表里缺项时会真的注册到
+    /// Discord。副本等于英文表，缺项时就不可能"是另一种语言"；这条同时把这份重复钉住，改了
+    /// `en_us.rs` 那句却忘了改宏里的，这里会红。
+    /// 测试先装英语 → `text::get()` 返回英语实现，所以本地化后的那一份就是英语。
     #[test]
-    fn fallback_texts_match_the_default_language_table() {
+    fn macro_texts_match_the_english_table() {
+        install_english_text();
         let declared = descriptions(&declared_commands(), "");
         let localized = descriptions(&all_commands(), "");
 
@@ -394,7 +402,7 @@ mod tests {
             assert_eq!(declared_command.0, localized_command.0, "指令路径应当一样");
             assert_eq!(
                 declared_command.1, localized_command.1,
-                "指令 {} 的兜底文案应等于默认语言表里那句",
+                "指令 {} 的文案副本应等于英文表里那句",
                 declared_command.0
             );
             assert_eq!(
@@ -440,6 +448,7 @@ mod tests {
     /// 直接读两种语言的表、不调 `install`（`OnceLock` 是进程级的，会污染并发跑的其它用例）。
     #[test]
     fn every_command_and_option_has_text_in_every_language() {
+        install_english_text();
         let paths = command_paths(&all_commands(), "");
 
         let mut missing: Vec<String> = Vec::new();
