@@ -1,7 +1,7 @@
 name: Release
 run-name: Release ${{ github.ref_name }}
 
-# 推 v* 标签时编译并发布。
+# 推 v* 标签时先用 Test 测试，通过后再编译发布。
 on:
   push:
     tags:
@@ -15,15 +15,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   release:
     # 当前只支持 64 位 Linux。
     name: Build and release (Linux x86_64 musl)
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
 
-      # 检验标签版本与 Cargo.toml 中一致。
+      # 检验标签版本是否与 Cargo.toml 中一致。
       - name: Validate release tag version
         id: version
         shell: bash
@@ -53,7 +57,7 @@ jobs:
       - name: Install musl linker
         run: sudo apt-get update && sudo apt-get install --yes musl-tools
 
-      # 版本要与 ci.yml 里的一致，否则两边生成的第三方许可证清单会有差异。
+      # 版本与 test.yml 中的一致。
       - name: Install cargo-about
         uses: taiki-e/install-action@v2
         with:
@@ -68,7 +72,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
-      # 复制到工作区根目录，并改名为带版本、系统、架构与 ABI 的可执行文件。
+      # 复制到工作区根目录，并改名可执行文件。
       - name: Rename release binary
         shell: bash
         env:

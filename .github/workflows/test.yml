@@ -1,17 +1,7 @@
-name: CI
+name: Test
 
 on:
-  push:
-    branches:
-      - '**'
-  pull_request:
-    branches:
-      - '**'
-
-# 同一分支上 push 会取消正在运行的上一次
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
@@ -44,7 +34,6 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      # 版本必须和 release.yml 中一致，否则两边生成的第三方许可证清单会有差异。
       - name: Install cargo-about
         uses: taiki-e/install-action@v2
         with:
@@ -63,8 +52,7 @@ jobs:
           cargo about generate about.hbs -o /tmp/THIRD-PARTY-NOTICES.html
 
           if ! diff <(normalize THIRD-PARTY-NOTICES.html) <(normalize /tmp/THIRD-PARTY-NOTICES.html); then
-            echo "::error::THIRD-PARTY-NOTICES.html 与当前 Cargo.lock 不一致：本地跑 cargo notices 后提交这个文件。" >&2
+            echo "::error::THIRD-PARTY-NOTICES.html is inconsistent with the current Cargo.lock" >&2
             exit 1
           fi
-
-          echo "THIRD-PARTY-NOTICES.html 与当前依赖一致。"
+          "

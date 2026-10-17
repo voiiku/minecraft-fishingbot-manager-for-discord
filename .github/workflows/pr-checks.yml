@@ -1,0 +1,19 @@
+name: PR checks
+
+# 只在 PR 上检查。
+on:
+  pull_request:
+    branches:
+      - '**'
+
+# 同一个 PR 更新时取消上一次
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
