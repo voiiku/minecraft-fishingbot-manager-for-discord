@@ -1,10 +1,12 @@
-# FishingBot 魔改版：指令与消息完整文档
+# FishingBot：指令与消息参考
 [English](BOT_COMMANDS_AND_MESSAGES-en_us.md) | **简体中文**
 
-> 适用版本：`systems.kinau:FishingBot:2.13.15`（本仓库魔改版）
+> 适用版本：`systems.kinau:FishingBot:2.13.15`
 > 本文档面向“把 FishingBot 当作子进程/服务来对接”的使用者，重点是：
 > 1. 机器人能接收的全部指令（含触发方式与注意事项）。
 > 2. 机器人输出的全部消息（中文 + 英文原文），因为其它项目依赖这些消息做判断。
+
+不同版本或构建提供的指令可能略有差异（例如 `/pause`、`/unpause`），请以实际使用的 JAR 为准。
 
 本文所有消息文案均取自源码与语言文件：
 
@@ -96,7 +98,7 @@
 4. 返回值语义：全部内置指令 `return 0`；`dispatchCommand` 在返回 `0` 时视为“已执行”（返回 `true`），抛 `CommandSyntaxException` 时视为未处理（返回 `false`）。
 5. 无权限系统：任何能在服务器聊天里发出 `机器人名, 指令` 的玩家都能操控机器人，无白名单/管理员校验。放公共服务器时请自行限制。
 
-### 2.3 指令表（全部内置指令）
+### 2.3 指令表
 
 * `help`（语法：`/help [指令]`）：显示帮助/某指令语法。
 * `bye`（别名：`stop`, `shutdown`；语法：`/bye`）：停止机器人（阻止重连，`stopBot(true)`）。

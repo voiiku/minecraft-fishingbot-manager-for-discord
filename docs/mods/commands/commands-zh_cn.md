@@ -267,15 +267,13 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    `/command` 手发 `/pause`、或人进 `screen` 会话里敲，不会更新它，那种情况下 `/show status` 可能显示旧
    值，下一次 `/pause` 或 `/unpause` 会把它纠正回来。
 
-前提是这份 JAR 得有这两条指令。上游 FishingBot 的原版没有 `/pause`、`/unpause`，本项目用的构建打了
-补丁补上它们（补丁同时负责打印下面要找的那两句回显）。用原版 jar 时这两条指令只会回"命令已发送"，
-`/show status` 的钓鱼状态永远是"钓鱼中"。
+前提是这份 JAR 支持 `/pause`、`/unpause`。上游已计划加入这两条指令；在包含它们的构建中，回显由 JAR 打印。若所用 JAR 尚未支持，这两条指令只会回复“命令已发送”，`/show status` 的暂停状态不会改变。
 
 要找的回显关键词是配置 `[command_echo]` 里的 `pause_echo` 与 `unpause_echo`（上游消息
 `command-pause-executed` 与 `command-unpause-executed`），不由调用方传：`PauseCommand::echo_keyword`
-按命令取其中一项。它们只存在于带补丁的构建里（上游原版没有这两条指令），所以就地写在配置上，换 jar
-构建时改配置即可：默认值按英文 jar，中文 jar 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同、也不能互相
-包含，启动时会校验，否则日志里那行回显认不出属于哪条指令。
+按命令取其中一项。不同 JAR 构建可能打印不同回显，因此就地写在配置上，换 JAR 时改配置即可：默认值按英文
+JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同、也不能互相包含，启动时会校验，否则日志里那行
+回显认不出属于哪条指令。
 
 ### 3.2 三个动作函数的固定步骤
 
@@ -301,7 +299,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
    拉起相邻两台之间等 `[startup_queue] bot_login_interval_ms`；拉起后先判定一次，等满 `timing.check_grace_ms` 再判定一次
    （每次启动请求只等一次）。第二遍还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功；
-   见 [utils.md 第 4 节](../utils/utils-zh_cn.md#4-startup--shutdown-的等待参数)。
+   见 [utils-zh_cn.md 第 4 节](../utils/utils-zh_cn.md#4-启动与停止中的等待)。
 4. 失败判定都看 utils 返回的明细自己的方法（`outcome.has_failed_lines()` 为真就把
    `outcome.to_failure_text()` 当错误返回；停止明细用的是同形的 `has_failed_lines()`）。明细由
    utils 返回，拼装方法必须在这里显式调用（见 [utils.md](../utils/utils-zh_cn.md)）。文案按能验证到哪一步就只说到
@@ -332,7 +330,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   `create_bot_log_file` 先建好文件，会话里 `grep -v -E` 过滤后 `tee -a` 追加。
 * FishingBot 自己的日志写在同层 `raw/log0.log`（指向 `/dev/null` 的符号链接，内容丢弃），所以磁盘上
   只有一份日志，`/log` 不可能读回未过滤的刷屏内容。细节见
-  [utils.md 第 7 节](../utils/utils-zh_cn.md#7-日志有两条线)。
+  [utils-zh_cn.md 第 7 节](../utils/utils-zh_cn.md#7-两类日志)。
 * 读取用 `utils::read_last_lines` 的滑动窗口，日志再大也只保留最后 N 行。
 * 日志原文放进 `Report::content`（整块内容），避免每行被加上列表前缀；标题里带上日志文件名。
 * 回复走 `defer_ephemeral`，并且每条回复（用法提示、失败文案、带附件的正文）都显式 `.ephemeral(true)`：
@@ -581,7 +579,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   进程内记着的 `BotPauseStatus.pause_status()`（同一台机器人的 `/pause` 与 `/unpause` 几乎同时到达时，
   按回显窗口里最后那条记；确认到回显时更新，会话开始与结束时重置，见
   [utils.md 第 6 节](../utils/utils-zh_cn.md#6-配置取值约定)）。挑文件的口径见
-  [utils.md 第 7 节](../utils/utils-zh_cn.md#7-日志有两条线)。措辞来自 `utils::bot_status`：服务器状态是"就绪/初始中"、
+  [utils-zh_cn.md 第 7 节](../utils/utils-zh_cn.md#7-两类日志)。措辞来自 `utils::bot_status`：服务器状态是"就绪/初始中"、
   "服务器在线"、"重连/本人在线"、"进程已结束"；三种读不到日志的情况（挑不到、读不出来、为空）在正常
   运行里不会出现，所以直接在这一格里显示报错原因；钓鱼状态是"钓鱼中"与"已暂停"。
 * 运行时长由 `utils::format_uptime` 统一格式化成"天-时-分"，避免每个调用点各写一套。

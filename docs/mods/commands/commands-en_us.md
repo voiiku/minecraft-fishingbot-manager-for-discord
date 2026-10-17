@@ -307,16 +307,14 @@ The steps that confirm the effect:
    does not update it, so `/show status` may show a stale value in that case, and the next `/pause` or `/unpause` corrects
    it.
 
-All of this assumes the JAR has those two commands. Upstream FishingBot has no `/pause` and `/unpause`; the build this
-project uses is patched to add them (the patch also prints the two echoes looked for below). With an upstream jar those
-two commands only answer "command sent" and the fishing status in `/show status` stays "fishing" forever.
+This assumes the JAR supports `/pause` and `/unpause`. Upstream plans to add both commands; in a build that includes them, the echoes are printed by the JAR. If the JAR in use does not support them yet, the two commands only reply "command sent" and the pause state in `/show status` does not change.
 
 The echo keywords to look for are `pause_echo` and `unpause_echo` in the config's `[command_echo]` (upstream messages
 `command-pause-executed` and `command-unpause-executed`), and they are not passed by the caller:
-`PauseCommand::echo_keyword` picks one of them by command. They only exist in a patched build (upstream has neither
-command), so they are configured in place and changing the jar build means changing the config: the defaults match an
-English jar, while a Chinese jar takes `已暂停钓鱼` / `已恢复钓鱼`. The two must differ and neither may contain the
-other; startup validates this, otherwise that echo line cannot be attributed to one of the commands.
+`PauseCommand::echo_keyword` picks one of them by command. Different JAR builds may print different echoes, so they are
+configured in place and changing the JAR means changing the config: the defaults match an English jar, while a Chinese
+jar takes `已暂停钓鱼` / `已恢复钓鱼`. The two must differ and neither may contain the other; startup validates this,
+otherwise that echo line cannot be attributed to one of the commands.
 
 ### 3.2 The fixed steps of the three action functions
 

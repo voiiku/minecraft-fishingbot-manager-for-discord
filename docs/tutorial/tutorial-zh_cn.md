@@ -63,7 +63,7 @@ java -version     # 确认是否成功（能打印出你安装的版本即可）
 sudo mkdir -p /fishingbots && sudo chown "$USER" /fishingbots
 cd /fishingbots
 
-# 下载 FishingBot.jar。推荐用带 /pause、/unpause 这两条游戏内指令的修改版
+# 下载 FishingBot.jar
 curl -LO https://github.com/MrKinau/FishingBot/releases/download/v2.13.15/FishingBot-2.13.15.jar
 ```
 

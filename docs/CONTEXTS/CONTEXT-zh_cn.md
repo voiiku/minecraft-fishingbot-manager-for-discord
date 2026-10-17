@@ -21,13 +21,7 @@
   不要打包 FishingBot：它是 GPL-3.0 的独立程序，本项目
   只以 `java -jar` 拉起它、不修改不链接；真要把 jar 与二进制装进同一个分发包，那份分发包里的 jar 部分
   必须按 GPL-3.0 处理。
-* 依赖的 FishingBot 是打过补丁的构建：上游（`MrKinau/FishingBot`，GPL-3.0）没有 `/pause`、`/unpause`
-  这两条游戏内指令，本项目用的那份补上了它们与对应回显（`已暂停钓鱼` 与 `已恢复钓鱼`，英文构建为
-  `Fishing paused` 与 `Fishing resumed`；两句抄进配置 `[command_echo]` 的 `pause_echo`、`unpause_echo`，
-  所以换 jar 构建不必重新编译。这两个键**暂时保留**：等上游原版支持这两条指令后，它们可以收进语言表、
-  按 `[i18n] language` 派生（那是配置精简计划里还没做的一步））。由此派生两条约束：一是 `/pause`、`/unpause` 的确认生效只在
-  带补丁的 jar 上成立，用原版 jar 只会回"命令已发送"、暂停状态永远是"钓鱼中"；二是那份补丁是 GPL-3.0
-  的衍生作品，本仓库不放它、也不放它的 jar（另立 GPL-3.0 仓库维护）。
+* 上游（`MrKinau/FishingBot`，GPL-3.0）已计划支持 `/pause`、`/unpause` 两条游戏内指令。在所用 JAR 包含这两条指令之前，`/pause`、`/unpause` 只会回复“命令已发送”，暂停状态不会更新。两条指令的回显仍由配置 `[command_echo]` 的 `pause_echo`、`unpause_echo` 提供，因此换用包含它们的 JAR 时无需重新编译；这两个键暂时保留，等上游支持后可以收进语言表、按 `[i18n] language` 派生。
 * 功能：用 Discord 斜杠指令批量管理多个 Minecraft 账号的
   [FishingBot](https://github.com/MrKinau/FishingBot) 自动钓鱼实例。
 * 技术栈：Rust（edition 2024）、[serenity](https://github.com/serenity-rs/serenity) 0.12.5、
@@ -239,7 +233,7 @@
   （`LogText` 枚举加 `log_text()`，两个语言文件里穷尽 `match`）；指令说明与 `/token` 弹窗标签则靠注册前
   改写 poise 生成的指令树加手写 `impl poise::Modal`；JAR 自己打印的断线重连提示也在里面（`jar_*`
   方法），于是 `[i18n] language` 同时决定"我们说什么话"与"按哪种语言的 JAR 日志认重连"；`/pause` 与
-  `/unpause` 的回显则由配置 `[command_echo]` 提供（补丁构建才有那两句，见 §2 第一条）。唯一固定英文的
+  `/unpause` 的回显则由配置 `[command_echo]` 提供（所用 JAR 支持这两条指令时才有那两句，见 §2 第一条）。唯一固定英文的
   是配置还没读出来时的那些提示（`text::bootstrap`：配置文件
   读不出来或解析不了、生成模板、找到已存在的配置文件、可执行文件路径、`language` 写了个不认识的取值，还有 `config::Config::get()` 的
   `CONFIG_NOT_LOADED` 与语言未安装时的 `TEXT_NOT_INSTALLED` 不变量消息；它们都是英文），因为那时语言还没确定。`text::get()` 未安装语言时，
@@ -255,7 +249,7 @@
 * 关键词放哪儿，谁决定的字符串就放谁那儿（`[keywords]` 收敛到两项的依据）：只有各部署不同、必须
   自己填的才进配置，即 `online`（游戏服务器自己的进服提示）与 `filter_regex`（自己服务器要丢掉的刷屏
   噪声）；`/pause` 与 `/unpause` 的回显进 `[command_echo]`（`pause_echo`、`unpause_echo`），理由不是
-  "由谁决定"而是"换补丁构建时要跟着改"，就地能改比重新编译实际；JAR 自己打印的断线重连提示才进 i18n
+  "由谁决定"而是"不同 JAR 构建可能提供不同回显"，就地能改比重新编译实际；JAR 自己打印的断线重连提示才进 i18n
   的 `jar_*` 方法（见上一条），让部署者再抄一遍只会多一个出错点：抄错一个标点，`/show status` 就永远显示
   "初始中"。**"进程已结束"不进配置也不需要关键词**：旧版外壳脚本往日志里写的那句结束标记
   （`fishingbots` 脚本：`java … | tee bot.log; echo 标记 >> bot.log`）是脚本的产物，本项目自己拉起

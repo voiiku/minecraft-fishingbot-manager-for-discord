@@ -101,8 +101,8 @@ pub trait Text: Send + Sync {
     // 两边是同一个值，不会对不上。
     // 与游戏服务器 / 本机环境有关的关键词（进服提示、结束标记、刷屏噪声）各部署不同，
     // 仍留在配置的 `[keywords]` 里。
-    // `/pause` 与 `/unpause` 的回显同属 JAR 打印，但放在配置的 `[command_echo]`：它们要配 jar 的构建
-    // （上游原版没有这两条指令），就地改比重新编一份语言表更实际。
+    // `/pause` 与 `/unpause` 的回显同属 JAR 打印，但放在配置的 `[command_echo]`：不同 JAR 构建可能打印
+    // 不同回显，就地改比重新编一份语言表更实际。
     /// JAR 断线自动重连提示的前缀（`bot-automatic-reconnect` 那句的开头）。
     fn jar_reconnect_prefix(&self) -> &'static str;
     /// 同一句的后缀：须与前缀同时命中，避免日志中偶然出现的半句话被判为状态。

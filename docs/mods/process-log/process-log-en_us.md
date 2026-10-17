@@ -1,104 +1,105 @@
 # process_log: the program log
 [简体中文](process-log-zh_cn.md) | **English**
 
-* Code: `src/process_log.rs` (+ `process_log/levels.rs` for the level decision and `process_log/format.rs` for
-  record rendering, both pure functions with their own tests)
-* Public API: `ProcessLog::get_or_init()` (`ProcessLog` is re-exported from the crate root; the first call creates
-  this run's log file, installs it, and writes the log location, the config path and the process id).
+* Code: `src/process_log.rs` (`process_log/levels.rs` decides levels and `process_log/format.rs` renders records;
+  both are pure functions with their own tests)
+* Public API: `ProcessLog::get_or_init()` (`ProcessLog` is re-exported from the crate root). The first call tries to
+  create this run's log file, installs the logger, and records the config path and process ID (plus the log path when
+  the file is available).
 
-## 1. Why we install a logger of our own
+## 1. Why we install a logger ourselves
 
-serenity and poise log through `tracing`, which only writes to the terminal by default, and this project also wants
-a file that can be read afterwards (`journalctl` rotates). So we implement `log::Log` ourselves and depend only on
-`log` and `chrono`. Once it is installed, the frameworks' records and our own `log::*` all land here (poise depends
-on `tracing` with its `log` feature on, which turns framework records into `log` records - confirmed by actually
-running it: serenity records show up in the program log). This project no longer prints diagnostics with
-`println!`, so the terminal and the file say the same thing; the only exceptions are the few notes written straight
-to the terminal: the log itself failing, and a repeated initialization keeping the installed logger (sections 4
-and 5).
+serenity and poise log through `tracing`, which only writes to the terminal by default; this project also needs a file
+that can be read afterwards (`journalctl` rotates). We therefore implement `log::Log` directly and depend only on `log`
+and `chrono`. Once installed, the frameworks' records and this project's own `log::*` calls all land here (poise enables
+the `log` feature of `tracing`, so framework records are converted into `log` records; this has been confirmed at
+runtime, where serenity records appear in the program log). This project no longer prints diagnostics with `println!`,
+so the terminal and the file contain the same messages; the only exceptions occur during the earliest startup steps,
+as described in sections 4 and 5.
 
-## 2. Two outputs
+## 2. Output and format
 
-* Terminal (stderr): foreground output, or `journalctl -u minecraft-fishingbot-manager-for-discord`. For watching things
-  live, and it is also around when systemd runs the program.
-* File: `<deploy dir>/logs/year-month-day-hour-minute-second.log`. For reading afterwards (every line is flushed,
-  so `kill -9` loses nothing).
+* Terminal (stderr): foreground output, or `journalctl -u minecraft-fishingbot-manager-for-discord`. Used for live
+  observation and still available when systemd runs the process.
+* File: `<deploy dir>/logs/year-month-day-hour-minute-second.log`. Used for reading afterwards; every line is flushed
+  immediately, so `kill -9` does not lose what has already been written.
 
 Each record looks like
 `[2026-09-28 15:30:12] [INFO] config loaded: /fishingbots/minecraft-fishingbot-manager-for-discord.conf.toml`,
-plain text, no colours. The file name comes from `utils::create_timestamped_log_file` (the same naming as the bot
-logs, timestamp format `%Y-%m-%d-%H-%M-%S`), and the first line is always
-`--- Minecraft FishingBot Manager for Discord process starting ---`.
+in plain text without colour. The file name comes from `utils::create_timestamped_log_file` (the same naming as bot
+logs, with the timestamp format `%Y-%m-%d-%H-%M-%S`); the first line describes this startup and is localised according
+to `[i18n] language`.
 
 What gets recorded:
 
 * This project's own events: config load, startup, shutdown, watchdog, bot directories and sessions, the details of
-  start, stop, restart and pause, warnings and errors.
+  start/stop/restart/pause, warnings and errors.
 * Every reply (`LogText::CommandReplied`): who asked (Discord user ID), which command, and what was answered. All
-  command-layer replies go out through `commands::say_and_log` and `log_reply` (see
-  [commands-en_us.md](../commands/commands-en_us.md)), so "what the user says they got" can be matched line by line
+  command-layer replies go through `commands::say_and_log` and `log_reply` (see
+  [commands-en_us.md](../commands/commands-en_us.md)), so what a user reports receiving can be checked line by line
   against the log.
-* Third-party crates (serenity, poise) log at `WARN` and above by default (next section), because they print `INFO`
-  on every heartbeat and would drown the two kinds above.
+* Third-party crates (serenity, poise) log only at `WARN` and above by default (next section), because they emit
+  `INFO` on every heartbeat and would drown the two categories above.
 
 ## 3. Levels
 
-Two levels (implemented by `LogLevels::from_config` in `process_log/levels.rs`; only the config's `[log] debug`
-decides):
+`LogLevels::from_config` in `process_log/levels.rs` derives two ceilings from `[log] debug` alone:
 
-* This project (targets starting with `minecraft_fishingbot_manager_for_discord`, both lib and bin): capped at `info` with
-  `[log] debug = false`, at `debug` with `true`. Startup, status and reports are enough to read at `info`.
-* Third-party crates (`serenity`, `poise`, `tungstenite`, ...): capped at `warn` with `false`, at `debug` with
-  `true`. They print `recv; do_heartbeat; recv_event;` on every heartbeat (more at startup) and would drown the
-  lines above by default.
+* This project (targets starting with `minecraft_fishingbot_manager_for_discord`, both lib and bin): `INFO` with
+  `false`, `DEBUG` with `true`. Startup, status and report messages are already readable at `INFO`.
+* Third-party crates (`serenity`, `poise`, `tungstenite`, ...): `WARN` with `false`, `DEBUG` with `true`. They emit
+  `recv; do_heartbeat; recv_event;` on every heartbeat (and more at startup), which would drown the key lines above
+  under the default setting.
 
-In one sentence: with `debug` on you also listen to the frameworks (both sides go to `DEBUG`); with it off the
-frameworks only speak up when something is really wrong (`WARN`).
+The global `max_level` is the wider of the two ceilings, and the target prefix then selects the ceiling for each record.
+With `debug` enabled both sides reach `DEBUG`; with it disabled the frameworks only speak up at `WARN` when something
+is actually wrong.
 
-There is no environment variable and no second switch (this project used to read `RUST_LOG`; that is gone): the level
-comes from that one config line and from nowhere else. Neither `TRACE` (byte-level traffic) nor per-module debugging
-(directives such as `serenity=debug`) is supported - this project debugs by level, not by module.
+There is no environment variable and no second switch (this project supported `RUST_LOG` early on; that is gone): the
+level comes only from this config line. Neither `TRACE` (byte-level traffic) nor per-module debugging (directives such
+as `serenity=debug`) is supported; this project debugs by level, not by module.
 
-## 4. What happens when it fails
+## 4. Failure handling
 
-* The deployment directory is not writable (the binary lives in `/usr/local/bin` or the service runs as an ordinary
-  user, say): not fatal. It degrades to the terminal only and writes one warning; the bots keep running. That
-  warning goes through the logger (so it lands on stderr with the `[time] [WARN]` prefix), and the wider of the two
-  ceilings is never stricter than `WARN`, so the level filter cannot swallow it - "the log is not on disk" cannot be
-  reported in the file, because the file is exactly what is missing.
-* A logger is already installed: `ProcessLog::get_or_init` checks first, keeps the installed logger, prints a note
-  and returns right away, so no log file is created (the file is created before the logger is installed; checking
-  first is what keeps a stray first-line-only file out of `logs/`).
+* The deployment directory is not writable (for example, the binary lives in `/usr/local/bin` and the service runs as
+  an ordinary user): this does not affect operation. Logging degrades to the terminal and one warning is recorded. The
+  warning goes through the logger (so it reaches stderr with the `[time] [WARN]` prefix); the global ceiling is never
+  stricter than `WARN` in either configuration, so it cannot be filtered out. The fact that the log is not on disk
+  cannot be reported only in the file, because the file is exactly what is missing.
+* A logger is already installed: `ProcessLog::get_or_init` checks first; when one is installed it keeps that logger,
+  prints a note and returns without creating another file. The file is created before the logger is installed, so
+  checking first is what keeps a stray first-line-only file out of `logs/`.
 
-The reason: logging is an operations problem and must not turn into game accounts going offline.
+Logging is an operations concern and must not prevent game accounts from coming online.
 
-That is also why `ProcessLog::get_or_init` does not return a `Result`: write failures after the logger is installed
-(a full disk, a deleted file) have nowhere to be reported either (the `log::*` signatures are `()`); a `Result` would
-cover only the half step before installing and would make `Ok(())` look like a healthy log system; and pushing the
-degraded decision onto the caller would only make every call site repeat the same "write a warning, keep going".
+That is why `ProcessLog::get_or_init` does not return a `Result`: write failures after installation (a full disk, a
+deleted file) have nowhere to be reported either (the `log::*` signatures are `()`); a `Result` would cover only the
+step before installation and would make `Ok(())` look like a healthy log system. Pushing the degraded decision onto the
+caller would only make every call site repeat "write a warning, keep running".
 
 ## 5. When it is called
 
-It must be called before the poise `Framework` is assembled and before anything else logs; the order is in
-`src/main.rs` (`config::Config::get_or_init()`, `ProcessLog::get_or_init`, then build the `Framework`/`Client` and
-call `client.start()`). It reads `[log] debug` from the config itself, which is why the entry point passes no
-argument. When the config fails to load there is no log file yet, so those few notes only appear in the terminal.
-Only three places still write without the logger, all of them stdout: the template note in `src/config.rs` and the
-two notes in `src/process_log.rs` (the logger cannot be installed, a repeated call keeps the installed one).
+It must be called before the poise `Framework` and `Client` are assembled and before anything logs. The order is in
+`src/main.rs`: `config::Config::get_or_init()`, `ProcessLog::get_or_init`, then build the `Framework`/`Client` and call
+`client.start()`. It reads `[log] debug` from the config itself, which is why the entry point passes no argument.
 
-## 6. Why there is no size limit and no cleanup
+When config loading fails, the process has not created a log yet, so the related messages only appear in the terminal.
+Only a few direct writes remain from the earliest startup: the template/config-path notes from `src/config.rs` (stdout)
+and config errors (stderr), plus the two notes from `src/process_log.rs` (logger installation failure and a repeated
+initialization keeping the existing logger, both stdout).
 
-One file per run, named after the startup moment, never touched again; the process does not rotate and does not
-delete old files:
+## 6. File retention
 
-* Nothing reads this log programmatically. People open it while troubleshooting, so how big one file gets and how
-  many are kept is not the program's business.
-* When splitting is really needed (chasing something with `[log] debug = true`, where the frameworks flood too), do
-  it by hand: `split`, `logrotate`, or plain `> file`. That is simpler than building a rotation policy into the
-  program.
-* What piles up files is a process that systemd restarts every 10 seconds (the gateway is unreachable, the proxy
-  died). That is solved at the root by a long-running process that reconnects itself (see
-  [watchdog-en_us.md](../watchdog/watchdog-en_us.md)), not hidden by deleting old files.
+One file per run, named after the startup moment and never modified afterwards; the process neither rotates nor deletes
+old files:
+
+* Nothing reads this log programmatically. People open it while troubleshooting, so how large one file gets and how
+  many are kept is not the program's responsibility.
+* When splitting is genuinely needed (for example, `[log] debug = true` with heavy framework output), do it by hand:
+  `split`, `logrotate`, or plain `> file`. That is simpler than building a rotation policy into the program.
+* Files pile up when systemd restarts the process every 10 seconds (the gateway is unreachable, the proxy died). The
+  root fix is a long-running process that reconnects itself (see [watchdog-en_us.md](../watchdog/watchdog-en_us.md)),
+  not deleting old files to hide the problem.
 
 ## 7. Related documents
 

@@ -14,20 +14,18 @@ This project manages multiple Minecraft auto-fishing bots through a Discord serv
 
 In short, this project only provides a way to manage FishingBot instances; for now it does not implement the bot behaviour itself.
 
-## 2. Who it is for
-
 * Intended for players who fish while AFK on a Minecraft server, have several game accounts and want to manage them in one place.
-* Not intended for single-player players.
+* Not intended for single-player use.
 * What this project solves:
   * It saves the cost of scattered AFK fishing (a group of friends fishing on their own machines costs far more than fishing in one place).
   * It makes several accounts easy to manage.
   * It covers the common needs: pausing fishing to act as a dummy player, sending commands to a bot, sending chat to the server, reading logs, and so on.
 
-## 3. Deployment
+## 2. Deployment
 
 See [docs/tutorial/tutorial-en_us.md](docs/tutorial/tutorial-en_us.md).
 
-## 4. Command overview
+## 3. Command overview
 
 Available to everyone:
 
@@ -38,7 +36,7 @@ Available to everyone:
 * `/show status`: check the status of every running bot.
 * `/show botconfig`: view the config file shared by all fishing bots, sent as an attachment.
 * `/show mybots`, `/show allbots`, `/show admins`: view your own bots, all bots, or the administrator list.
-* `/bot add <name>`: add a bot (it still needs a token before it can be used).
+* `/bot add <name>`: add a bot (a token is still required before it can be used).
 
 Available to a bot's creator or an administrator:
 
@@ -54,15 +52,15 @@ Available only to administrators:
 
 * `/startall`, `/stopall`, `/restartall`, `/commandall <command>`: batch operations on all bots.
 
-## 5. Project status
+## 4. Project status
 
 * Maintained by one person and still in testing; config fields and command replies change with updates, and incompatible changes are announced in the release notes.
-* The upstream `FishingBot.jar` does not support the in-game `/pause` and `/unpause` commands yet (the feature is implemented and verified on the author's patched build), so the pause status is wrong; other features are unaffected.
+* Upstream `FishingBot.jar` has not yet added the in-game `/pause` and `/unpause` commands; upstream support is planned. Until the JAR in use includes them, `/pause` and `/unpause` only report that the command was sent, and the pause status is not updated. Other features are unaffected.
 * Only `ENGLISH` and `CHINESE_SIMPLIFIED` are supported for now (the names the FishingBot project uses). All English text and English documentation are AI translations.
 * Out of scope: a web panel and a built-in proxy service.
 * Future goals: support Windows, and a built-in fishing bot so you can choose between `FishingBot.jar` and the built-in one.
 
-## 6. License
+## 5. License
 
 This project is licensed under the [MIT License](LICENSE).
 
@@ -70,21 +68,20 @@ Third-party licenses are listed in [THIRD-PARTY-NOTICES.html](THIRD-PARTY-NOTICE
 
 [FishingBot](https://github.com/MrKinau/FishingBot) is a separate program under the [GPL-3.0 license](https://github.com/MrKinau/FishingBot/blob/main/LICENSE). This project only manages it; it does not contain FishingBot or distribute it together with this project.
 
-## 7. Contributing
+## 6. Contributing
 
 Contributions are welcome. To report a bug or suggest a feature, [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues). Pull requests are welcome too; for larger changes, please open an issue first to discuss the approach.
 
 ### Translations
 
 User-facing text is defined in the `src/text/` module and loaded at startup. When changing or adding a translation, follow the existing locale modules, for example `src/text/zh_cn.rs`. Messages shown before the language is loaded use English.
-  **The multilingual feature may be refactored in the future**
 
-## 8. Useful documents
+**A multilingual refactor is planned for the future.**
 
-See the [docs index](docs/index-en_us.md) for all documentation. The most used ones are:
+## 7. Documentation
+
+See the [docs index](docs/index-en_us.md) for all documentation. The most frequently used documents are:
 
 * [docs/tutorial/tutorial-en_us.md](docs/tutorial/tutorial-en_us.md): deployment from scratch, written for people new to Discord.
 * [docs/troubleshooting/troubleshooting-en_us.md](docs/troubleshooting/troubleshooting-en_us.md): symptoms and checks when something goes wrong.
 * [docs/mods/config/config-en_us.md](docs/mods/config/config-en_us.md): the config file, the loading process, every field, and startup validation.
-* [docs/mods/commands/commands-en_us.md](docs/mods/commands/commands-en_us.md): the command overview, the two replies of the command layer, ephemeral replies and candidate rules.
-* [docs/CONTEXTS/CONTEXT-en_us.md](docs/CONTEXTS/CONTEXT-en_us.md): read this before reading the code.

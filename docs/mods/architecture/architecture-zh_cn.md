@@ -1,7 +1,7 @@
 # 架构与模块地图
 [English](architecture-en_us.md) | **简体中文**
 
-本文说明代码分几层、每层负责什么、一条 Discord 斜杠指令是怎么落到 `screen` 会话上的。按主题查文档见
+本文说明代码分几层、每层负责什么，以及一条 Discord 斜杠指令如何落到 `screen` 会话。按主题查找文档，见
 [docs 文档索引](../../index-zh_cn.md)。
 
 ## 1. 分层
@@ -26,24 +26,25 @@ utils（原语层）                     目录、会话、日志、报告等可
 screen 会话里的 JVM（FishingBot）
 ```
 
-术语先分清三层。`src/commands/` 是命令层：用 poise 的 `#[poise::command]`，只负责取值、校验参数个数、
+先明确各层的叫法。`src/commands/` 是命令层：用 poise 的 `#[poise::command]`，只负责取值、校验参数个数、
 把参数值转成数字、`defer`、把 `Err` 变成回复。`lib.rs` 的 `handle_*` 是指令入口层（下文简称路由层）：
 负责把动作枚举落到业务函数，全员指令与批量指令的权限也只在这一层查。业务层指 `bot_control`、`bot_manage`、
-`show`、`all_bots_control`。
+`all_bots_control`、`show` 与 `general`；其下是 utils 原语层。
 
-参数怎么往下传：Discord 交给命令层的是结构化 option，但 option 的值仍然是用户输入的原始文本，所以
-命令层只取值、校验数字、透传（参数名以 `raw_` 起），谁真正要用就由谁清洗一次：机器人名走
+参数怎么往下传：Discord 交给命令层的是结构化 option，但 option 的值仍是用户输入的原始文本。命令层只负责取值、
+校验数字并透传（参数名以 `raw_` 起），真正使用该值的层再清洗一次：机器人名走
 `ToCleanBotName::to_clean_bot_name`（`BotDirEntry` 构造条目时调用），游戏内指令片段走
-`utils::ToCleanBotCommand`。数字（`/log` 的行数、`/ping` 的端口）是命令层唯一的转换，校验不过当场回
+`utils::ToCleanBotCommand`。数字转换（`/log` 的行数、`/ping` 的端口）是命令层唯一的转换；校验失败时当场回复
 用法提示。
 
 另外两条与指令无关的链路：
 
-* `main.rs`：进程生命周期。配置、程序日志、提前拉起 REST 探活任务、装配 poise `Framework` 与
-  serenity `Client`、注册指令、`client.start()`。只有收到 SIGTERM 或 Ctrl+C 才退出进程（掉线与
-  `client.start()` 返回都走停机器人、等一个判定窗口、重建连接）。
-* `watchdog`：网关看门狗。判定本进程是否已经跟 Discord 失去联系（判定是纯计时，请求重建连接由进程
-  入口发出）。它是唯一判定掉线的地方，规则见
+* `main.rs`：进程生命周期。读取配置、初始化程序日志、准备 REST 探活句柄、装配 poise `Framework` 与
+  serenity `Client`、注册指令、启动连接循环。正常运行时只有收到 SIGTERM 或 Ctrl+C 才以退出码 0 退出；配置错误等
+  永久失败以退出码 1 退出。掉线与 `client.start()` 返回都不会结束进程，而是停止全部机器人、等待一个判定窗口后
+  重建连接。
+* `watchdog`：网关看门狗。判定本进程是否已经跟 Discord 失去联系（判定是纯计时，重建连接的请求由进程入口发出）。
+  它是唯一判定掉线的地方，规则见
   [CONTEXT 第 3 节](../../CONTEXTS/CONTEXT-zh_cn.md#3-网关看门狗唯一判定掉线的地方)。
 
 ## 2. 目录结构
@@ -72,7 +73,7 @@ src/
 │   ├── levels.rs               级别判定（本项目与第三方两档上限）
 │   └── format.rs               记录渲染（时间戳、级别前缀、续行缩进）
 ├── config.rs                   外置配置的加载、校验与访问（子模块见下）
-│   ├── schema.rs               配置结构体（与 toml 一一对应）
+│   ├── schema.rs               配置结构体（与 TOML 一一对应）
 │   ├── parse.rs                TOML 反序列化 + 路径展开
 │   ├── validate.rs             启动校验
 │   └── template.rs             首次启动生成配置模板
@@ -164,13 +165,13 @@ src/
   账号的孤儿 JVM。
 * 运行中不许动的动作先查会话：`/token`、`/bot del`、`/bot rename` 在真正动手前都先
   `is_bot_screen_running`；重启流程更严，它在停止之前就剔掉缺 Token 的目标。
-* 退出只有一条路径：收到 SIGTERM 或 Ctrl+C 时走 `watchdog.exit_on_shutdown_signal()`，先记日志，再停掉全部
+* 退出信号只有一条路径：收到 SIGTERM 或 Ctrl+C 时走 `watchdog.exit_on_shutdown_signal()`，先记日志，再停掉全部
   机器人、就地拼一份与 `/stopall` 同口径的收尾报告（报告进程序日志，此外还发到各服务器的通报频道），最后以
   退出码 0 退出（systemd 不重拉）。掉线与
-  `client.start()` 返回都不再退出，而是停全部机器人、等一个判定窗口、重建连接（见
+  `client.start()` 返回都不退出，而是停全部机器人、等一个判定窗口、重建连接（见
   [watchdog.md 第 4 节](../watchdog/watchdog-zh_cn.md)）；只有配置写错（Token 无效、机器人没被邀请进服务器）才以退出码
   1 退出，交给 systemd（单元里配 `RestartPreventExitStatus=1`，这类错误不重拉）。
-* 日志两条线、启动步骤看得见：详见 [utils.md 第 7 节](../utils/utils-zh_cn.md#7-日志有两条线) 与
+* 两类日志与启动步骤都有专门说明：见 [utils-zh_cn.md 第 7 节](../utils/utils-zh_cn.md#7-两类日志) 与
   [process-log.md](../process-log/process-log-zh_cn.md)。
 * 回复不夸大：能验证到哪一步就只说到哪一步。`/start` 与 `/restart` 只能确认命令已发出、会话已出现，
   所以回"已发送命令"；`/stop` 的流程当场复核会话已消失，才可以回"已成功停止"。新增指令按同一条原则
@@ -189,11 +190,11 @@ src/
   `get_` 前缀）；转换用 `to_` 与 `into_` 前缀（`to_clean_bot_name`、`into_report`，消费 `self` 的用
   `into_`、其余用 `to_`，clippy 也这么认）；需要磁盘查找的构造用 `find_*`；判断用 `is_` 与 `has_`；
   ID 一律叫 `*_id`（`caller_id`、`owner_id`）。
-* 按返回形态带后缀：列表用 `*_list`（`my_bots_list`）；状态表用 `*_status`
+* 按返回形态添加后缀：列表用 `*_list`（`my_bots_list`）；状态表用 `*_status`
   （`all_running_bots_status`）；一次性探测或检查用 `*_report`（`ping_report`、
   `checkserver_report`）；当附件发出去的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。只有
   整段已经写好的文本用裸名词（`help`、`whoami`）。
-* 全局单例访问器同名：配置 `config::Config::get()`、文案 `text::get()`，都表示"取进程内那一份"。配置没装就
+* 全局单例的访问器采用相同命名：配置 `config::Config::get()`、文案 `text::get()`，都表示"取进程内那一份"。配置没装就
   `expect` panic（那是内部不变量）；文案没装时生产构建 panic（入口顺序错误），测试构建固定返回英语。
   `Language` 不实现 `Default`，`[i18n] language` 不受支持时启动校验直接报错退出。两者由进程入口
   各装一次（`config::Config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs`
@@ -208,9 +209,9 @@ src/
 * 注释里的记号一眼可辨：`?` 开头是待实跑确认的开放问题（确认后删记号、留结论）；`!` 开头是待填但有
   回落路径；`⚠️` 用在语言表里提醒硬约定。
 * 关键词放哪儿：只有"各部署不同、必须自己填"的进 `[keywords]`（`online`、`filter_regex` 两项）；
-  `/pause` 与 `/unpause` 的回显进 `[command_echo]`（`pause_echo`、`unpause_echo`，换 jar 构建时就地改）；
-  JAR 打印的断线重连提示留在 i18n 的 `jar_*` 方法里，跟随 `[i18n] language`；进程是否结束不看日志，
-  看 screen 会话残壳（`(Dead ...)`）。
+  `/pause` 与 `/unpause` 的回显进 `[command_echo]`（`pause_echo`、`unpause_echo`；仅在所用 JAR 支持这两条指令时
+  才会出现，换 JAR 时就地改）；JAR 打印的断线重连提示留在 i18n 的 `jar_*` 方法里，跟随 `[i18n] language`；
+  进程是否结束不看日志，看 screen 会话残壳（`(Dead ...)`）。
 
 ## 6. 从源码构建与测试
 
@@ -222,13 +223,13 @@ cargo fmt
 cargo test                                    # 库、命令层与对外契约的回归测试
 ```
 
-* 默认编译目标是 musl 静态链接（产物不挑发行版与 glibc 版本，直接丢到服务器上跑）。因为 rustls 的
+* 默认编译目标是 musl 静态链接（产物不依赖发行版与 glibc 版本，可直接部署到服务器运行）。因为 rustls 的
   加密后端要用 C 编译器，还需要 `musl-gcc`（Arch 装 `musl`，Debian 与 Ubuntu 装 `musl-tools`），
   否则会报 `failed to find tool "x86_64-linux-musl-gcc"`。
-* 发布构建在 `Cargo.toml` 的 `[profile.release]` 里开了 LTO、`panic = "abort"` 与 `strip`。
-* 改配置结构时要同步 `minecraft-fishingbot-manager-for-discord.conf.example.toml` 与 [config.md](../config/config-zh_cn.md)，
-  否则 `cargo test` 会失败（有测试专门钉这两件事）。
-* 文档链接用 `cargo doc --no-deps` 复核，必须零警告（只用 `cargo check` 抓不到断链）。
+* 发布构建在 `Cargo.toml` 的 `[profile.release]` 中启用了 LTO、`panic = "abort"` 与 `strip`。
+* 改配置结构时要同步 `minecraft-fishingbot-manager-for-discord.conf.example.toml` 与 [config-zh_cn.md](../config/config-zh_cn.md)，
+  否则 `cargo test` 会失败（有测试专门校验这两项）。
+* 文档链接用 `cargo doc --no-deps` 复核（Rustdoc 注释）；Markdown 文档链接用 `cargo test --test docs_links` 复核。
 
 ## 7. 相关文档
 

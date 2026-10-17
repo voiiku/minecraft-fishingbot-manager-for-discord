@@ -2,7 +2,7 @@
 [简体中文](architecture-zh_cn.md) | **English**
 
 This document explains how the code is layered, what each layer is responsible for, and how one Discord slash command
-ends up in a `screen` session. For documents by topic see the [docs index](../../index-en_us.md).
+ends up in a `screen` session. To browse documents by topic, see the [docs index](../../index-en_us.md).
 
 ## 1. Layers
 
@@ -26,28 +26,29 @@ utils (the primitives layer)          reusable abilities: directories, sessions,
 the JVM inside a screen session (FishingBot)
 ```
 
-Three layers carry the word "layer", so name them first. `src/commands/` is the command layer: poise's
-`#[poise::command]` functions that read values, check argument counts, turn values into numbers, `defer` and turn an
-`Err` into a reply. `lib.rs`'s `handle_*` is the command entry layer (the routing layer below): it turns the action
-enum into a business call, and it checks the permissions of everyone-commands and batch commands. The business layer
-means `bot_control`, `bot_manage`, `show` and `all_bots_control`.
+Name the layers first. `src/commands/` is the command layer: poise's `#[poise::command]` functions that read values,
+check argument counts, turn values into numbers, `defer` and turn an `Err` into a reply. `lib.rs`'s `handle_*` is the
+command entry layer (the routing layer below): it turns the action enum into a business call, and it checks the
+permissions of everyone-commands and batch commands. The business layer consists of `bot_control`, `bot_manage`,
+`all_bots_control`, `show` and `general`; below it sits the utils primitive layer.
 
 How arguments travel down: Discord hands the command layer structured options, but an option's value is still the raw
-text the user typed, so the command layer only reads it, checks numbers and passes it through (argument names start
-with `raw_`); whoever really needs a value cleans it once: bot names through `ToCleanBotName::to_clean_bot_name`
-(called when `BotDirEntry` builds an entry), in-game command fragments through `utils::ToCleanBotCommand`. Numbers
-(the `/log` line count, the `/ping` port) are the command layer's only conversion, and a failed check replies with a
-usage hint on the spot.
+text the user typed. The command layer only reads the value, checks numbers and passes it through (argument names start
+with `raw_`); the layer that actually uses it cleans it once: bot names through `ToCleanBotName::to_clean_bot_name`
+(called when `BotDirEntry` builds an entry), in-game command fragments through `utils::ToCleanBotCommand`. Number
+conversion (the `/log` line count, the `/ping` port) is the command layer's only conversion; a failed check replies with
+a usage hint on the spot.
 
 Two more chains that have nothing to do with commands:
 
-* `main.rs`: the process lifecycle. Config, the program log, starting the REST probe task early, assembling the poise
-  `Framework` and the serenity `Client`, registering commands, `client.start()`. The process only exits on SIGTERM or
-  Ctrl+C (a disconnect and `client.start()` returning both stop the bots, wait one judging window and rebuild the
-  connection).
-* `watchdog`: the gateway watchdog. It decides whether this process has lost contact with Discord (the decision is
-  pure timing; the process entry asks for the reconnect). It is the only place that decides we are offline; the rules
-  are in [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 3.
+* `main.rs`: the process lifecycle. It reads the config, initialises the program log, prepares the REST probe handle,
+  assembles the poise `Framework` and serenity `Client`, registers commands and starts the connection loop. During
+  normal operation the process exits with code 0 only on SIGTERM or Ctrl+C; permanent failures such as an invalid config
+  exit with code 1. A disconnect and `client.start()` returning do not end the process: it stops every bot, waits one
+  judging window and rebuilds the connection.
+* `watchdog`: the gateway watchdog. It decides whether this process has lost contact with Discord (the decision is pure
+  timing; the process entry requests the reconnect). It is the only place that decides we are offline; the rules are in
+  [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 3.
 
 ## 2. Directory structure
 
@@ -182,14 +183,14 @@ what are repeated here, so that the two places cannot drift apart:
 * Actions that must not run while a bot is running check the session first: `/token`, `/bot del` and `/bot rename`
   all call `is_bot_screen_running` before touching anything; the restart flow is stricter still and drops targets with
   a missing token before it stops anything.
-* There is one exit path: SIGTERM or Ctrl+C goes through `watchdog.exit_on_shutdown_signal()`, which logs first,
-  stops every bot and assembles the same wrap-up as `/stopall` (it goes into the program log and is also sent to every
-  server's notice channel), and finally exits with code 0 (systemd does not restart it). A
-  disconnect and `client.start()` returning no longer exit at all: they stop every bot, wait one judging window and
-  rebuild the connection (see [watchdog-en_us.md section 4](../watchdog/watchdog-en_us.md)); only a wrong config (an
+* There is one exit path for signals: SIGTERM or Ctrl+C goes through `watchdog.exit_on_shutdown_signal()`, which logs
+  first, stops every bot and assembles the same wrap-up as `/stopall` (it goes into the program log and is also sent to
+  every server's notice channel), and finally exits with code 0 (systemd does not restart it). A
+  disconnect and `client.start()` returning do not exit: they stop every bot, wait one judging window and rebuild the
+  connection (see [watchdog-en_us.md section 4](../watchdog/watchdog-en_us.md)); only a wrong config (an
   invalid token, the bot not being invited to the server) exits with code 1 and is handed to systemd (the unit sets
   `RestartPreventExitStatus=1`, so such an error is not restarted).
-* Both log lines and the start steps are visible: see [utils-en_us.md](../utils/utils-en_us.md) section 7 and
+* Both log streams and the startup steps are documented: see [utils-en_us.md](../utils/utils-en_us.md) section 7 and
   [process-log-en_us.md](../process-log/process-log-en_us.md).
 * Replies never overstate: say exactly as much as can be verified. `/start` and `/restart` can only confirm that the
   command was sent and the session appeared, so they say "command sent"; `/stop`'s flow re-checks on the spot that the
@@ -210,7 +211,7 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   (`all_running_bot_status_rows`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
   `into_report`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
   disk use `find_*`; predicates use `is_` and `has_`; an ID is always `*_id` (`caller_id`, `owner_id`).
-* The suffix follows the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
+* Add a suffix according to the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
   (`all_running_bots_status`); one-off probes or checks are `*_report` (`ping_report`, `checkserver_report`); data sent
   as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`). Only text that is already written out in
   full uses a bare noun (`help`, `whoami`).
@@ -238,9 +239,9 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   used in the language tables to warn about a hard convention.
 * Where keywords live: only the ones that differ per deployment and must be filled in by hand go into `[keywords]`
   (`online`, `filter_regex`); the `/pause` and `/unpause` echoes go into `[command_echo]` (`pause_echo`,
-  `unpause_echo`, changed in place when you change jar build); the reconnect message the JAR prints stays in i18n as
-  the `jar_*` methods and follows `[i18n] language`; whether the process is gone is read not from the log but from the
-  screen session shell (`(Dead ...)`).
+  `unpause_echo`; they only appear when the JAR in use supports those two commands, and are edited in place when the
+  JAR changes); the reconnect message the JAR prints stays in i18n as the `jar_*` methods and follows `[i18n] language`;
+  whether the process is gone is read not from the log but from the screen session shell (`(Dead ...)`).
 
 ## 6. Building and testing from source
 
@@ -253,15 +254,14 @@ cargo test                                    # library, command layer and publi
 ```
 
 * The default build target is musl static linking (the binary does not care about the distribution or the glibc
-  version, so it can be dropped straight onto a server). Because rustls' crypto backend needs a C compiler, `musl-gcc`
+  version, so it can be deployed directly to a server). Because rustls' crypto backend needs a C compiler, `musl-gcc`
   is needed as well (`musl` on Arch, `musl-tools` on Debian and Ubuntu), otherwise the build fails with
   `failed to find tool "x86_64-linux-musl-gcc"`.
 * The release build enables LTO, `panic = "abort"` and `strip` in `Cargo.toml`'s `[profile.release]`.
 * Changing the config structure means updating `minecraft-fishingbot-manager-for-discord.conf.example.toml` and
-  [config-en_us.md](../config/config-en_us.md) as well, otherwise `cargo test` fails (two tests pin exactly these two
+  [config-en_us.md](../config/config-en_us.md) as well, otherwise `cargo test` fails (two tests check exactly these two
   things).
-* Documentation links are verified with `cargo doc --no-deps`, which must be warning-free (`cargo check` alone cannot
-  catch a broken link).
+* Documentation links are verified with `cargo doc --no-deps` (Rustdoc comments); Markdown links are verified with `cargo test --test docs_links`.
 
 ## 7. Related documents
 

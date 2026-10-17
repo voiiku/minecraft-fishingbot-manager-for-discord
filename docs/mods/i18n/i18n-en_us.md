@@ -45,9 +45,9 @@ Deliberately not included:
   sees it at the same time, so it cannot drift.
 * Keywords tied to the game server or the local machine: the server's own join message, the local machine's end
   marker, and the spam noise to drop on your own server. They differ per deployment and stay in `[keywords]`.
-* The `/pause` and `/unpause` echoes: the jar prints them, but they only exist in a patched build with those two
-  commands, so they stay in `[command_echo]` (`pause_echo`, `unpause_echo`); change them in place when you change
-  builds, no rebuild needed.
+* The `/pause` and `/unpause` echoes: the JAR prints them; whether they appear depends on whether the JAR supports those
+  two commands, so they stay in `[command_echo]` (`pause_echo`, `unpause_echo`); change them in place when you change
+  JAR builds, no rebuild needed.
 
 ### Why the JAR's own fixed texts come in, and log content does not
 
@@ -61,11 +61,11 @@ There is one criterion: who decides this string.
   `src/text/zh_cn.rs` and `src/text/en_us.rs`, and the test
   `text::tests::jar_reconnect_messages_are_non_empty_and_distinct_in_both_languages` watches them (non-empty in both
   languages, and the two versions differ).
-* `command-pause-executed` and `command-unpause-executed` (the two command echoes) are decided by the JAR as well,
-  but they only exist in a build carrying the `/pause` and `/unpause` patch (the upstream build has no such
-  commands), so they live in `[command_echo]` as `pause_echo` and `unpause_echo`: change the config when you change
-  the jar build, no rebuild needed. Startup validation requires both to be non-empty and neither to contain the other
-  (otherwise that log line cannot be told apart).
+* `command-pause-executed` and `command-unpause-executed` (the two command echoes) are decided by the JAR as well, but
+  they are only printed when the JAR supports `/pause` and `/unpause` (upstream plans to add both commands), so they live
+  in `[command_echo]` as `pause_echo` and `unpause_echo`: change the config when you change the JAR, no rebuild needed.
+  Startup validation requires both to be non-empty and neither to contain the other (otherwise that log line cannot be
+  told apart).
 * The other way round, `online` (the join message, from the game server or a plugin) and `filter_regex` (the spam
   noise of your own server) are only known to the deployer and the JAR has no matching sentence, so they stay in
   `[keywords]`, where startup validation requires them to be non-empty.

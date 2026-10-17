@@ -38,8 +38,8 @@
   回显与 `[i18n] language`）—— 那不是第二份说明，而是取值提示，改值的人会同时看到它，因此不会漂移。
 * 与游戏服务器或本机环境有关的关键词：服务器自己的进服提示、本机环境的结束标记、自己服务器要丢掉的
   刷屏噪声。它们各部署不同，留在配置的 `[keywords]` 里。
-* `/pause` 与 `/unpause` 的回显：它由 jar 打印，但只存在于带这两条指令的补丁构建里，所以留在配置的
-  `[command_echo]`（`pause_echo`、`unpause_echo`），换构建时就地改，不必重新编译。
+* `/pause` 与 `/unpause` 的回显：它由 JAR 打印；是否出现取决于所用 JAR 是否支持这两条指令，所以留在配置的
+  `[command_echo]`（`pause_echo`、`unpause_echo`），换 JAR 时就地改，不必重新编译。
 
 ### 为什么 JAR 自己打印的固定文案要进来，而日志内容本身不进来
 
@@ -52,10 +52,10 @@
   `src/text/en_us.rs` 里一一对应，测试
   `text::tests::jar_reconnect_messages_are_non_empty_and_distinct_in_both_languages` 盯着它们（中英
   都非空、两版互不相同）。
-* `command-pause-executed`、`command-unpause-executed`（两条指令的回显）同样由 JAR 决定，但只存在于带
-  `/pause`、`/unpause` 补丁的构建里（上游原版没有这两条指令），所以
-  它们落在配置 `[command_echo]` 的 `pause_echo`、`unpause_echo` 上：换 jar 构建时改配置即可，不必重新
-  编译；启动校验要求非空、且两条不能互相包含（否则日志里那行认不出属于哪条指令）。
+* `command-pause-executed`、`command-unpause-executed`（两条指令的回显）同样由 JAR 决定，但只在所用 JAR 支持
+  `/pause`、`/unpause` 时才会打印（上游已计划加入这两条指令），所以它们落在配置 `[command_echo]` 的
+  `pause_echo`、`unpause_echo` 上：换 JAR 时改配置即可，不必重新编译；启动校验要求非空、且两条不能互相包含
+  （否则日志里那行认不出属于哪条指令）。
 * 反过来，`online`（进服提示，来自游戏服务器或插件）与 `filter_regex`（自己服务器的刷屏噪声）只有
   部署者知道，JAR 里没有对应句子，它们留在 `[keywords]` 里，由启动校验保证非空。
 * "进程已结束"既不是 jar 打的、也不进配置：它看 screen 会话状态（`(Dead ...)` 残壳，见
@@ -165,8 +165,7 @@
 
 `Text` 目前有 162 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体与
 `ConfigRequirement` 的 19 个变体，全部都有调用点。可以这样自查（第一条先用 `sed` 切出 `pub trait Text`
-到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——`command_log_attachment_body` 就是这么
-写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。后两条分别数两个枚举的变体数，`match`
+到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——`command_log_attachment_body` 就是这么写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。后两条分别数两个枚举的变体数，`match`
 是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
 
 ```bash

@@ -269,8 +269,7 @@ impl PauseCommand {
         }
     }
 
-    /// 这条命令的回显关键词：来自配置 `[command_echo]`（只有本项目用的那份补丁 jar 打印这两句，
-    /// 上游原版没有这两条指令）。
+    /// 这条命令的回显关键词：来自配置 `[command_echo]`（所用 JAR 支持 `/pause`、`/unpause` 时才会打印这两句）。
     /// 吃 `&CommandEchoConfig` 而不是自己调 `config::Config::get()`，是为了让"最后一条回显是谁的"能单测。
     fn echo_keyword(self, command_echo: &config::CommandEchoConfig) -> &str {
         match self {

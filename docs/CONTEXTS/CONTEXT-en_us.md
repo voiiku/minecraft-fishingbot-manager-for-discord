@@ -24,16 +24,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   Do not bundle FishingBot: it is a separate
   GPL-3.0 program that this project only launches with `java -jar`, without modifying or linking it; if you really do
   put the jar and the binary into one distribution, the jar part of that distribution has to be handled under GPL-3.0.
-* The FishingBot it depends on is a patched build: upstream (`MrKinau/FishingBot`, GPL-3.0) has no `/pause` and
-  `/unpause` in-game commands, and the build this project uses adds them plus their echoes (`已暂停钓鱼` and
-  `已恢复钓鱼`; the English build prints `Fishing paused` and `Fishing resumed`; both strings are copied into the
-  `[command_echo]` configuration as `pause_echo` and `unpause_echo`, so swapping the jar build needs no
-  recompilation). These two keys are kept **for now**: once upstream ships those two commands, they can move into the
-  language table and be derived from `[i18n] language` (that is the last step of the config slimming plan). Two
-  constraints follow: first, the confirmation that `/pause` and `/unpause` took effect only holds
-  on the patched jar - with the original jar it only replies "command sent" and the pause state stays "fishing";
-  second, that patch is a GPL-3.0 derivative work, so this repository contains neither it nor its jar (it is
-  maintained in a separate GPL-3.0 repository).
+* Upstream (`MrKinau/FishingBot`, GPL-3.0) plans to add the `/pause` and `/unpause` in-game commands. Until the JAR in use includes those commands, `/pause` and `/unpause` only reply "command sent" and the pause state is not updated. Their echoes remain in `[command_echo]` as `pause_echo` / `unpause_echo`, so switching to a JAR that includes them needs no rebuild; the two keys are kept for now and can move into the language table, derived from `[i18n] language`, once upstream supports them.
 * What it does: use Discord slash commands to manage [FishingBot](https://github.com/MrKinau/FishingBot)
   auto-fishing instances for many Minecraft accounts in bulk.
 * Tech stack: Rust (edition 2024), [serenity](https://github.com/serenity-rs/serenity) 0.12.5,
@@ -329,7 +320,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   generates before registration plus a hand-written `impl poise::Modal`; the reconnect notice the JAR prints itself is
   in there as well (the `jar_*` methods), so `[i18n] language` decides both "which language we speak" and "which
   language's JAR log a reconnect is matched against"; the echoes of `/pause` and `/unpause` come from the
-  `[command_echo]` configuration (only the patched build has those two lines, see the first item of section 2). The only
+  `[command_echo]` configuration (the echoes exist only when the JAR in use supports those two commands, see the first item of section 2). The only
   fixed English is the hints printed before the configuration has been read (`text::bootstrap`: the configuration file
   cannot be read or parsed, template generation, an existing configuration file having been found, the executable path, an unknown `language` value, and the
   `CONFIG_NOT_LOADED` invariant message of `config::Config::get()` and the `TEXT_NOT_INSTALLED` invariant message
@@ -352,7 +343,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   what differs per deployment and must be filled in goes into the configuration, namely `online` (the game server's own
   join message) and `filter_regex` (the spam noise your own server wants to drop); the echoes of `/pause` and
   `/unpause` go into `[command_echo]` (`pause_echo`, `unpause_echo`), not because of "who decides them" but because they
-  have to change with the patched build, and editing them in place is more practical than recompiling; only the
+  may differ between JAR builds, and editing them in place is more practical than recompiling; only the
   reconnect notice the JAR prints itself goes into the i18n `jar_*` methods (see the item above), because having the
   deployer copy it again would only add another failure point - one wrong punctuation mark and `/show status` shows
   "initialising" forever. **"The process has ended" needs neither configuration nor a keyword**: the end marker an older

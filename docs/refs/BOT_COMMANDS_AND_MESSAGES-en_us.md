@@ -1,11 +1,14 @@
-# FishingBot patched build: the complete command and message reference
+# FishingBot: command and message reference
 [简体中文](BOT_COMMANDS_AND_MESSAGES-zh_cn.md) | **English**
 
-> Applies to: `systems.kinau:FishingBot:2.13.15` (the patched build in this repository)
+> Applies to: `systems.kinau:FishingBot:2.13.15`
 > This document is for people who **drive FishingBot as a child process or a service**. It focuses on:
 > 1. every command the bot accepts (how to trigger it, and what to watch out for).
 > 2. every message the bot prints (its Chinese value and its original English value), because other projects depend on
 >    those messages.
+
+The commands available may differ slightly between versions or builds (for example `/pause` and `/unpause`); treat the
+JAR you actually run as authoritative.
 
 Every message text here is taken from the source code and the language files:
 
@@ -122,7 +125,7 @@ Command line arguments (`Main.java`, based on Apache Commons CLI):
 5. There is no permission system: any player who can send `botname, command` in the server chat can drive the bot, with
    no allowlist or admin check. Restrict it yourself when you put it on a public server.
 
-### 2.3 The command table (every built-in command)
+### 2.3 The command table
 
 * `help` (syntax: `/help [command]`): show the help, or the syntax of one command.
 * `bye` (aliases: `stop`, `shutdown`; syntax: `/bye`): stop the bot (blocking reconnects, `stopBot(true)`).

@@ -1,147 +1,126 @@
-# 常见故障提示与排查
+# 常见故障与排查
 [English](troubleshooting-en_us.md) | **简体中文**
 
-一些常见的故障与提示。
+以下按现象列出常见故障及处理方式。
 
 ## 1. 日志位置
 
-本程序维护两类日志
-* 程序日志：`<部署目录>/logs/年-月-日-时-分-秒.log`。每次启动时创建一份新日志，管理员手动清理。
-* 钓鱼机器人日志（过滤后）：`<部署目录>/bots/<用户 ID>/<机器人名>/logs/年-月-日-时-分-秒.log`，`/log`读的就是它。
+本程序维护两类日志：
 
-FishingBot.jar 自己的原始日志默认被指向 `/dev/null` 丢弃，所以默认情况下，钓鱼机器人的日志只保留过滤后的内容，你可以修改配置以改变此行为。
+* 程序日志：`<部署目录>/logs/年-月-日-时-分-秒.log`。每次启动创建一份新日志，由管理员手动清理。
+* 钓鱼机器人日志（过滤后）：`<部署目录>/bots/<用户 ID>/<机器人名>/logs/年-月-日-时-分-秒.log`，`/log` 读取的就是它。
 
-## 2. Discord 里输入 `/` 后看不到本项目的指令
+FishingBot.jar 自身的原始日志默认写入 `/dev/null` 并丢弃，因此磁盘上只保留过滤后的机器人日志。该行为可通过 `[raw_game_logs]` 修改。
 
-1. 邀请链接缺少 `applications.commands` 这个 scope。用程序启动日志里打印的邀请链接重新邀请一次。
-2. 指令是全局注册的，最长要等 1 小时才能传播完。
-3. 程序不在运行。查看 `systemctl status minecraft-fishingbot-manager-for-discord` 或日志。
+## 2. Discord 中输入 `/` 后看不到本项目的指令
 
-## 3. 指令交互失败
+1. 邀请链接缺少 `applications.commands` scope。使用程序启动日志中打印的邀请链接重新邀请。
+2. 斜杠指令全局注册，最长需要 1 小时传播。
+3. 程序未运行。检查 `systemctl status minecraft-fishingbot-manager-for-discord` 或程序日志。
 
-1. 机器人异常崩溃。看 `<部署目录>/logs/` 下的最新程序日志；钓鱼机器人的日志用 `/log <机器人名>` 看。
-2. 机器人在该频道没有 Send Messages 权限。
-3. 极少数情况是网络波动导致 3 秒内未应答指令，超时失败。
+## 3. 指令执行失败或无响应
 
-## 4. 程序日志文件中没有框架（serenity、poise）的日志
+1. 机器人异常退出。查看 `<部署目录>/logs/` 下最新的程序日志；机器人日志用 `/log <机器人名>` 查看。
+2. 机器人在该频道缺少 Send Messages 权限。
+3. 网络波动导致 Discord 在 3 秒内未收到应答，交互超时（少见）。
 
-默认情况下：框架的日志只记录 `WARN`/`ERROR` 级别，因为它们按心跳节奏打印大量重复的 `INFO`，把配置里
-`[log] debug` 改成 `true` 后重启本程序生效（级别只看这一行配置，没有环境变量可以覆盖它，也无法临时放宽）。
+## 4. 程序日志中没有框架（serenity、poise）的日志
+
+默认情况下，框架日志只记录 `WARN` 与 `ERROR`：serenity、poise 会按心跳持续输出大量重复的 `INFO`。将配置中的 `[log] debug` 设为 `true` 并重启程序即可记录；级别只由该配置项决定，没有环境变量或临时开关可以覆盖。
 
 ## 5. 程序日志显示 `Discord 初始化失败: Missing Access`，进程连上 Discord 后立即退出
 
-机器人可能没有被邀请进任何服务器，或邀请时缺少 `applications.commands` 权限，所以在注册斜杠指令时 Discord
-返回 `50001 Missing Access`。用程序启动日志里打印的邀请链接重新邀请一次机器人。
+机器人可能未被邀请加入任何服务器，或邀请时缺少 `applications.commands` scope，导致注册斜杠指令时 Discord 返回 `50001 Missing Access`。使用启动日志中打印的邀请链接重新邀请。
 
-## 6. `/start` 成功发送，但机器人并不存在
+## 6. `/start` 报告成功，但机器人没有运行
 
-用 `/log <机器人名>` 查看机器人最新日志。常见原因：
+使用 `/log <机器人名>` 查看机器人最新日志。常见原因：
 
-1. `refreshToken` 失效。
-2. `runtime.java_opts` 与 jar 不匹配、内存不足被杀。
+1. `refreshToken` 已失效。
+2. `runtime.java_opts` 与 JAR 不匹配，或内存不足导致进程被杀。
 
-## 7. 日志显示 `NeverReady`（启动后一直没握手成功）
+## 7. 日志显示 `NeverReady`（启动后始终未完成握手）
 
-* 网络测试：`curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway`，状态为 `200`
-  说明网络正常。
-* 再检查配置中的 `[discord] token` 无误。
-* 使用代理时请注意：WebSocket 不会被 HTTP 代理，建议使用 TUN 模式。
+* 网络连通性：`curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway`，返回 `200` 表示可以访问 Discord API。
+* 检查 `[discord] token` 是否正确（多余空格或缺少片段都会导致失败）。
+* 使用代理时注意：HTTP 代理通常无法转发 WebSocket，建议使用 TUN 模式。
 
 ## 8. 日志显示 `Unreachable`
 
-可能是断网、代理节点错误、Token 被 Reset 等原因。
+可能原因包括网络中断、代理节点异常或 Token 被重置。
 
-如果你的网络延迟较高或经常抖动，把配置里的 `timing.watchdog_window_ms` 调大即可：探活间隔（它的 1/3）与
-首次握手超时（它的 2 倍）跟着它一起变。判定细节见 [watchdog.md 第 5 节](../mods/watchdog/watchdog-zh_cn.md#5-常见排查)。
+若网络延迟较高或经常抖动，可增大 `timing.watchdog_window_ms`：探活间隔（其 1/3）与首次握手超时（其 2 倍）会随之变化。判定细节见 [watchdog.md 第 5 节](../mods/watchdog/watchdog-zh_cn.md#5-常见排查)。
 
-## 9. 钓鱼机器人的日志内容很少/有些信息没被记录
+## 9. 钓鱼机器人日志内容很少，部分信息未记录
 
-这是预期结果：过滤规则在生效。被过滤的行默认会被丢弃，你可以更改配置文件以修改行为。
-你可以尝试修改配置文件的 `keywords.filter_regex` 中对应的表达式后重启进程。
+这是预期行为：过滤规则正在生效。匹配 `keywords.filter_regex` 的行默认会被丢弃；删除对应表达式并重启进程后，新会话的日志中会重新出现这些行。
 
-## 10. 钓鱼机器人显示状态与实际情况不匹配
+## 10. 钓鱼机器人显示状态与实际不符
 
-日志关键词与游戏服务器的实际消息不匹配。查看配置文件中的 `[keywords]`。
-* 如果是"重连"或 `/pause` 认不出来，先看 `[i18n] language` 是不是你的 JAR 实际输出的语言。
-* 重连提示，`/pause` 与 `/unpause` 的回显是 jar 的固定文案，随语言设置而变化，无法指定配置。
-机制见 [i18n.md](../mods/i18n/i18n-zh_cn.md)。
+日志关键词与游戏服务器实际输出的消息不一致。检查配置中的 `[keywords]`。
 
-## 11. `/startall` 有一些机器人启动失败
+* 重连提示或 `/pause` 无法识别时，先确认 `[i18n] language` 与 JAR 实际输出的语言一致。
+* 重连提示与 `/pause`、`/unpause` 的回显是 JAR 的固定文案，随语言设置变化，不能单独配置。机制见 [i18n.md](../mods/i18n/i18n-zh_cn.md)。
 
-* 微软按出口 IP 限制登录频率。`/start`、`/startall`、`/restart` 与 `/restartall` 共用全局启动队列：
-  随仓库发布的示例配置是两次登录至少间隔 20 秒（`[startup_queue] bot_login_interval_ms`），可自行调整
-  `max_batch_size` 与 `bot_login_interval_ms`；机制、真实登录间隔的算法与推荐取值见第 12 节。
-* 批量启动的瞬时内存峰值可能超过服务器可用内存，被杀掉的进程不会出现在 `screen -list` 里，所以结果里会
-  显示"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。缓解办法：把配置中的 `runtime.java_opts` 内存
-  配额调小，或把 `timing.check_grace_ms` 与 `[startup_queue] bot_login_interval_ms` 调大，或稍后重试（JVM
-  内存占用会随时间下降）。
+## 11. 使用 `/startall` 时部分机器人启动失败
 
-## 12. 每次启动都固定失败同一台机器人（微软登录限流）
+* 微软按出口 IP 限制登录频率。`/start`、`/startall`、`/restart` 与 `/restartall` 共用全局启动队列。示例配置使用 `max_batch_size = 1` 与 `batch_login_interval_ms = 20000`，即两次登录至少间隔 20 秒；若增大批大小，还需把 `bot_login_interval_ms` 设为 18–20 秒。机制、实际登录间隔的计算方式与推荐取值见第 12 节。
+* 批量启动的瞬时内存峰值可能超过服务器可用内存。被系统杀掉的进程不会出现在 `screen -list` 中，因此报告会显示“启动失败（常见原因是微软拒绝频繁登录或内存不足）”。可减小 `runtime.java_opts` 的堆上限；若 `max_batch_size` 大于 1，可调小它，或增大 `bot_login_interval_ms` 以错开登录；内存暂时紧张时可稍后重试（JVM 内存占用会随时间下降）。如需让复核覆盖更长的启动阶段，可增大 `timing.check_grace_ms`。
 
-现象：`/startall` 的报告把某台机器人算成"启动命令已发送，会话已出现"，但随后的 `/show status` 里没有它；
-与账号无关，**固定是登录次序靠后的那一台**（通常就是最后一台），而同一个账号稍后单独 `/start` 又能起来。
+## 12. 固定某台机器人启动失败（微软登录限流）
 
-原因：XSTS 换 Minecraft 令牌那一步（`POST https://api.minecraftservices.com/authentication/login_with_xbox`）
-按**出口 IP** 限流，超限返回 `HTTP 429`。FishingBot 不检查状态码、直接取响应里的 `access_token`，于是抛异常，
-进程在启动后 2~5 秒自己退出。它会不会被算成失败，取决于复核窗口：
+现象：`/startall` 报告将某台机器人计为“启动命令已发送，会话已出现”，但随后 `/show status` 中看不到它。失败与账号无关，始终是登录次序靠后的机器人（通常是最后一台）；同一账号稍后单独 `/start` 可以成功。
 
-* 复核 = 两次会话快照（拉起后立即一次、等满 `timing.check_grace_ms` 一次），**整批拉起完**就进入复核。
-  台数越少窗口越贴近启动瞬间：`max_batch_size = 1`（每台单独一批）与收尾的不足一批都只有约
-  一个 `timing.check_grace_ms`，所以"2~5 秒后被 429 拒"常常来不及看见，被报成成功。
+原因：XSTS 换取 Minecraft 令牌的请求（`POST https://api.minecraftservices.com/authentication/login_with_xbox`）按**出口 IP** 限流，超限返回 `HTTP 429`。FishingBot 不检查状态码，直接读取响应中的 `access_token`，随后抛出异常，进程在启动后 2–5 秒退出。是否被报告为失败取决于复核窗口：
 
-真实登录间隔（限流看的就是它）由 `[startup_queue]` 的两个间隔键决定：
+* 复核通过两次会话快照完成：整批机器人拉起后立即一次，等满 `timing.check_grace_ms` 后一次。批次越小，窗口越接近启动瞬间：`max_batch_size = 1`（每台单独一批）以及末尾不足一批时，只有约一个 `check_grace_ms` 的观察时间，因此 2–5 秒后发生的 429 拒绝常常无法被发现，最终被报告为成功。
+
+限流实际依据的登录间隔由 `[startup_queue]` 的两个间隔键决定：
 
 * 批内相邻两台：`bot_login_interval_ms`；
 * 上一批最后一台 → 下一批第一台：`batch_login_interval_ms` 减去本批从出队到最后一台拉起已过去的时间（复核在命令侧并行进行，不占这段等待）。
 
-同一出口 IP 上的经验值：**≥20 秒一次（约 3 次/分）稳定**；12 秒一次（5 次/分）会掉最后一次；几秒内连发会直接
-触发惩罚窗口，之后几十秒内的登录全部被拒。同一出口 IP 上其它登录（官方启动器、另一个实例、手动登录）也占额度。
+同一出口 IP 的经验值：每 20 秒一次（约 3 次/分）稳定；每 12 秒一次（5 次/分）会丢失最后一次；数秒内连续登录会触发惩罚窗口，随后数十秒内的登录全部被拒绝。同一出口 IP 上的其他登录（官方启动器、另一实例、手动登录）也占用同一份额度。
 
 处置：
 
-1. 把 `[startup_queue] bot_login_interval_ms` 设到 18~20 秒（示例配置给的是 20000）。`max_batch_size` 取多少不影响
-   节奏，它只改变复核窗口的长度与 JVM 启动时的内存峰值。
-2. 失败的那台等 3~5 分钟再补（`/start <机器人名>` 或 `/restart <机器人名>`），不要立刻重试。
-3. 要真正提速只有两条路：用多个出口 IP；或让 JAR 复用 Minecraft access token（有效期 24 小时），
-   不要每次启动都重新登录。
-4. 与"内存不足"（第 11 节的第二种原因）的区别：限流的进程在启动后 2~5 秒自己退出，日志里有认证相关报错；
-   被 OOM 杀掉的是 0.3 秒内就没了，日志为空或写着 `Killed`，`dmesg` 里能看到。
+1. 确保实际登录间隔为 18–20 秒：示例配置使用 `max_batch_size = 1` 与 `batch_login_interval_ms = 20000`；若增大批大小，还需把 `bot_login_interval_ms` 设为 18–20 秒。`max_batch_size` 本身不决定最小间隔，它决定批内与批间两个间隔键如何组合。
+2. 失败的机器人等待 3–5 分钟后再启动（`/start <机器人名>` 或 `/restart <机器人名>`），不要立即重试。
+3. 要显著提高启动速度，主要只有两种方式：使用多个出口 IP，或让 JAR 复用 Minecraft access token（有效期 24 小时），避免每次启动都重新登录。
+4. 与内存不足的区别（第 11 节）：被限流的进程在启动后 2–5 秒自行退出，日志中有认证相关报错；被 OOM 杀掉的进程通常在 0.3 秒内消失，日志为空或包含 `Killed`，`dmesg` 中可见记录。
 5. 配置项细节见 [config-zh_cn.md](../mods/config/config-zh_cn.md)。
 
-## 13. 我改了配置，正在跑的机器人会受影响吗
+## 13. 修改配置后，正在运行的机器人会受影响吗
 
-不会。配置只在启动时读一次并加载进内存，运行中改动（甚至删除）配置文件都不影响已跑的进程；修改配置要重启本程序才生效。
+不会。配置只在启动时读取一次并常驻内存。运行中修改甚至删除配置文件都不会影响已启动的进程；修改后需重启本程序才会生效。
 
-## 14. 怎么确认僵尸机器人
+## 14. 如何检查残留的机器人进程
 
 ```bash
-screen -ls | grep fb_                 # 根据你配置文件中定义的前缀
-pgrep -af "java .*-refreshToken"      # 根据你配置文件中定义的 Token 文件名
+screen -ls | grep fb_                 # 根据配置中的会话名前缀调整
+pgrep -af "java .*-refreshToken"      # 根据配置中的 Token 文件名调整
 ```
 
-如果有僵尸机器人就使用 `/stopall`（停止所有钓鱼机器人），或 `pkill` 掉那些 JVM，或重启本程序。
+若发现残留进程，可使用 `/stopall` 停止全部钓鱼机器人、用 `pkill` 终止对应 JVM，或重启本程序。
 
-## 15. 升级版本后，启动时配置字段报错
+## 15. 升级后启动时提示配置字段错误
 
-本程序会在启动时校验配置合法性，并拒绝任何未知字段。
-你可以尝试删掉旧配置文件，然后运行本程序，它会重新生成一份最新的配置模板。
+本程序会在启动时校验配置，并拒绝未知字段。升级后可先备份，再删除旧配置文件并重新运行，程序会生成最新模板。
 
-本次精简动过的字段（示例配置模板已同步）：
+本次配置调整涉及的字段（示例模板已同步更新）：
 
-* `[startup_queue] batch_cooldown_ms` 改名为 `bot_login_interval_ms`：含义从"批间冷却"变成"两次登录之间的
-  最小间隔"（批内相邻两台按它错峰），原来的 `[timing] stagger_ms` 被它取代。
-* `[timing]` 删除了 `probe_interval_ms` 与 `first_handshake_timeout_ms`：它们由 `watchdog_window_ms`
-  派生（探活间隔是窗口的 1/3，首次握手超时是窗口的 2 倍）。
+* `[startup_queue] batch_cooldown_ms` 改为 `bot_login_interval_ms`：含义从“批间冷却”变为“两次登录之间的最小间隔”（批内机器人也按此间隔错开），并取代原 `[timing] stagger_ms`。
+* `[timing]` 移除 `probe_interval_ms` 与 `first_handshake_timeout_ms`：两者由 `watchdog_window_ms` 派生（探活间隔为其 1/3，首次握手超时为其 2 倍）。
 
-## 16. 同一条指令被回复多次
+## 16. 同一条指令收到多次回复
 
-某些指令无法立即确认，所以会稍后再追加回复一些消息。
-如果一模一样的回复重复出现，说明你在服务器上同时运行了多个机器人，尝试全部关停，并再次启动一个机器人。
-* 一台机器上同时运行多个机器人是合法的，你应该为他们配置不同的工作目录，并确保配置不存在冲突（尤其是会话名前缀），此时他们可以各自作为独立的服务，服务不同游戏服务器的自动钓鱼群聊。
+部分指令无法立即确认，因此会在稍后补充回复。若完全相同的回复出现两次，通常是有多个进程使用了同一个 Bot Token；先全部停止，再只启动一个实例。
+
+* 同一台机器可以运行多个实例，但每个实例应使用独立的工作目录、配置与 Bot Token，并避免冲突（尤其是会话名前缀）。这样它们可以作为独立服务，分别管理不同游戏服务器上的机器人。
 
 ## 17. 相关文档
 
-* [tutorial/tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md)：从零开始的部署教程（本文件的多数结论在那边有上下文）；
-* [config-zh_cn.md 第 3.2 节](../mods/config/config-zh_cn.md#32-游戏侧配置confjson是生成物)：游戏侧 `conf.json` 是生成物这条规则；
-* [i18n.md](../mods/i18n/i18n-zh_cn.md)：`[i18n] language` 怎么同时决定我们说哪种语言、按哪种语言认 jar 的重连提示；
+* [tutorial/tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md)：从零开始的部署教程（本文件的多数结论在那边有上下文）。
+* [config-zh_cn.md 第 3.2 节](../mods/config/config-zh_cn.md#32-游戏侧配置confjson是生成物)：游戏侧 `conf.json` 是生成物的规则。
+* [i18n.md](../mods/i18n/i18n-zh_cn.md)：`[i18n] language` 如何同时决定本程序与 FishingBot 使用的语言，以及关键词如何随语言变化。
 * [watchdog.md 第 5 节](../mods/watchdog/watchdog-zh_cn.md#5-常见排查)：`NeverReady`、`Unreachable` 的判定与排查。

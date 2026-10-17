@@ -65,7 +65,7 @@ java -version     # Confirm it worked (printing the version you installed is eno
 sudo mkdir -p /fishingbots && sudo chown "$USER" /fishingbots
 cd /fishingbots
 
-# Download FishingBot.jar. The patched build with the in-game /pause and /unpause commands is recommended.
+# Download FishingBot.jar
 curl -LO https://github.com/MrKinau/FishingBot/releases/download/v2.13.15/FishingBot-2.13.15.jar
 ```
 

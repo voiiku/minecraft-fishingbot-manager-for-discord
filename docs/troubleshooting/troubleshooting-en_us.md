@@ -1,153 +1,126 @@
 # Troubleshooting
 **English** | [简体中文](troubleshooting-zh_cn.md)
 
-Some common problems and tips.
+Common problems and how to diagnose them.
 
 ## 1. Where are the logs?
 
-This program keeps two kinds of logs:
+This program writes two kinds of logs:
 
-* Program log: `<deployment directory>/logs/year-month-day-hour-minute-second.log`. A new file is created at every startup; administrators clean them up by hand.
-* Fishing bot logs (after filtering): `<deployment directory>/bots/<user ID>/<bot name>/logs/year-month-day-hour-minute-second.log`. This is what `/log` reads.
+* Program log: `<deployment directory>/logs/year-month-day-hour-minute-second.log`. A new file is created at every startup and cleaned up manually by the administrator.
+* Fishing bot log (after filtering): `<deployment directory>/bots/<user ID>/<bot name>/logs/year-month-day-hour-minute-second.log`. This is the log `/log` reads.
 
-FishingBot.jar’s own raw log is directed at `/dev/null` and discarded, so on disk each fishing bot only keeps the filtered log. You can change that in the config.
+FishingBot.jar's own raw log is written to `/dev/null` and discarded by default, so only the filtered log remains on disk. Change this through `[raw_game_logs]`.
 
-## 2. The project’s commands do not appear after I type `/` in Discord
+## 2. The project's commands do not appear after typing `/` in Discord
 
-1. The invite link did not include the `applications.commands` scope. Invite the bot again using the link printed in the program’s startup log.
-2. Commands are registered globally, so it can take up to an hour for them to propagate.
-3. The program is not running. Check `systemctl status minecraft-fishingbot-manager-for-discord` or inspect the logs.
+1. The invite link is missing the `applications.commands` scope. Re-invite the bot with the link printed in the startup log.
+2. Slash commands are registered globally; propagation can take up to one hour.
+3. The program is not running. Check `systemctl status minecraft-fishingbot-manager-for-discord` or the program log.
 
-## 3. Command interaction failed
+## 3. A command fails or does not respond
 
-1. The bot crashed unexpectedly. Check the newest program log under `<deployment directory>/logs/`; use
-   `/log <bot name>` for the fishing bot's log.
-2. The bot does not have the Send Messages permission in that channel.
-3. In rare cases, a network interruption prevents the command from being acknowledged within three seconds, so the interaction times out.
+1. The bot exited unexpectedly. Check the newest program log under `<deployment directory>/logs/`; use `/log <bot name>` for the bot log.
+2. The bot lacks the Send Messages permission in that channel.
+3. A network interruption prevented Discord from receiving the acknowledgement within three seconds, so the interaction timed out (rare).
 
-## 4. The program log file contains no framework (serenity, poise) logs
+## 4. The program log contains no framework (serenity, poise) logs
 
-By default, framework logs are recorded at `WARN` and `ERROR` only. The frameworks emit a large amount of repetitive `INFO` output with each heartbeat. Set `[log] debug` to `true` in the config and restart this program to enable it (the level comes from that one config line; no environment variable can override it, so there is no way to widen it temporarily).
+By default, framework logs are limited to `WARN` and `ERROR`: serenity and poise emit large amounts of repetitive `INFO` output on every heartbeat. Set `[log] debug` to `true` and restart the program to record them. The level is controlled only by this setting; no environment variable or temporary override exists.
 
-## 5. The program log says `Discord initialization failed: Missing Access`, and the process exits right after connecting to Discord
+## 5. The program log says `Discord initialization failed: Missing Access`, and the process exits right after connecting
 
-The bot may not have been invited to any server, or the invite may have been missing the `applications.commands` scope. When registering slash commands, Discord then returns `50001 Missing Access`. Invite the bot again using the invite link printed in the startup log.
+The bot may not have been invited to any server, or the invite may have lacked the `applications.commands` scope, so Discord returns `50001 Missing Access` while registering slash commands. Re-invite the bot with the link printed in the startup log.
 
 ## 6. `/start` reports success, but the bot is not running
 
-Use `/log <bot name>` to view the bot’s latest log. Common causes:
+Use `/log <bot name>` to view the bot's latest log. Common causes:
 
-1. `refreshToken` has expired or become invalid.
-2. `runtime.java_opts` does not match the jar, or the process was killed because of insufficient memory.
+1. `refreshToken` is no longer valid.
+2. `runtime.java_opts` does not match the JAR, or the process was killed because of insufficient memory.
 
-## 7. The log shows `NeverReady` (the handshake never succeeds after startup)
+## 7. The log shows `NeverReady` (the handshake never completes after startup)
 
-* Test the network: `curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway`. A status of `200` indicates that the network is reachable.
-* Check that `[discord] token` is correct (an extra space or a missing segment is enough to make it fail).
-* If outbound traffic is blocked or a proxy is required, note that WebSocket traffic does not use an HTTP proxy. TUN mode is recommended.
+* Network reachability: `curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway`; a status of `200` means Discord's API is reachable.
+* Check that `[discord] token` is correct (an extra space or a missing segment is enough to fail).
+* When using a proxy, note that HTTP proxies generally do not forward WebSocket traffic; TUN mode is recommended.
 
 ## 8. The log shows `Unreachable`
 
-This can happen because the network is disconnected, the proxy node is incorrect, or the token has been reset.
-If network latency is high or unstable, increase `timing.watchdog_window_ms` in the config: the probe interval (a third of it) and the first-handshake timeout (twice it) follow it. See [watchdog.md, section 5](../mods/watchdog/watchdog-en_us.md#5-common-problems) for the detection details.
+Possible causes include a network outage, an incorrect proxy node, or a reset token.
+
+If network latency is high or unstable, increase `timing.watchdog_window_ms`: the probe interval (one third of it) and the first-handshake timeout (twice it) follow it. See [watchdog.md, section 5](../mods/watchdog/watchdog-en_us.md#5-common-problems) for the detection details.
 
 ## 9. The fishing bot log contains very little output
 
-A small number of log lines is expected: the filtering rules are working. Lines that match the filters are discarded by default; you can change this behavior in the config.
-Try removing the relevant expression from `keywords.filter_regex` and restarting the process. Those lines should then appear in logs from new sessions.
+This is expected: the filters are working. Lines matching `keywords.filter_regex` are discarded by default; remove the matching expression and restart the process to see those lines again in logs from new sessions.
 
-## 10. The fishing bot’s reported state does not match what is happening in game
+## 10. The reported bot state does not match what is happening in game
 
-The log keywords do not match the messages actually emitted by the game server. Check `[keywords]` in the config.
-If reconnects or `/pause` are not recognized, first check whether `[i18n] language` matches the language actually used in the JAR’s output.
-Reconnect messages and the replies to `/pause` and `/unpause` are fixed JAR text that varies with the language setting; they cannot be configured. See [i18n.md](../mods/i18n/i18n-en_us.md) for how this works.
+The log keywords do not match the messages the game server actually emits. Check `[keywords]`.
+
+* If reconnects or `/pause` are not recognized, first verify that `[i18n] language` matches the language the JAR actually outputs.
+* Reconnect messages and the `/pause` / `/unpause` echoes are fixed JAR text that changes with the language setting; they cannot be configured separately. See [i18n.md](../mods/i18n/i18n-en_us.md) for how this works.
 
 ## 11. Some bots fail to start with `/startall`
 
-* Microsoft rate-limits sign-ins per egress IP. `/start`, `/startall`, `/restart` and `/restartall` share a global start
-  queue. The shipped example config leaves at least 20 seconds between two sign-ins
-  (`[startup_queue] bot_login_interval_ms`); tune `max_batch_size` and `bot_login_interval_ms` as needed. See section 12 for the
-  mechanism, how the real gap between two sign-ins is computed, and the recommended values.
-* The transient memory peak during a batch start may exceed the server’s available memory. A process killed this way will not appear in `screen -list`, so the result may say: “Bot X: failed to start (usually because Microsoft refuses frequent logins, or out of memory)”. To mitigate this, reduce the memory allocation in `runtime.java_opts`, increase `timing.check_grace_ms` and `[startup_queue] bot_login_interval_ms`, or retry later (JVM memory usage decreases over time).
+* Microsoft rate-limits sign-ins per egress IP. `/start`, `/startall`, `/restart` and `/restartall` share a global start queue. The example config uses `max_batch_size = 1` and `batch_login_interval_ms = 20000`, so sign-ins are at least 20 seconds apart; if you increase the batch size, set `bot_login_interval_ms` to 18-20 seconds as well. See section 12 for the mechanism, how the actual sign-in gap is computed, and the recommended values.
+* The transient memory peak of a batch start may exceed the server's available memory. A process killed by the system does not appear in `screen -list`, so the report may say "failed to start (usually because Microsoft refuses frequent logins, or out of memory)". To reduce the peak, lower the heap limit in `runtime.java_opts`; if `max_batch_size` is greater than 1, reduce it, or increase `bot_login_interval_ms` to stagger sign-ins; if memory is temporarily tight, retry later (JVM memory usage decreases over time). Increase `timing.check_grace_ms` if the verification window needs to cover a longer startup phase.
 
 ## 12. The same bot fails to start every time (Microsoft sign-in rate limit)
 
-Symptom: the `/startall` report counts a bot as "the start command was sent, the session appeared", but the bot is
-missing from the `/show status` you run right after; the account does not matter — it is **the one late in the launch
-order** (usually the last one), and starting that same account on its own later works.
+Symptom: the `/startall` report counts a bot as "start command sent, session appeared", but that bot is missing from the `/show status` you run afterwards. The failure is not account-specific: it is always the bot late in the launch order (usually the last one), while starting the same account alone later succeeds.
 
-Cause: the XSTS -> Minecraft token step (`POST https://api.minecraftservices.com/authentication/login_with_xbox`) is
-rate-limited per **egress IP** and answers `HTTP 429` once you exceed it. FishingBot does not check the status code; it
-reads `access_token` straight out of the response, so it throws, and the process exits by itself 2-5 seconds after
-launch. Whether that is reported as a failure depends on the verification window:
+Cause: the XSTS -> Minecraft token request (`POST https://api.minecraftservices.com/authentication/login_with_xbox`) is rate-limited per **egress IP** and returns `HTTP 429` when the limit is exceeded. FishingBot does not check the status code; it reads `access_token` directly from the response, throws an exception, and the process exits 2-5 seconds after launch. Whether the failure is reported depends on the verification window:
 
-* Verification is two `screen -list` snapshots taken **after the whole batch is up, plus
-  one `timing.check_grace_ms`**. The smaller the batch, the closer that window sits to the launch:
-  with `max_batch_size = 1` (one bot per batch) and for the trailing partial batch the only check happens about
-  one `timing.check_grace_ms` after launch, so "rejected by a 429 after 2-5 seconds" is often invisible and gets
-  reported as a success.
+* Verification takes two `screen -list` snapshots: one immediately after the whole batch has launched, and one after `timing.check_grace_ms`. The smaller the batch, the closer this window is to launch: with `max_batch_size = 1` (one bot per batch) and for the trailing partial batch, the observation covers only about one `check_grace_ms`, so a 429 rejection 2-5 seconds after launch often goes unnoticed and is reported as success.
 
-The real gap between two sign-ins (what the rate limit actually sees) is set by the two interval keys in
-`[startup_queue]`:
+Rate limiting sees the actual gap between sign-ins, which is controlled by the two interval keys in `[startup_queue]`:
 
-* two bots inside one batch: `bot_login_interval_ms`;
-* last bot of a batch -> first bot of the next batch: `batch_login_interval_ms` minus the time already spent since the
-  batch was popped through the launch of its last bot (the verification runs in parallel on the command side and does
-  not consume this wait).
+* two bots within one batch: `bot_login_interval_ms`;
+* last bot of a batch -> first bot of the next batch: `batch_login_interval_ms` minus the time elapsed since the batch was popped through the launch of its last bot (verification runs in parallel on the command side and does not consume this wait).
 
-Empirical values for one egress IP: **one sign-in every 20 seconds (about 3 per minute) is stable**; one every 12
-seconds (5 per minute) loses the last one; several sign-ins within a few seconds trip a penalty window, and every
-sign-in for the next few tens of seconds is rejected. Other sign-ins from the same egress IP (the official launcher,
-another instance, a manual login) spend the same budget.
+Empirical values for one egress IP: one sign-in every 20 seconds (about 3 per minute) is stable; one every 12 seconds (5 per minute) loses the last one; several sign-ins within a few seconds trigger a penalty window, and every sign-in for the next few tens of seconds is rejected. Other sign-ins from the same egress IP (the official launcher, another instance, a manual login) count against the same budget.
 
 What to do:
 
-1. Set `[startup_queue] bot_login_interval_ms` to 18-20 seconds (the shipped example uses 20000). `max_batch_size` does not
-   change the pace: it only changes the length of the verification window and the JVM memory peak.
-2. Wait 3-5 minutes before starting the failed bot again (`/start <bot name>` or `/restart <bot name>`); do not retry
-   immediately.
-3. There are only two ways to really go faster: use more than one egress IP, or let the JAR reuse the Minecraft access
-   token (valid for 24 hours) instead of signing in on every start.
-4. How this differs from "not enough memory" (the second cause in section 11): a rate-limited process exits by itself
-   2-5 seconds after launch and its log shows authentication errors, while a process killed by the OOM killer is gone
-   within 0.3 seconds, its log is empty or says `Killed`, and `dmesg` shows it.
+1. Ensure the effective sign-in gap is 18-20 seconds: the example config uses `max_batch_size = 1` and `batch_login_interval_ms = 20000`; if you increase the batch size, set `bot_login_interval_ms` to 18-20 seconds as well. `max_batch_size` does not set the minimum gap itself; it determines how the two interval keys combine within and between batches.
+2. Wait 3-5 minutes before starting the failed bot again (`/start <bot name>` or `/restart <bot name>`); do not retry immediately.
+3. There are only two main ways to speed up starts significantly: use multiple egress IPs, or let the JAR reuse the Minecraft access token (valid for 24 hours) instead of signing in on every start.
+4. How this differs from "not enough memory" (the second cause in section 11): a rate-limited process exits by itself 2-5 seconds after launch and its log shows authentication errors, while a process killed by the OOM killer is gone within 0.3 seconds, its log is empty or contains `Killed`, and `dmesg` records it.
 5. Field-by-field details are in [config-en_us.md](../mods/config/config-en_us.md).
 
 ## 13. Will changing the config affect bots that are already running?
 
-No. The config is read once at startup and kept in memory. Changes made while the program is running, including deleting the config file, do not affect existing processes. Restart this program for the new config to take effect.
+No. The config is read once at startup and kept in memory. Editing or even deleting the config file while the program runs does not affect running processes; restart the program for changes to take effect.
 
-## 14. How can I check for orphaned bots?
+## 14. How can I check for orphaned bot processes?
 
 ```bash
-screen -ls | grep fb_                 # Use the prefix defined in your config
-pgrep -af "java .*-refreshToken"      # Use the token filename defined in your config
+screen -ls | grep fb_                 # Adjust to the session prefix in your config
+pgrep -af "java .*-refreshToken"      # Adjust to the token filename in your config
 ```
 
-If you find orphaned bots, use `/stopall` to stop all fishing bots, terminate those JVMs with `pkill`, or restart this program.
+If orphaned processes remain, use `/stopall` to stop all fishing bots, terminate the JVMs with `pkill`, or restart the program.
 
-## 15. A config field is rejected at startup after upgrading
+## 15. Startup rejects a config field after an upgrade
 
-At startup, this program validates the config and rejects unknown fields. After upgrading, you can delete the old config file and run the program to generate a fresh template with the latest fields.
+At startup, this program validates the config and rejects unknown fields. After an upgrade, back up the old config first, then delete it and run the program again to generate the latest template.
 
-Fields touched by this slimming (the shipped template is already updated):
+Fields changed by the config cleanup (the shipped template is already updated):
 
-* `[startup_queue] batch_cooldown_ms` is now `bot_login_interval_ms`: the meaning changed from "cooldown between batches"
-  to "the minimum gap between two sign-ins" (bots inside a batch are spaced by it), and it replaces the former
-  `[timing] stagger_ms`.
-* `[timing]` no longer has `probe_interval_ms` and `first_handshake_timeout_ms`: they are derived from
-  `watchdog_window_ms` (the probe interval is a third of the window, the first-handshake timeout twice it).
+* `[startup_queue] batch_cooldown_ms` is now `bot_login_interval_ms`: the meaning changed from "cooldown between batches" to "the minimum gap between two sign-ins" (bots within a batch are also spaced by it), replacing the former `[timing] stagger_ms`.
+* `[timing]` no longer has `probe_interval_ms` or `first_handshake_timeout_ms`: both are derived from `watchdog_window_ms` (the probe interval is one third of the window, the first-handshake timeout twice it).
 
-## 16. The same command is answered twice
+## 16. The same command receives multiple replies
 
-Some commands cannot be confirmed right away, so they append a few more replies later.
-If the exact same reply appears twice, you are running several bots on the same server at the same time: stop them all and start one bot again.
+Some commands cannot be confirmed immediately and send additional replies later. If an identical reply appears twice, multiple processes are usually using the same bot token; stop all of them and start only one instance.
 
-* Running several bots on one machine is fine. Give them separate working directories and make sure nothing in the config clashes (the session prefix especially), and they can serve different game servers as independent services.
+* Running multiple instances on one machine is fine, but each instance should use its own working directory, config and bot token, with no clashes (especially the session prefix). They can then serve different game servers as independent services.
 
 ## 17. Related documents
 
 * [tutorial/tutorial-en_us.md](../tutorial/tutorial-en_us.md): step-by-step deployment from scratch (most of the conclusions here are explained in context there).
 * [config-en_us.md, section 3.2](../mods/config/config-en_us.md#32-the-game-side-config-confjson-is-a-generated-file): the rule that the game-side `conf.json` is generated.
-* [i18n-en_us.md](../mods/i18n/i18n-en_us.md): how `[i18n] language` decides both what we say and which language’s reconnect messages we recognize.
+* [i18n-en_us.md](../mods/i18n/i18n-en_us.md): how `[i18n] language` decides both the program language and the language FishingBot uses, and how keywords follow it.
 * [watchdog-en_us.md, section 5](../mods/watchdog/watchdog-en_us.md#5-common-problems): how `NeverReady` and `Unreachable` are detected.
