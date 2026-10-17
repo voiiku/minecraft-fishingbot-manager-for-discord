@@ -36,7 +36,7 @@ pub enum ConnectionStatus {
     /// 正在重连：进程还在，但此刻机器人不在服务器（可能是玩家本人在线或是网络波动掉线），正在尝试重连。
     Reconnecting,
     /// 进程已结束：会话只剩 `(Dead ...)` 残壳（JVM 已被杀，screen 的空壳还挂着）。
-    /// 由 [`crate::utils::running_bots`] 按会话状态给出，不来自日志（因为日志最后一条可能还停在"在线"）。
+    /// 由 `utils::running_bots` 按会话状态给出，不来自日志（因为日志最后一条可能还停在"在线"）。
     Stopped,
 }
 
@@ -78,9 +78,9 @@ impl ConnectionStatus {
 
 impl BotDirEntry {
     /// 获取某个机器人最新的连接状态：读它最新日志。
-    /// 实现在本模块而不是 [`super::bot_dirs`]，因为这是对机器人状态判定的逻辑，`bot_dirs` 只负责文件夹与文件名。
+    /// 实现在本模块而不是 `bot_dirs`，因为这是对机器人状态判定的逻辑，`bot_dirs` 只负责文件夹与文件名。
     /// 只会得出"在线 / 重连 / 初始中"（或三种读不到日志的报错）；"进程已结束"看会话状态，
-    /// 由 [`crate::utils::running_bots`] 直接给出（见 [`ConnectionStatus::Stopped`]）。
+    /// 由 `utils::running_bots` 直接给出（见 `ConnectionStatus::Stopped`）。
     pub fn connection_status(&self) -> Result<ConnectionStatus, String> {
         // 挑最新那份日志
         let log_path = latest_log_path(&self.bot_dir_path);
@@ -306,11 +306,11 @@ impl PauseCommand {
 
 /// 发一条需要确认回显的指令，确认它是否生效，并记下这一次的暂停状态。
 /// 只有 `/pause`、`/unpause` 用它：它们的成功回显写在配置 `[command_echo]` 里
-/// （[`PauseCommand::echo_keyword`]）；其他指令无法预测回显。
+/// （`PauseCommand::echo_keyword`）；其他指令无法预测回显。
 /// 1. 先 `inject()`：失败直接返回；
 /// 2. 等配置里 `command_echo.wait_ms`（JAR 收到指令会同步打一行回显，等它写入日志）；
 /// 3. 看最新日志最后 `command_echo.scan_lines` 行里最新的一条 pause/unpause 回显是谁的
-///    （[`PauseCommand::last_confirmed_pause_command`]）；
+///    （`PauseCommand::last_confirmed_pause_command`）；
 /// 4. 是本次执行预期的回显 → 记下状态、返回 `Ok(true)`；是另一条指令的回显 → 状态按它记（它才是真的），
 ///    返回 `Err`（带上"现在的状态是哪个"，让调用方如实回一句）；两条都不在 → 不下结论、`Ok(false)`。
 ///

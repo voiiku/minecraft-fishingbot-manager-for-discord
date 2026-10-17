@@ -139,7 +139,7 @@ pub struct RuntimeConfig {
     pub max_reply_log_lines: usize,
     /// 单条回复字符上限，超出时按行截断。
     pub max_reply_chars: usize,
-    /// 自动候选（autocomplete）单次返回的最大条数；不超过 [`MAX_AUTOCOMPLETE_CHOICES`]。
+    /// 自动候选（autocomplete）单次返回的最大条数；不超过 25（Discord 硬上限）。
     pub max_autocomplete_choices: usize,
 }
 
@@ -161,7 +161,7 @@ pub struct StartupQueueConfig {
     /// 全局队列最多暂存的启动请求数量。
     ///
     /// 它同时决定等结果的兜底超时（队列排满时最慢的一次启动 × 2，见
-    /// [`crate::utils::StartupQueue::result_timeout`]）：排队的台数越多，这个超时越长，不单独配置。
+    /// `StartupQueue::result_timeout`）：排队的台数越多，这个超时越长，不单独配置。
     pub max_pending_requests: usize,
 }
 
@@ -169,7 +169,7 @@ pub struct StartupQueueConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingConfig {
-    /// 每台机器人拉起后的会话存活宽限期（毫秒）。
+    /// 每次启动请求的机器人全部拉起后的会话存活宽限期（毫秒）。
     ///
     /// 复核据此判定"拉起来了没有"：拉起后立即判定一次（会话消失或残壳即失败），
     /// 过了宽限期会话仍存活即算启动成功；此刻是否已进服由日志另行说明，不参与判定。

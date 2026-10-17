@@ -11,11 +11,10 @@
   归属要先解析出目标条目才知道，所以本层用 `BotDirEntry::find_by_name` 把条目找出来、判过之后再交给
   业务函数。
 * 报告由调用方拼装：utils 只返回原始明细（例如停止给的是 `StopOutcome`，它自带 `into_report()` 与
-  `to_failure_text()`），`into_report()` 这一步必须在调用方显式调用，utils 不会替你返回拼好的 `Report`。
+  `to_failure_text()`），`into_report()` 这一步必须在调用方显式调用，utils 不返回拼好的 `Report`。
   批量停止由 `all_bots_control::stopall::stop_all_bots()` 显式拼，进程收尾在
   `watchdog::Watchdog::exit_on_shutdown_signal()` 里就地拼同一份明细（只有标题不同）。
-* 可见性，每个模块一个对外面：crate 的对外面只有 `lib.rs`（`pub fn handle_*`、`pub use` 的两个视图
-  类型 `BotLogView` 与 `FishingbotConfigView`、`pub mod config`、`pub mod text`）；下层的五个业务模块与
+* 可见性，每个模块一个对外面：crate 的对外面是 `lib.rs`（`pub fn handle_*`、视图类型 `BotLogView`、`BotLoginPrompt` 与 `FishingbotConfigView`、`ProcessLog`、`StartupQueue` 等原语、`WATCHDOG` 与 `Watchdog`，以及 `pub mod config`、`pub mod text`、`pub mod utils`）；下层的五个业务模块与
   `utils` 是同一形状，子模块是私有 `mod`，父模块顶部一份精选的 `pub(crate) use` 就是它的面。于是
   `lib.rs` 只认识 `crate::bot_control::start_bot` 这种路径，而"某个函数能不能从外面调"只有一个答案：
   看那个父模块顶部的清单（`utils.rs`、`bot_control.rs`、`bot_manage.rs`、`general.rs`、`show.rs`、
@@ -42,7 +41,7 @@
 * `AllBotsControlAction` 由 `handle_all_bots_control` 处理，覆盖 `/startall`、`/stopall`、
   `/restartall`、`/commandall`。
 
-另一个入口不是指令执行：`bot_name_candidate_states(caller_id)` 返回调用者有权查看的机器人名及运行状态；缺少机器人目录时是空列表，明确的目录读取错误以 `Err` 返回。具体的 autocomplete 功能属于命令层，实现在 `src/commands/autocomplete.rs`：`BotNameScope`、前缀筛选、状态标签及候选数量上限都由这里管理，再转为 Discord 响应。它只提供建议，不执行机器人操作；各指令用哪种 scope 见 [commands-zh_cn.md](../commands/commands-zh_cn.md) 的"指令选项的动态候选"一节。
+指令之外没有别的入口。autocomplete 的候选查询 `bot_name_candidate_states(caller_id)` 是命令层的私有函数：返回调用者有权查看的机器人名及运行状态；缺少机器人目录时是空列表，明确的目录读取错误以 `Err` 返回。`BotNameScope`、前缀筛选、状态标签及候选数量上限都由命令层管理，再转为 Discord 响应。它只提供建议，不执行机器人操作；各指令用哪种 scope 见 [commands-zh_cn.md](../commands/commands-zh_cn.md) 的"指令选项的动态候选"一节。
 
 ## 2. 两种错误口径
 

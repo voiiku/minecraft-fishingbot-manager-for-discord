@@ -26,10 +26,10 @@ utils（原语层）                     目录、会话、日志、报告等可
 screen 会话里的 JVM（FishingBot）
 ```
 
-术语：`src/commands/` 是命令层（poise 的 `#[poise::command]`，负责取值、校验参数个数、把参数值转成
-数字、`defer`、把 `Err` 变成回复）；`lib.rs` 的 `handle_*` 是指令入口层（动作枚举到业务函数；全员指令
-与批量指令的权限在这一层查），下面简称路由层；提到业务层时指 `bot_control`、`bot_manage`、`show`、
-`all_bots_control`。
+术语先分清三层。`src/commands/` 是命令层：用 poise 的 `#[poise::command]`，只负责取值、校验参数个数、
+把参数值转成数字、`defer`、把 `Err` 变成回复。`lib.rs` 的 `handle_*` 是指令入口层（下文简称路由层）：
+负责把动作枚举落到业务函数，全员指令与批量指令的权限也只在这一层查。业务层指 `bot_control`、`bot_manage`、
+`show`、`all_bots_control`。
 
 参数怎么往下传：Discord 交给命令层的是结构化 option，但 option 的值仍然是用户输入的原始文本，所以
 命令层只取值、校验数字、透传（参数名以 `raw_` 起），谁真正要用就由谁清洗一次：机器人名走
@@ -92,12 +92,12 @@ src/
     ├── bot_command.rs          游戏内指令的拼接口径（`/command` 与 `/commandall` 共用，只写一处）
     ├── bot_dirs.rs             机器人目录：路径、查找、遍历、创建（条目 `BotDirEntry` 内含 Token 状态）
     ├── bot_name.rs             机器人名规范化
-    ├── bot_log_files.rs        机器人日志：创建 / 挑选（FishingBot 的 raw 日志处置在 startup）
+    ├── bot_logs.rs              机器人日志：创建 / 挑选（raw 日志目录的准备也在本文件，由启动流程调用）
     ├── fishingbot_config.rs          游戏侧配置（FishingBot 的 conf.json）生成：先删旧文件，再用仓库模板
     │                           （fishingbot-config.example.json）当底覆盖 [fishingbot] 那几个键
     ├── fs.rs                   文件/目录操作原语：尾部读行、列子目录名、删目录（不存在也算成功）
     ├── bot_status.rs           机器人状态：暂停记忆 + 确认回显，在线实时读日志
-    ├── running_bots.rs         运行中机器人的状态汇总（含 `/show status` 表头与数据行）
+    ├── running_bots.rs         运行中机器人的状态汇总（`/show status` 的数据行；表头在 `show/status.rs`）
     ├── screen.rs               会话检测与指令注入
     ├── shutdown.rs             停止会话（`/stop`、`/stopall`、重启的停止阶段、进程收尾）
     ├── startup.rs              启动（四步显式流程）
@@ -132,7 +132,7 @@ src/
    归属是不是调用者判一次（管理员一律放行）。
 5. 条目里的 Token 状态确认已配好（`BotTokenStatus::from_dir` 在构造条目时取好），
    `utils::is_bot_screen_running` 确认未在运行。
-6. `utils::start_bot_sessions` 按 [CONTEXT 第 4 节](../../CONTEXTS/CONTEXT-zh_cn.md) 那四个显式步骤来做。
+6. `StartupQueue::start_bots()` 按 [CONTEXT 第 4 节](../../CONTEXTS/CONTEXT-zh_cn.md) 那四个显式步骤来做。
 7. 结果由 `Report` 组装，经 `IntoReplyText::to_reply_text` 转成文本，再由 `ctx.say(报告)` 作为第二条
    消息发出（第一条已经把占位的额度用掉了）。
 
@@ -156,7 +156,7 @@ src/
     因此不接 `caller_id`、也不再各自判断；
   * 命令层只数参数个数、看数字范围，不看权限；
   * 新增指令一律照这个来：命令层必须把结果交给 `lib::handle_*`（那一层声明要求并判一次），不许在命令
-    层自己拼回复，连 `/whoami` 也一样。没有注册表或框架钩子兜底，靠这条约定与评审。
+    层自己拼回复，连 `/whoami` 也一样。没有注册表或框架钩子兜底，只能依赖这条约定与评审。
 * 框架只出现在命令层与进程入口：业务层（`bot_control` 等）与 `lib.rs` 不引用 serenity 与 poise，只吃
   普通参数、返回 `Result<String, String>`。这样业务逻辑能单测，也方便以后换通道。
 * 命令层不阻塞 async 线程：所有业务调用都包 `tokio::task::spawn_blocking`（业务层是同步的）。
@@ -193,11 +193,11 @@ src/
   （`all_running_bots_status`）；一次性探测或检查用 `*_report`（`ping_report`、
   `checkserver_report`）；当附件发出去的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。只有
   整段已经写好的文本用裸名词（`help`、`whoami`）。
-* 全局单例访问器同名：配置 `config::Config::get()`、文案 `text::get()`，都是"取进程内那一份"。配置没装就 `expect`
-  panic（那是内部不变量）；文案没装则回落到默认语言（英语，`Language::default()`）。这两个由进程入口各装
-  一次（`config::Config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs` 里的 `WATCHDOG` 是
-  进程级槽位，谁要谁调一次 `WATCHDOG.get_or_init()`（首次按配置建）；事件回调只收函数指针、捕获不了闭包，
-  所以它们也走同一个入口拿同一份；其余方法都吃 `&self`。
+* 全局单例访问器同名：配置 `config::Config::get()`、文案 `text::get()`，都表示"取进程内那一份"。配置没装就
+  `expect` panic（那是内部不变量）；文案没装则回落到默认语言（英语，`Language::default()`）。两者由进程入口
+  各装一次（`config::Config::get_or_init()` 里顺带 `text::install()` 一次）。看门狗另走一条：`src/watchdog.rs`
+  的 `WATCHDOG` 是进程级槽位，使用方调一次 `WATCHDOG.get_or_init()`（首次按配置创建）；事件回调只收函数指针、
+  捕获不了闭包，因此也从同一入口取同一份，其余方法都吃 `&self`。
 * 文件内的顺序固定：模块文档（`//!`）、`mod` 声明、`use`、对外转出（`pub use`）、常量与类型与函数；
   进程入口（`lib.rs`、`main.rs`）也照此，于是"这个文件里有哪些子模块"在文件最上面就能看到。
 * 会变成可见文案的那一行写英文：命令的 `///` 第一段与选项的 `#[description]` 是 poise 宏烘进二进制的

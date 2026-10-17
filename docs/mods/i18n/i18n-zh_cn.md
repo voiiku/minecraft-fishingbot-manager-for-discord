@@ -128,7 +128,7 @@
 补充说明（括号里那句解释）两种语言统一写成 `()`，例如 `/log` 的选项说明
 `读取最新多少行 (默认 50，上限见配置 runtime.max_reply_log_lines)` 与
 `how many trailing lines to read (default 50, cap in runtime.max_reply_log_lines)`。三类例外是"看起来像
-括号、其实不是补充说明"的记号，照旧用各自的写法：
+括号、并非补充说明"的记号，照旧用各自的写法：
 
 * 配置表名照抄方括号：`[admins]`、`[keywords]`、`[raw_game_logs]`。
 * `Report` 的小节标签：`[成功明细]`、`[内容]`、`[Success]`、`[Content]`。

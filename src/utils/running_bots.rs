@@ -56,7 +56,7 @@ fn status_row(
 
 /// 查一次 `screen -list` 快照，把全部机器人（无 Token 过滤）按 在运行 / 未运行 分组。
 /// 全部停止与进程收尾用 [`super::bot_dirs::all_bot_dir_entries`] 查询，因为要考虑孤儿进程。
-/// `/startall` 用 [`token_ready_bot_dir_entries`]。
+/// `/startall` 用 `token_ready_bot_dir_entries`。
 pub fn split_bot_entries_by_is_running(
     bot_entries: &[BotDirEntry],
 ) -> (Vec<BotDirEntry>, Vec<BotDirEntry>) {

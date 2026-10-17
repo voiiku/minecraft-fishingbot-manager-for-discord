@@ -214,7 +214,7 @@ pub fn handle_bot_log(
     bot_log_view(&bot_dir_entry, line_count)
 }
 
-/// 处理单机器人控制指令，要求本人或管理员，已在[`permitted_bot_dir_entry`]校验过
+/// 处理单机器人控制指令，要求本人或管理员，已在 `permitted_bot_dir_entry` 校验过
 pub fn handle_bot_control(
     action: BotControlAction<'_>,
     raw_bot_name: &str,

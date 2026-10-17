@@ -4,93 +4,87 @@
 
 **English** | [简体中文](docs/README/README-zh_cn.md)
 
-* **At present, Offline-mode servers and single-player worlds are not supported.**
-* **At present, this project only runs on 64-bit Linux.**
+* **Offline-mode servers and single-player worlds are not supported yet.**
+* **This project runs only on 64-bit Linux for now.**
+* The official build of [FishingBot](https://github.com/MrKinau/FishingBot) does not support `/pause` and `/unpause` yet (the author plans to add them), so this project cannot handle the pause logic correctly for now; every other feature is unaffected.
 
 ## 1. Project overview
 
-This project is an unofficial controller that uses Discord slash commands to manage multiple Minecraft auto-fishing bots powered by the separate [FishingBot](https://github.com/MrKinau/FishingBot) project.
+This project manages multiple Minecraft auto-fishing bots through a Discord server. The bots themselves come from the separate [FishingBot](https://github.com/MrKinau/FishingBot) project, and running `FishingBot.jar` requires a Java JRE.
 
-The manager itself is written in Rust. Java is required to run the external `FishingBot.jar` instances.
+In short, this project only provides a way to manage FishingBot instances; for now it does not implement the bot behaviour itself.
 
-How this project and FishingBot divide the work:
-This project provides ways to manage FishingBot instances; it does not implement the bots’ behavior.
+## 2. Who it is for
 
-* Bot behavior (logging in, joining the server, fishing, and handling specific in-game events) is handled by FishingBot. Its behavior is controlled by a separate JSON config file, which **this project generates at startup from its own config**. If you run `FishingBot.jar` without this project, FishingBot generates that file itself.
-* Bot management (starting, stopping, restarting, checking status, and managing permissions) is handled by this project.
-
-## 2. Important notes and features
-
-* Intended for people who have a Linux machine and need to manage multiple auto-fishing bots on a Minecraft server that uses **online-mode authentication**.
-* Not intended for **offline-mode or single-player** players, people who need to run it natively on something other than 64-bit Linux, or people who only need one account to fish.
-* The core goal is to be easy to use (within the context of a Linux environment): the project aims to avoid requiring users to read the code or compile it themselves, and to satisfy most needs through the config file. More customisation will come over time.
+* Intended for players who fish while AFK on a Minecraft server, have several game accounts and want to manage them in one place.
+* Not intended for single-player players.
+* What this project solves:
+  * It saves the cost of scattered AFK fishing (a group of friends fishing on their own machines costs far more than fishing in one place).
+  * It makes several accounts easy to manage.
+  * It covers the common needs: pausing fishing to act as a dummy player, sending commands to a bot, sending chat to the server, reading logs, and so on.
 
 ## 3. Deployment
 
 See [docs/tutorial/tutorial-en_us.md](docs/tutorial/tutorial-en_us.md).
 
-## 4. Usage
-
-There are 18 top-level commands and 9 subcommands, for 27 commands in total (`/bot` and `/show` are parent commands and do nothing by themselves).
+## 4. Command overview
 
 Available to everyone:
 
-* `/help`: the help menu. The entire text comes from `text.help` in the config, you can change it.
-* `/whoami`: view the caller’s Discord user ID.
-* `/show status`: check the status of all running bots.
-* `/ping [host] [port]`: probe a game server; without arguments, uses the defaults in the `[ping]` table.
-* `/checkserver`: view the fishing server’s CPU, memory, disk, and uptime.
-* `/show botconfig`: view the shared config file used by all fishing bots, sent as an attachment.
+* `/help`: the help menu. The whole text comes from `text.help` in the config, so you can set it yourself.
+* `/whoami`: show the caller's Discord user ID.
+* `/ping [host] [port]`: probe a game server; without arguments it uses the defaults in `[ping]`.
+* `/checkserver`: show the fishing server's own performance (CPU, memory, disk, uptime).
+* `/show status`: check the status of every running bot.
+* `/show botconfig`: view the config file shared by all fishing bots, sent as an attachment.
 * `/show mybots`, `/show allbots`, `/show admins`: view your own bots, all bots, or the administrator list.
-* `/bot add <name>`: add a bot (you must also set its token before it can be started).
+* `/bot add <name>`: add a bot (it still needs a token before it can be used).
 
-Available to a bot’s owner (the person who created it) or an administrator:
+Available to a bot's creator or an administrator:
 
 * `/bot del <name>`, `/bot rename <old name> <new name>`: delete or rename a bot.
-* `/bot login <name>`: sign in to a Microsoft account through a website and enter the code to obtain the bot token, which is then saved automatically on the server; the bot is started automatically when the login succeeds.
-* `/token <name>`: manually enter a bot token (not recommended; use `/bot login` instead).
-* `/log <name> [lines]`: view the latest log for a bot, sent as an attachment.
-* `/start`, `/stop`, `/restart`: start, stop, or restart one bot.
-* `/pause`, `/unpause`: pause fishing without disconnecting, or resume fishing (requires support in `FishingBot.jar`; other features are unaffected).
-* `/command <name> <command>`: send a command to the game server where the bot is connected.
+* `/bot login <name>`: sign in to a Microsoft account through a website and enter the code to obtain the bot token, which is saved on the server automatically; the bot starts automatically when the login succeeds.
+* `/token <name>`: write a bot token by hand; not recommended.
+* `/log <name> [lines]`: view a bot's newest log, sent as an attachment.
+* `/start`, `/stop`, `/restart`: start, stop or restart one bot.
+* `/pause`, `/unpause`: pause fishing without disconnecting, or resume it (depends on whether `FishingBot.jar` supports it; other features are unaffected).
+* `/command <name> <command>`: send a command to the game server the bot is connected to.
 
 Available only to administrators:
 
-* `/startall`, `/stopall`, `/restartall`, `/commandall <command>`: perform batch operations on all bots.
+* `/startall`, `/stopall`, `/restartall`, `/commandall <command>`: batch operations on all bots.
 
 ## 5. Project status
 
-* Maintained by one person and still in testing. Config fields and command replies may change with updates; incompatible changes are announced in each release.
-* A patched `FishingBot.jar` is recommended. The upstream version does not support the in-game `/pause` and `/unpause` commands, and its pause status is incorrect; all other features are unaffected.
-* The project currently supports `ENGLISH` and `CHINESE_SIMPLIFIED` (the names used by the FishingBot project). See the [docs index](docs/index-en_us.md) for the available documentation. All English text and English documentation are AI translations.
-* Out of scope: a web management panel (the author finds managing through a chat server simple enough) and a built-in proxy service.
-* Future goal: support Windows, and a built-in fishing bot so you can choose freely between `FishingBot.jar` and the built-in one.
+* Maintained by one person and still in testing; config fields and command replies change with updates, and incompatible changes are announced in the release notes.
+* The upstream `FishingBot.jar` does not support the in-game `/pause` and `/unpause` commands yet (the feature is implemented and verified on the author's patched build), so the pause status is wrong; other features are unaffected.
+* Only `ENGLISH` and `CHINESE_SIMPLIFIED` are supported for now (the names the FishingBot project uses). All English text and English documentation are AI translations.
+* Out of scope: a web panel and a built-in proxy service.
+* Future goals: support Windows, and a built-in fishing bot so you can choose between `FishingBot.jar` and the built-in one.
 
-## 6. Project structure
-
-See [docs/mods/architecture/architecture-en_us.md](docs/mods/architecture/architecture-en_us.md).
-
-## 7. License
+## 6. License
 
 This project is licensed under the [MIT License](LICENSE).
 
-[FishingBot](https://github.com/MrKinau/FishingBot) is a separate program licensed under [GPL-3.0](https://github.com/MrKinau/FishingBot/blob/main/LICENSE). This project only manages it; it does not contain FishingBot or distribute it bundled with this project.
+Third-party licenses are listed in [THIRD-PARTY-NOTICES.html](THIRD-PARTY-NOTICES.html).
 
-## 8. Contributing
-Contributions are welcome. Please [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues) to report a bug or suggest a feature. Pull requests are also welcome; for significant changes, please open an issue first to discuss the approach.
+[FishingBot](https://github.com/MrKinau/FishingBot) is a separate program under the [GPL-3.0 license](https://github.com/MrKinau/FishingBot/blob/main/LICENSE). This project only manages it; it does not contain FishingBot or distribute it together with this project.
+
+## 7. Contributing
+
+Contributions are welcome. To report a bug or suggest a feature, [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues). Pull requests are welcome too; for larger changes, please open an issue first to discuss the approach.
 
 ### Translations
 
-User-facing text is currently defined in the `src/text/` module and loaded at startup. When updating or adding a translation, follow the existing locale modules, such as `src/text/zh_cn.rs`. Messages shown before the language is loaded fall back to English.
+User-facing text is defined in the `src/text/` module and loaded at startup. When changing or adding a translation, follow the existing locale modules, for example `src/text/zh_cn.rs`. Messages shown before the language is loaded use English.
   **The multilingual feature may be refactored in the future**
 
+## 8. Useful documents
 
-## 9. Other useful documents
-
-See the [docs index](docs/index-en_us.md) for all documentation. The most frequently used documents are:
+See the [docs index](docs/index-en_us.md) for all documentation. The most used ones are:
 
 * [docs/tutorial/tutorial-en_us.md](docs/tutorial/tutorial-en_us.md): deployment from scratch, written for people new to Discord.
-* [docs/troubleshooting/troubleshooting-en_us.md](docs/troubleshooting/troubleshooting-en_us.md): troubleshooting by symptom, including missing Discord commands, `/start` reporting that a command was sent when the bot is absent, incorrect status, orphaned bots, and startup errors after an upgrade.
-* [docs/mods/config/config-en_us.md](docs/mods/config/config-en_us.md): config file location, loading process, field meanings, and startup validation.
-* [docs/mods/commands/commands-en_us.md](docs/mods/commands/commands-en_us.md): the command layer plus every command.
-* [docs/CONTEXTS/CONTEXT-en_us.md](docs/CONTEXTS/CONTEXT-en_us.md): read before changing code. Project overview, hard constraints and invariants, code map, and TODOs.
+* [docs/troubleshooting/troubleshooting-en_us.md](docs/troubleshooting/troubleshooting-en_us.md): symptoms and checks when something goes wrong.
+* [docs/mods/config/config-en_us.md](docs/mods/config/config-en_us.md): the config file, the loading process, every field, and startup validation.
+* [docs/mods/commands/commands-en_us.md](docs/mods/commands/commands-en_us.md): the command overview, the two replies of the command layer, ephemeral replies and candidate rules.
+* [docs/CONTEXTS/CONTEXT-en_us.md](docs/CONTEXTS/CONTEXT-en_us.md): read this before reading the code.

@@ -17,10 +17,11 @@
    inside this call, and the process then exits right there with code 0, without touching Discord. When the file does
    exist, the path it found is printed to the terminal before continuing (no logger is installed at this point, so the
    terminal is the only place; the `config loaded: ...` line in the program log comes from `ProcessLog::get_or_init`).
-3. When the file exists, its text is read. `Config::from_toml_text` parses the TOML into a value tree, recursively trims
-   every string value and maps the result straight into the runtime `Config` with Serde's `Deserialize` implementation
-   (the only cleanup in the whole chain); the three keys of `[paths]` are expanded into paths rooted at `base_dir` by
-   `Paths`'s own `Deserialize` implementation. Parsing and conversion do not apply every configuration rule.
+3. When the file exists, its text is read. `Config::from_toml_text` parses the TOML into a value tree, recursively
+   trims every string value and maps the result into the runtime `Config` through Serde's `Deserialize` implementation
+   (the only cleanup in the whole chain). The three keys of `[paths]` are expanded into paths rooted at `base_dir` by
+   `Paths`'s own `Deserialize` implementation. This step handles format parsing and structure conversion only, not every
+   configuration rule.
 4. `validate` checks field values, ranges and the runtime environment (for example required values, port ranges, and
    whether the configured directory and JAR exist).
 5. Any failing step exits with an error shaped as "config entry + field name + requirement"; the process never runs
@@ -28,21 +29,21 @@
 6. On success the config is written into a `OnceLock`: read once at startup, kept in memory. Editing the config file
    while the process runs does not affect it; restart the process to make the new config take effect.
 
-Surrounding whitespace of string values is removed in `Config::from_toml_text`: a stray space or an indented line break never reaches
-the code, so everyone reading the config (`main.rs`, the business layer and similar entry points) passes the value
-as-is and never calls `trim()` itself. To really keep surrounding whitespace, write the escape (in TOML, `"\u0020"`).
+Surrounding whitespace of string values is removed in `Config::from_toml_text`: extra spaces, indentation and line
+breaks in the file never reach the code, so every reader (`main.rs`, the business layer) takes the value as-is and does
+not call `trim()` again. To keep surrounding whitespace, write the escape (in TOML, `"\u0020"`).
 
 Deserialization relies on `#[derive(Deserialize)]` on `Config` and its field types. Serde maps TOML table and key
 names to the corresponding struct fields; a type mismatch, a missing required field or an unknown field returns a
-parse error. There are **no in-code defaults**: every table and every field must be present in the file, so a missing
-key or a typo fails at startup instead of being silently filled in. Path fields are converted by `Paths`'s own
-`Deserialize` implementation into runtime paths rooted at `base_dir` (`bots_dir` is derived in code); the later `validate` step handles the remaining value rules.
+parse error. There are **no in-code defaults**: every table and every field must be present, so a missing key or a typo
+fails at startup instead of being silently filled in. Path fields are converted by `Paths`'s own `Deserialize`
+implementation into runtime paths rooted at `base_dir` (`bots_dir` is derived in code); the later `validate` step
+handles the remaining value rules.
 
 After the config is read and before anything else, the process entry also **generates the game-side config** from
 `[fishingbot]` (FishingBot's `conf.json`, at the path from `paths.fishingbot_config_file_name`): the old file is
-deleted first and a new one written. A failure there is handled under the same "the config is wrong" rule as
-everything else (an `ERROR` record and exit code 1). Why it is a generated file, and what goes into it, is section
-3.2.
+deleted first, then a new one is written. A failure there follows the same "config is wrong" rule (an `ERROR` record
+and exit code 1). Why it is a generated file and what it contains is section 3.2.
 
 ## 2. Public interface
 
@@ -50,10 +51,10 @@ These are all associated functions on `Config` (the module has no free accessor 
 defined in this file), so the process entry is a single line, `let settings = config::Config::get_or_init();`:
 
 * `Config::get_or_init()`: fetch the config, the process entry's only entry point. The first call locates, reads,
-  parses and validates it; later calls return that same `&'static Config`. A generated template (with its note already
-  printed) exits right there with code 0, and an invalid config reports the error and exits with code 1 - both failure
-  paths end the process inside the function, so what it returns is always a usable config and the caller never checks a
-  result.
+  parses and validates it; later calls return the same loaded `&'static Config`. When a template was generated (its
+  note has been printed) the function ends the process with code 0; when the config is invalid it reports the error
+  and ends the process with code 1. Both failure paths end the process inside the function, so the return value is
+  always a usable config and the caller never checks a result.
 * `Config::get()`: the loaded `Config`.
 * `Config::config_file_path`: the config file path this run uses (computed once at load time from the executable's
   location, and kept in the struct).
@@ -67,14 +68,13 @@ invariant message: no language is installed yet, so it is fixed English). The fi
 
 ## 3. Table structure
 
-The order matches the example config, arranged as "whatever a new deployment touches first comes first": credentials,
-paths, the game-side config (`[fishingbot]`), then the three tables you fill in against your game server or jar
-(keywords, echoes, language), then the runtime and timing values that are usually left alone, and finally the purely
-optional switches and display text. The example config's explanatory comments are mostly English; the
-complete Chinese original of `[text].help` is also kept in comments above that setting for Chinese readers.
-A few lines start with `# CHINESE_SIMPLIFIED:`; these tell Chinese deployments what value to use (only
-the two `[command_echo]` echoes and `[i18n] language` need them), see
-[i18n-en_us.md section 1](../i18n/i18n-en_us.md).
+The order matches the example config: tables a new deployment has to change come first (credentials, paths and the
+game-side config `[fishingbot]`), followed by the three tables filled in for the game server or jar (keywords, echoes,
+language), then the runtime and timing values that usually keep their defaults, and finally the optional switches and
+display text. The example config's explanatory comments are mostly English; the complete Chinese original of
+`[text].help` is also kept in comments above that setting for Chinese readers. A few lines start with
+`# CHINESE_SIMPLIFIED:` and state the value to use for a Chinese deployment (only the two `[command_echo]` echoes and
+`[i18n] language` need them), see [i18n-en_us.md section 1](../i18n/i18n-en_us.md).
 
 * `[discord]`: `token`. The bot token. The only credential, required.
 * `[paths]`: `base_dir` (absolute), `jar`, `fishingbot_config_file_name` (relative). The data root and the shared
@@ -108,27 +108,28 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
   the length limit of a single reply (Discord hard-limits a message to 2000 characters, and an overlong one simply
   fails to send); `max_autocomplete_choices` caps the autocomplete suggestions for the bot-name options (1..=25,
   Discord's hard limit).
-* `[startup_queue]`: `max_batch_size`, `bot_login_interval_ms`, `batch_login_interval_ms` and `max_pending_requests` set
-  the global FIFO queue's maximum bots per batch, the gap between two bots in the same batch (milliseconds), the wait
-  between two batches (milliseconds) and the maximum waiting requests (excluding the active request). The table and all
-  of its fields are required and every value must be greater than zero.
-  `bot_login_interval_ms` staggers the bots inside one batch; `batch_login_interval_ms` is the wait between batches: once a
-  batch is done (launched and rechecked), the next one waits at least this long - even when that batch held a single bot.
-  It counts from the moment the previous batch was popped, so the first command after a long idle does not wait.
+* `[startup_queue]`: `max_batch_size`, `bot_login_interval_ms`, `batch_login_interval_ms` and `max_pending_requests`.
+  They set, in order, the maximum bots per batch in the global FIFO queue, the gap between adjacent bots in a batch
+  (milliseconds), the gap between batches (milliseconds) and the maximum number of waiting requests (excluding the
+  active one). The table and every field are required, and every value must be greater than zero.
+  `bot_login_interval_ms` staggers adjacent bots inside one batch. `batch_login_interval_ms` spaces batches: it counts
+  from the moment the previous batch was popped, and the next batch starts only after at least this long (the
+  verification runs in parallel and does not count as batch-to-batch waiting); this also holds when the previous batch
+  held a single bot, so the first command after a long idle does not wait.
   Microsoft rate-limits sign-ins per egress IP, see
-  [troubleshooting section 12](../../troubleshooting/troubleshooting-en_us.md) for the numbers.
+  [troubleshooting section 12](../../troubleshooting/troubleshooting-en_us.md) for the values.
   `/start`, `/startall`, `/restart` and `/restartall` share this queue; `/bot login` does not use it. At most
-  `max_pending_requests` bots are kept waiting, whatever does not fit is handed straight back to the caller (the receipt
-  says so), and pending work is dropped if the process restarts.
-  The timeout for waiting on launch results is not configurable: the queue derives it from this table and
-  `timing.check_grace_ms` (`StartupQueue::result_timeout`):
+  `max_pending_requests` bots wait in the queue; the rest are returned to the caller immediately (the reply says so),
+  and pending entries are dropped when the process restarts.
+  The result timeout is not configurable: it is derived from this table and `timing.check_grace_ms`
+  (`StartupQueue::result_timeout`; the grace period is counted once):
   `2 * (ceil(max_pending_requests / max_batch_size) * max(batch_login_interval_ms, (max_batch_size - 1) * bot_login_interval_ms) + check_grace_ms)`.
-  Past it, whatever has not reported back is written into the reply as "unconfirmed" (and one line goes to the program
-  log); a slower per-bot stagger (Microsoft rate-limits sign-ins) or a bigger queue makes it grow on its own, so nobody
-  has to adjust it by hand.
+  When it expires, bots without a result are reported as "unconfirmed" in the reply (and one line goes to the program
+  log). A slower per-bot stagger or a larger queue extends it automatically.
 * `[timing]`: `check_grace_ms`, `stop_grace_ms`, `stop_settle_ms` and `watchdog_window_ms`. These per-flow waits are
-  in milliseconds. `check_grace_ms` is the wait per bot before checking the session (the check runs twice, so the
-  total wait is twice the number of bots in that batch times it; the wait between batches does not subtract it);
+  in milliseconds. `check_grace_ms` is the session-survival grace period after every bot in a start request has been
+  launched (the check runs twice: immediately after launch, then after the grace period; one wait per start request,
+  not per bot);
   `watchdog_window_ms` is the gateway watchdog's judging window, also used as the wait before rebuilding the
   connection; the REST probe interval (a third of it) and the first-handshake timeout (twice it) are derived from it
   instead of being separate keys, see [watchdog-en_us.md](../watchdog/watchdog-en_us.md).
@@ -138,8 +139,9 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
 * `[ping]`: `default_ping_host`, `default_ping_port`, `timeout_ms`. The default target and timeout of `/ping` when it
   is called without arguments.
 * `[log]`: `debug`. The level switch of the program log. With `false` (the default) our own records start at `INFO`
-  and third-party crates (serenity, poise) at `WARN`; with `true` both go down to `DEBUG` (turning debug on means
-  hearing everything). This is the only level switch (environment variables are no longer read); details in
+  and third-party crates (serenity, poise) at `WARN`; with `true` both go down to `DEBUG` (`true` opens everything
+  up; `TRACE`, which is finer than `DEBUG`, is still out of reach). This is the only level switch (environment
+  variables are no longer read); details in
   [process-log-en_us.md](../process-log/process-log-en_us.md).
 * `[text]`: `help`. The full output of `/help` (a multi-line string, so the wording can be changed without a
   rebuild).
@@ -152,19 +154,19 @@ the two `[command_echo]` echoes and `[i18n] language` need them), see
   too, but they only exist in a build carrying those two commands (the upstream build has neither), so putting them
   in the config lets a different build be configured in place, without a rebuild.
 * The reconnect message's prefix and suffix stay in the program (`src/text/*.rs`, the `jar_*` methods) and follow
-  `[i18n] language`: it changes only with the jar's language and is the same for every deployment, so copying it
-  would only add one more place to get wrong. That language is also the value we write into `conf.json` as
-  `misc.language` (section 3.2), so the jar is guaranteed to speak the same language - aligning the two by hand used
-  to be a job, now they cannot disagree.
-* "Process finished" needs no keyword: an older wrapper script used to write an end marker into the log with
-  `java ... | tee bot.log; echo marker >> bot.log`, while this project starts the session itself and does not write
-  it, so the check reads the screen session state instead (a `(Dead ...)` shell, see [utils-en_us.md](../utils/utils-en_us.md)). That is steadier than copying a marker: it does not depend on the jar version, the script or the
-  language.
+  `[i18n] language`: they change only with the jar's language and are the same for every deployment, so copying them
+  into the config would add another failure point. That language is also the value written into `conf.json` as
+  `misc.language` (section 3.2), so the jar always uses the same language; the two values can no longer disagree.
+* "Process finished" needs no keyword: an older wrapper script wrote an end marker into the log with
+  `java ... | tee bot.log; echo marker >> bot.log`, while this project starts the session itself and does not write it.
+  The check therefore reads the screen session state instead (a `(Dead ...)` shell, see
+  [utils-en_us.md](../utils/utils-en_us.md)), which is steadier than copying a marker: it does not depend on the jar
+  version, the script or the language.
 
-The criterion is "who decides this string, and does it have to change with the build": what your environment decides
-goes into `[keywords]`, what the jar's patched build decides goes into `[command_echo]`, what the jar's language
-decides follows `[i18n]`; and a judgement that is not about a string at all (is the process gone) reads the session
-state directly.
+The criterion is "who decides this string, and does it have to change with the build": what the environment decides
+goes into `[keywords]`, what the jar's patched build decides goes into `[command_echo]`, what the jar's language decides
+follows `[i18n]`; and a judgement that is not about a string at all (is the process gone) reads the session state
+directly.
 
 ### 3.2 The game-side config (`conf.json`) is a generated file
 
@@ -178,16 +180,16 @@ How it is generated: **take the template shipped with the repository as the base
 `[fishingbot]`.**
 
 * The template is the repository's `fishingbot-config.example.json` - a **complete** FishingBot config (taken from
-  the default file upstream generates, with the defaults tuned to this project's taste: console and chat
-  announcements off, `/home fishing` as the default cast starter, a longer `auto-reconnect-time`, and so on). It can
-  be compiled into the binary with `include_str!`, so it does not have to travel along at deployment.
+  the default file upstream generates, with the defaults tuned to this project's needs: console and chat
+  announcements off, `/home fishing` as the default cast starter, a longer `auto-reconnect-time`, and so on). It is
+  compiled into the binary with `include_str!`, so no extra file is needed at deployment.
 * The keys it overrides are the managed list in `utils/fishingbot_config.rs` (ten dotted paths), one to one with the
   fields of `[fishingbot]`; among them `misc.language` is written straight from `[i18n] language` (whose value is the
-  jar's own constant name, see `text::Language::from_name` / `name`), so there is no chance to fill it in wrongly and
-  no "keep the two aligned" job.
+  jar's own constant name, see `text::Language::from_name` / `name`), so it cannot be filled in incorrectly and the
+  two values need no manual alignment.
 * Every other key is left as the template has it, so what gets written is **always a complete config** - it never
-  relies on the jar filling missing fields in. (Measured on v2.13.15: it does fill in missing fields and write the
-  file back, but then what gets added is the jar's decision, and every process start leaves one more
+  relies on the jar to fill in missing fields. (Measured on v2.13.15: it does fill in missing fields and write the
+  file back, but then the jar decides what gets added, and every process start leaves one more
   `Your configuration was incomplete. The missing fields were added!` line in the bot log.)
 * **The old file is deleted first**: it is a generated artefact, so hand edits do not survive the next start - change
   `[fishingbot]` instead, or change the template to change a default.
@@ -222,19 +224,19 @@ matching language too.
   names; surrounding whitespace is ignored). The example config ships `ENGLISH` (the same as the default language in
   code; change it to `CHINESE_SIMPLIFIED` for a Chinese jar deployment); both languages are compiled into the binary,
   so changing this line and restarting is enough.
-* `[log] debug` is "do we also listen to the frameworks". With `false` (the default) our own records start at `INFO`
-  and third-party crates (serenity, poise) at `WARN`, because they print `INFO` on every heartbeat and would drown the
-  important lines (startup, commands, replies); with `true` both go down to `DEBUG` (turning debug on means hearing
-  everything; `TRACE`, which is finer than `DEBUG`, is out of reach).
-* `[fishingbot]`: the whole table has defaults (the same as the template shipped with the repository), and anything
-  wrong is reported at startup with the field named - because a wrong value only makes the jar **run quietly with its
-  defaults** (measured: an unknown enum value falls back silently, an unrecognised version is probed by the jar
-  itself), and catching it here is cheaper. What gets caught: an empty `server_ip`, a zero `server_port`, a
-  `default_protocol` that is neither `AUTOMATIC` nor version-shaped (`1.20`, `1.20.4`), an empty string inside
-  `start_text`, and either `announce_type_*` outside upstream's five values (`ALL`, `ALL_BUT_FISH`, `ONLY_ENCHANTED`,
-  `ONLY_BOOKS`, `NONE`). Online mode, offline usernames, automatic cast rules, realms and the GUI entries are **not
-  exposed**: they keep the template's values (this project runs in online mode, and every account logs in through
-  Microsoft).
+* `[log] debug` decides "whether the framework logs are collected too". With `false` (the default) our own records
+  start at `INFO` and third-party crates (serenity, poise) at `WARN`, because they print `INFO` on every heartbeat and
+  would drown the important lines (startup, commands, replies); with `true` both go down to `DEBUG` (everything is
+  opened up; `TRACE`, which is finer than `DEBUG`, is still out of reach).
+* `[fishingbot]`: the whole table is required (copy the values from the example config that ships with the
+  repository), and anything wrong is reported at startup with the field named. A wrong value only makes the jar **run
+  quietly with its defaults** (measured: an unknown enum value falls back silently, and an unrecognised version is
+  probed by the jar itself), so rejecting it here is clearer. Rejected values: an empty `server_ip`, a zero
+  `server_port`, a `default_protocol` that is neither `AUTOMATIC` nor version-shaped (`1.20`, `1.20.4`), an empty
+  string inside `start_text`, and either `announce_type_*` outside upstream's five values (`ALL`, `ALL_BUT_FISH`,
+  `ONLY_ENCHANTED`, `ONLY_BOOKS`, `NONE`). Online mode, offline usernames, automatic cast rules, realms and the GUI
+  entries are **not exposed**: they keep the template's values (this project runs in online mode, and every account
+  logs in through Microsoft).
 * `[command_echo]`: `wait_ms` is how long to wait after sending a command before looking at the log (too short and
   the echo is not there yet); `scan_lines` is how many lines at the end to look at (a larger number tolerates more
   noise - the echo can be pushed up by a few unrelated lines - at the cost of reading a few more lines). Both must be
@@ -246,7 +248,7 @@ Validation is split per table: every field of `Config` (that is, every TOML tabl
 function, and `validate()` holds nothing but those calls, in start-up order; `[log]` only has the boolean `debug`
 switch and no validator.
 
-It only looks at the three kinds of problem that make the program fail to run (see the module docs of `validate.rs`):
+It covers only the three kinds of problem that make the program fail to run (see the module docs of `validate.rs`):
 
 * Required entries must not be empty: `ping.default_ping_host`, `discord.token`, `keywords.*`,
   `command_echo.pause_echo`, `command_echo.unpause_echo`, `text.help`, `runtime.screen_prefix`, `runtime.token_file`
@@ -255,30 +257,27 @@ It only looks at the three kinds of problem that make the program fail to run (s
   as well).
 * Numeric ranges: `ping.default_ping_port` must not be 0; `runtime.max_autocomplete_choices` must be between 1 and 25
   (Discord's hard limit on suggestions); `startup_queue.max_batch_size`, `startup_queue.bot_login_interval_ms`,
-  `startup_queue.batch_login_interval_ms`, `startup_queue.max_pending_requests`,
-  `ping.timeout_ms`,
-  `runtime.max_reply_log_lines`, `runtime.max_reply_chars`,
-  `timing.watchdog_window_ms`, `timing.check_grace_ms`, `command_echo.wait_ms` and `command_echo.scan_lines` must be
-  greater than 0 (a watchdog window of 0 degrades the decision - it can never prove "still connected"). The probe
-  interval and the first-handshake timeout are derived from that window, so the "the probe must not be slower than the
-  window" rule no longer exists.
-
-The two `command_echo` echoes must also differ, and neither may contain the other (complete equality included):
-otherwise that log line cannot be attributed and the decision always leans towards whichever is checked first.
-
+  `startup_queue.batch_login_interval_ms`, `startup_queue.max_pending_requests`, `ping.timeout_ms`,
+  `runtime.max_reply_log_lines`, `runtime.max_reply_chars`, `timing.watchdog_window_ms`, `timing.check_grace_ms`,
+  `command_echo.wait_ms` and `command_echo.scan_lines` must be greater than 0 (a watchdog window of 0 degrades the
+  decision - it can never prove "still connected"). The probe interval and the first-handshake timeout are derived from
+  that window, so the "the probe must not be slower than the window" rule no longer exists.
 * Strings that get spliced into a command or a path: `runtime.java_opts` forbids `'`, `"`, backtick, `$`, `;`, `&`,
   `|`, `<`, `>` and newlines (it is inlined unquoted); `keywords.filter_regex` must not contain a single quote (it is
   inlined into `grep -v -E '...'`); `paths.jar` and `paths.fishingbot_config_file_name` must not contain one either.
+
+The two `command_echo` echoes must also differ, and neither may contain the other (complete equality included):
+otherwise that log line cannot be attributed and the decision always leans towards whichever is checked first.
 
 Two more checks belong to "is the environment ready" and also fail at startup: `paths.base_dir` must be a directory
 and `paths.jar` must be a file. Getting those wrong would only fail when a session is launched, and with a far less
 clear message.
 
-Nothing else is policed: how large a timing value should be, which address to use, and whether a name may contain
-Chinese characters are all the user's judgement. `[discord]` has only one rule (the token must not be empty); `[log]`'s
-`debug` is a boolean switch with no rule; `[timing]` has two (`check_grace_ms` greater than 0 and the gateway window
-greater than 0); `[command_echo]` has two (both echoes non-empty and neither containing the
-other, and both durations greater than 0).
+Everything else is out of scope: how large a timing value should be, which address to use, and whether a name may
+contain Chinese characters are all the user's judgement. `[discord]` has only one rule (the token must not be empty);
+`[log]`'s `debug` is a boolean switch with no rule; `[timing]` has two (`check_grace_ms` greater than 0 and the
+gateway window greater than 0); `[command_echo]` has two (both echoes non-empty and neither containing the other, and
+both durations greater than 0).
 
 ## 6. The template (`template`)
 
@@ -290,34 +289,34 @@ other, and both durations greater than 0).
 
 ## 7. Why the config is split into tables (instead of one flat struct)
 
-In code there is one `Config` plus one struct per TOML table (`Config::ping`, `runtime`, `timing`, ...). Not to have
-one more layer, but to keep the name identical in three places:
+In code there is one `Config` plus one struct per TOML table (`Config::ping`, `runtime`, `timing`, ...). This is not an
+extra layer; it keeps the name identical in three places:
 
 * the key in the config file: `bot_logs_dir` under the `[runtime]` table;
 * the way the code reads it: `config::Config::get().runtime.bot_logs_dir`;
 * a startup validation error: `配置项 runtime.bot_logs_dir 不能为空`.
 
-Before flattening the structs into one big struct of concrete fields, you have to decide what happens to the TOML
-tables, and none of the three ways pays off:
+Flattening the structs into one big struct of concrete fields requires deciding what happens to the TOML tables; none of
+the three options pays off:
 
 * Flatten the file along with them (`runtime_logs_dir = "logs"`): the file still matches the struct one to one, but
   every existing deployment has to rewrite its config (this project runs with `deny_unknown_fields`, so the old form
   fails to start outright), and `[admins]` (user ID to name) is a map anyway, so it cannot be flattened into "one
-  concrete setting each". Field names would start clashing too (`log.debug` against `runtime.debug`, say) and would
-  need prefixes, after which file keys and field names no longer match and validation errors cannot copy the names
-  from the file either.
+  concrete setting each". Field names would also clash (`log.debug` against `runtime.debug`, say) and need prefixes,
+  after which file keys and field names no longer match and validation errors cannot copy the names from the file
+  either.
 * Keep the file split and flatten the structs: serde cannot do it in that direction. `#[serde(flatten)]` means
   "spread a struct into the file"; to spread `[runtime]` into a flat struct you would have to write your own
   path-based lookup layer, which is more code rather than less, and field-level errors would degrade into hand-written
   strings that drift away from the file.
 * Generate a "flat view" with a macro: that keeps both the file and the structs, but the per-field doc comments
-  become macro arguments and `cargo doc` no longer shows the explanations we have now - a bad trade for a project
-  where the config is the documentation.
+  become macro arguments and `cargo doc` no longer shows the current explanations - a bad trade for a project where
+  the config is the documentation.
 
-So the conclusion is to keep the tables: the dotted layer after `config::Config::get()` is an acceptable cost, and what it
-buys is exactly "file key name equals struct path equals validation error". What is more, "read once at startup, then
-read fields directly" already holds: `Config::get_or_init()` writes the config into a `OnceLock` at the very beginning, and every
-later `config::Config::get()` is a memory read with no IO.
+The conclusion is to keep the tables: the dotted layer after `config::Config::get()` is an acceptable cost, and what it
+buys is exactly "file key name equals struct path equals validation error". "Read once at startup, then read fields
+directly" also holds: `Config::get_or_init()` writes the config into a `OnceLock` at the very beginning, and every later
+`config::Config::get()` is a memory read with no IO.
 
 ## 8. Related documents
 

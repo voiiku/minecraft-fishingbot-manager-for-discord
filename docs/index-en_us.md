@@ -32,11 +32,11 @@ Module documents:
 * [`text`](mods/i18n/i18n-en_us.md): text and languages; one language per process (chosen from `[i18n] language` at startup). `en_us` (the default), `zh_cn` (one to one with `en_us`, only literals differ), `bootstrap` (English during bootstrap), `log_text`, `requirement`, `setup_failure`.
 * [`watchdog`](mods/watchdog/watchdog-en_us.md): the gateway watchdog; the only place that decides the connection is lost (handshake and probe criteria, pure timing - the process entry asks for the reconnect).
 * [`process_log`](mods/process-log/process-log-en_us.md): the program log, written to the terminal (stderr) and to `<deploy dir>/logs/<timestamp>.log`.
-* [`utils`](mods/utils/utils-en_us.md): the primitives layer: `bot_command`, `bot_dirs`, `bot_name`, `bot_log_files`, `bot_status`, `fishingbot_config`, `fs`, `permission`, `reply`, `restart`, `running_bots`, `screen`, `shutdown`, `startup`, `uptime`.
+* [`utils`](mods/utils/utils-en_us.md): the primitives layer: `bot_command`, `bot_dirs`, `bot_name`, `bot_logs`, `bot_status`, `fishingbot_config`, `fs`, `permission`, `reply`, `restart`, `running_bots`, `screen`, `shutdown`, `startup`, `uptime`.
 
 ## 4. Commands
 
-* [commands-en_us.md](mods/commands/commands-en_us.md): the command layer and every command. Section 1 has the command-layer rules; sections 3 to 7 document all 27 commands by module.
+* [commands-en_us.md](mods/commands/commands-en_us.md): the command layer and every command. Section 1 has the command-layer rules; sections 3 to 7 document every command by module.
 
 ## 5. Reference
 

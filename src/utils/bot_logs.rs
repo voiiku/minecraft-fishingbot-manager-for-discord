@@ -41,7 +41,7 @@ fn is_bot_log_file(file_name: &str) -> bool {
 }
 
 /// 创建以时间戳命名的日志文件，写入首行 `first_line`，返回路径与可写句柄。
-/// 机器人日志（[`create_bot_log_file`]）与程序日志（`src/process_log.rs`）共用此函数，命名规则同此。
+/// 机器人日志（`create_bot_log_file`）与程序日志（`src/process_log.rs`）共用此函数，命名规则同此。
 /// 返回句柄的写入位置在首行之后；父目录不存在时一并创建（`create_dir_all`）。
 pub fn create_timestamped_log_file(
     dir: &Path,

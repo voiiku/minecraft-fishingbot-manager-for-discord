@@ -62,7 +62,7 @@
   session -> sweep the sessions once more". That last sweep catches a session that only appeared after the first
   snapshot (a bot the starter thread was in the middle of launching cannot be held back, only cleaned up afterwards).
   (`/stopall`, the watchdog's disconnect wrap-up and the exit wrap-up all go through it.)
-* `bot_log_files`: creating and picking bot logs (FishingBot's raw log is handled in `startup`). Entry points
+* `bot_logs`: creating and picking bot logs (FishingBot's raw log is handled in `startup`). Entry points
   `create_bot_log_file`, `create_timestamped_log_file`, `target_logs_dir` and `latest_log_path`.
 * `fishingbot_config`: generating the game-side config (FishingBot's `conf.json`): delete the old file, then take the
   template shipped with the repository (`fishingbot-config.example.json`) as the base and override those
@@ -139,30 +139,14 @@ ago would immediately count as already running and the statistics would drift.
 
 ## 4. The waits of `startup` / `shutdown`
 
-* All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start
-  queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most
-  `[startup_queue] max_batch_size`; the next FIFO request is not processed until the current request completes. Two
-  sign-ins are at least `[startup_queue] bot_login_interval_ms` apart: bots inside a batch are spaced by it, and the wait
-  between batches is it minus that batch's recheck wait (at most one more `timing.check_grace_ms`, the per-bot
-  session-survival window). A
-  partial batch is closed when the queue becomes idle, but the "last sign-in" timestamp is kept across commands, so
-  consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process
-  restarts. `/bot login` does not use this queue.
-* `start_bot_sessions` handles launches within a batch and spaces them; the queue dispatcher handles the wait between
-  batches, and `check_grace_ms` is still the per-bot session-survival window the recheck observes, with the
-  two snapshots separated by the same interval. The sign-in rate is the only thing that is limited, so one interval
-  value covers both inside and between batches: the batch size only changes the length of the verification window and
-  the JVM memory peak, not the total duration (total duration is about the number of bots times the interval). See
-  [commands-en_us.md](../commands/commands-en_us.md) section 5.5.
+* All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most `[startup_queue] max_batch_size`; the next FIFO request is not processed until every entry of the current request has been popped. Adjacent bots in a batch are separated by at least `[startup_queue] bot_login_interval_ms`. Batches are separated by at least `[startup_queue] batch_login_interval_ms`, counted from when the previous batch was popped (the verification runs in parallel on the command side and does not count as this wait). A partial batch is closed when the queue becomes idle, but the "last pop" timestamp is kept across commands, so consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process restarts. `/bot login` does not use this queue.
+* `StartupQueue::start_bots()` is the only command-side entry (create the ledger → enqueue → wait until every entry has been launched → take the results and verify); the starter thread handles per-batch staggering and launches, and the verification observes session survival with one wait per start request (check immediately after launch, then once more after the grace period). The sign-in rate is the limited resource, controlled by `bot_login_interval_ms` inside a batch and `batch_login_interval_ms` between batches; the batch size only affects the JVM memory peak during launch. See [commands-en_us.md](../commands/commands-en_us.md) section 5.5.
 * Neither wait of the stop flow takes a parameter; the flow reads the config itself: `stop_grace_ms` is read in
   `shutdown::stop_bot_sessions` (send the signal first, force kill only if that does not work) and `stop_settle_ms` is
   read there too (the deregistration buffer after a force kill and before the re-check).
 * The stop flow sends the exit signal first, waits `stop_grace_ms` and force kills if that is not enough, then waits
   `stop_settle_ms` so the old session can deregister completely, because checking immediately would still see it.
-* Every re-check goes through `running_bots`, so "launched successfully" means the session is still there after two
-  checks (a `screen -list` snapshot), not that the command was sent; and a session being there does not mean the bot is
-  online either (logging in and joining the server are up to the JVM), which is why the report and the reply only say
-  "the start command was sent and the session has appeared".
+* Every re-check goes through `startup::verify_batch`, so "launched successfully" means the session is still there after the second check (a `screen -list` snapshot), not that the command was sent; and a session being there does not mean the bot is online either (logging in and joining the server are up to the JVM), which is why the report and the reply only say "the start command was sent and the session has appeared".
 
 ## 5. `reply`: the reply format is written in one place
 
@@ -266,7 +250,7 @@ Why FishingBot still gets a file: it refuses to start when it cannot create a lo
 throwing `IOException` leads to `setRunning(false)`), so it has to be given a target it can write to that stores
 nothing. As a result there is only one real log on disk, and two copies can no longer interfere with each other.
 
-The rule for picking the file lives in exactly one place, `bot_log_files::latest_log_path`, in two steps: it accepts
+The rule for picking the file lives in exactly one place, `bot_logs::latest_log_path`, in two steps: it accepts
 only timestamp-shaped names (`is_bot_log_file`, whose names come from `create_timestamped_log_file`), then takes the
 largest by name. The name is a fixed-width, zero-padded `year-month-day-hour-minute-second`, so lexicographic order is
 chronological order, and what it picks is the round that started last rather than the file written last (the latter

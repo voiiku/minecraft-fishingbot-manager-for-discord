@@ -26,11 +26,11 @@ utils (the primitives layer)          reusable abilities: directories, sessions,
 the JVM inside a screen session (FishingBot)
 ```
 
-Terminology: `src/commands/` is the command layer (poise's `#[poise::command]`; it reads values, checks argument
-counts, turns values into numbers, `defer`s and turns an `Err` into a reply); `lib.rs`'s `handle_*` is the command
-entry layer (action enum to business function; the permissions of everyone-commands and batch commands are checked
-there), shortened to routing layer below; "business layer" means `bot_control`, `bot_manage`, `show` and
-`all_bots_control`.
+Three layers carry the word "layer", so name them first. `src/commands/` is the command layer: poise's
+`#[poise::command]` functions that read values, check argument counts, turn values into numbers, `defer` and turn an
+`Err` into a reply. `lib.rs`'s `handle_*` is the command entry layer (the routing layer below): it turns the action
+enum into a business call, and it checks the permissions of everyone-commands and batch commands. The business layer
+means `bot_control`, `bot_manage`, `show` and `all_bots_control`.
 
 How arguments travel down: Discord hands the command layer structured options, but an option's value is still the raw
 text the user typed, so the command layer only reads it, checks numbers and passes it through (argument names start
@@ -95,14 +95,14 @@ src/
     ├── bot_command.rs          how an in-game command is assembled (`/command` and `/commandall` share it, written once)
     ├── bot_dirs.rs             bot directories: paths, lookup, walking, creation (an entry `BotDirEntry` carries the token status)
     ├── bot_name.rs             bot name normalisation
-    ├── bot_log_files.rs        bot logs: create / pick (FishingBot's raw log is handled in startup)
+    ├── bot_logs.rs             bot logs: create / pick (the raw log directory is prepared here too, called by startup)
     ├── fishingbot_config.rs    generating the game-side config (FishingBot's conf.json): delete the old file, then
     │                           override the `[fishingbot]` keys on top of the repository template
     │                           (fishingbot-config.example.json)
     ├── fs.rs                   file and directory primitives: read the tail, list subdirectory names, remove a
     │                           directory (not existing counts as success)
     ├── bot_status.rs           bot status: pause memory + echo confirmation, live log reading when online
-    ├── running_bots.rs         status summary of the running bots (including the `/show status` header and rows)
+    ├── running_bots.rs         status summary of the running bots (the `/show status` rows; the header is in `show/status.rs`)
     ├── screen.rs               session detection and command injection
     ├── shutdown.rs             stopping sessions (`/stop`, `/stopall`, the stop stage of a restart, process shutdown)
     ├── startup.rs              starting (four explicit steps)
@@ -141,7 +141,7 @@ Taking `/start <bot name>:duck` as the example (the caller is `caller_id = 1234.
    always pass).
 5. The token status in the entry confirms a token is configured (`BotTokenStatus::from_dir` reads it when the entry is
    built), and `utils::is_bot_screen_running` confirms it is not already running.
-6. `utils::start_bot_sessions` follows the four explicit steps of [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
+6. `StartupQueue::start_bots()` follows the four explicit steps of [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
    section 4.
 7. The result is assembled by `Report`, turned into text by `IntoReplyText::to_reply_text` and sent as the second
    message with `ctx.say(report)` (the first message already used up the placeholder's allowance).
@@ -214,13 +214,13 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   (`all_running_bots_status`); one-off probes or checks are `*_report` (`ping_report`, `checkserver_report`); data sent
   as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`). Only text that is already written out in
   full uses a bare noun (`help`, `whoami`).
-* Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both "fetch the one copy in
-  this process". A missing config `expect`s (that is an internal invariant); a missing language falls back to the
-  default (English, `Language::default()`). Both are installed once each by the process entry (`config::Config::get_or_init()`
-  installs `text::install()` along the way). The watchdog takes a different route: `WATCHDOG` in
-  `src/watchdog.rs` is a process-wide slot, anyone who needs it calls `WATCHDOG.get_or_init()` (the first call
-  builds it from the config); poise's event callbacks are plain fn pointers that cannot capture anything, so they go
-  through that same entry point; every other method takes `&self`.
+* Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both mean "the one
+  copy in this process". A missing config `expect`s (that is an internal invariant); a missing language falls back to
+  the default (English, `Language::default()`). The process entry installs both once
+  (`config::Config::get_or_init()` installs `text::install()` along the way). The watchdog takes a different route:
+  `WATCHDOG` in `src/watchdog.rs` is a process-wide slot and consumers call `WATCHDOG.get_or_init()` once (the first
+  call creates it from the config). Poise's event callbacks are plain fn pointers that cannot capture anything, so
+  they take the same entry point; every other method takes `&self`.
 * The order inside a file is fixed: module docs (`//!`), `mod` declarations, `use`, public re-exports (`pub use`),
   then constants, types and functions; the process entry (`lib.rs`, `main.rs`) follows it too, so "which submodules
   does this file have" is visible at the very top.

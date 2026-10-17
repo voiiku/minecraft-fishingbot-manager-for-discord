@@ -1,7 +1,7 @@
 # docs：文档索引
 [English](index-en_us.md) | **简体中文**
 
-关于文档须知：README,部署教程,错误排查的中文版是由作者手写的，其余文档由AI生成（未来逐步优化），英语版本文档全部由AI生成。
+关于文档须知：README、部署教程与故障排查的中文版由作者手写，其余中文文档由 AI 生成（后续逐步优化）；全部英文文档由 AI 生成。
 
 ## 1. README 列表
 
@@ -18,7 +18,7 @@
 
 项目总览（分层、目录结构、指令的完整路径）见 [architecture-zh_cn.md](mods/architecture/architecture-zh_cn.md)。
 
-其他文档如下所示:
+其他文档如下：
 
 * [`lib`](mods/lib/lib-zh_cn.md)：指令入口层（路由层）。动作枚举、`handle_*`、权限校验、错误口径、退出与重连入口。
 * [`commands` + `commands/`](mods/commands/commands-zh_cn.md)：命令层（poise 指令）。取值、校验参数个数、`defer`、把 `Err` 变成回复；7 个业务文件：`bot_control`、`bot_manage`、`token`、`log`、`all_bots`、`show`、`general`。
@@ -31,12 +31,12 @@
 * [`text`](mods/i18n/i18n-zh_cn.md)：文案与多语言，一个进程一种语言（`[i18n] language` 启动时选定）。`en_us`（默认语言）、`zh_cn`（与 `en_us` 一一对应，只换字面量）、`bootstrap`（引导期英文）、`log_text`、`requirement`、`setup_failure`。
 * [`watchdog`](mods/watchdog/watchdog-zh_cn.md)：网关看门狗。唯一判定"掉线"的地方：握手与探活两条判据，纯计时，请求重建连接由进程入口发出。
 * [`process_log`](mods/process-log/process-log-zh_cn.md)：程序日志。终端（stderr）与 `<部署目录>/logs/时间戳.log` 双写。
-* [`utils`](mods/utils/utils-zh_cn.md)：原语层，上层可复用的能力：`bot_command`、`bot_dirs`、`bot_name`、`bot_log_files`、`bot_status`、`fishingbot_config`、`fs`、`permission`、`reply`、`restart`、`running_bots`、`screen`、`shutdown`、`startup`、`uptime`。
+* [`utils`](mods/utils/utils-zh_cn.md)：原语层，上层可复用的能力：`bot_command`、`bot_dirs`、`bot_name`、`bot_logs`、`bot_status`、`fishingbot_config`、`fs`、`permission`、`reply`、`restart`、`running_bots`、`screen`、`shutdown`、`startup`、`uptime`。
 
 ## 4. 指令
 
 * [commands-zh_cn.md](mods/commands/commands-zh_cn.md)：命令层与全部指令。第 1 节讲命令层的规矩，
-  第 3 节到第 7 节按模块列出 27 条指令的说明（单机器人控制、账号管理、批量、查询、通用）。
+  第 3 节到第 7 节按模块列出全部指令的说明（单机器人控制、账号管理、批量、查询、通用）。
 
 ## 5. 对照清单
 

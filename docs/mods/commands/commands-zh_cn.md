@@ -6,7 +6,7 @@
   下一层（`src/lib.rs` 与各业务模块）。
 * 硬约定：每条指令都必须落到 `lib::handle_*`（那一层负责声明权限要求并判一次），不许在本层自己拼回复，
   连 `/whoami` 这种只取作者信息的指令也走 `handle_whoami`。漏掉这一步就等于漏掉权限校验（没有注册表或
-  框架钩子兜底，靠这条约定与评审）。
+  框架钩子兜底，只能依赖这条约定与评审）。
 * 与业务层的关系：`commands/bot_control.rs`（命令层）只声明有哪些指令、参数长什么样、怎么回，真正的
   动作在 `bot_control/start.rs`（业务层）。两边文件名刻意同名，便于对照。
 
@@ -91,7 +91,7 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 ### 1.5 注册与上下文
 
 * 指令集合由 `commands::all_commands()` 给出；`setup` 里用 `poise::builtins::register_globally` 注册一次：
-  一律全局注册（Discord 端最长 1 小时才传播完）。注册成功后还会顺手清掉各服务器上遗留的 guild 指令——
+  一律全局注册（Discord 端最长 1 小时才传播完）。注册成功后还会同时清理各服务器上遗留的 guild 指令——
   以前注册到某个服务器的那份不会自己消失，客户端会把两份一起列出来（同一条指令出现两次）。清理有硬前提：
   先确认这一套全局指令**在本轮启动之前就已经稳定存在满 1 小时**（名字一一对应，且最"年轻"的指令 Id 也
   够老），否则会出现"两份都看不到"的空窗；判定靠指令 Id 里的创建时间，不落任何状态文件。
@@ -289,18 +289,18 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    * `/stop`：会话不在运行时直接回复"无需停止"，不必走停止流程。
    * `/restart`：不在运行的直接拒绝（回"机器人 X 未运行，无需重启"），因为 `/restart` 的语义是重启
      正在跑的，替用户启动会掩盖"它是什么时候没的"这条信息；缺 Token 的目标由重启流程在停止之前剔掉
-     并写进失败明细，因为重启是先停再起，缺 Token 起不来，白停一次会把还在钓鱼的账号弄下线。
+     并写进失败明细，因为重启是先停再起，缺 Token 起不来，无谓的停止会让仍在钓鱼的账号下线。
 3. 调 `utils` 的流程函数（等待与错峰都不用传参数，由 `utils` 按这一批有几台自己定）：
-   * `/start` 走 `start_bot_sessions(std::slice::from_ref(bot_dir_entry))`；
+   * `/start` 走 `StartupQueue::get_or_init().start_bots(std::slice::from_ref(bot_dir_entry))`；
    * `/stop` 走 `stop_single_bot_session(bot_dir_entry.clone())`（拿回明细，成败看它）；
    * `/restart` 走 `restart_bot_sessions(std::slice::from_ref(bot_dir_entry))`。
 
-   三个流程函数吃的都是 `&[BotDirEntry]`，单机就是一个元素的切片 —— 这也是"以后要支持一次多台"
-   不用重写它们的原因（见 [CONTEXT 第 8 节](../../CONTEXTS/CONTEXT-zh_cn.md)）。
+   三个流程函数中，`/start` 与 `/restart` 吃 `&[BotDirEntry]`（单机就是单元素切片），`/stop` 吃单个条目 ——
+   切片口径也是"以后要支持一次多台"不用重写启动与重启流程的原因（见 [CONTEXT 第 8 节](../../CONTEXTS/CONTEXT-zh_cn.md)）。
 
-   拉起相邻两台之间等 `[startup_queue] bot_login_interval_ms`，全部拉起后再等台数乘 `timing.check_grace_ms` 复核两遍（中间再等同样久，第二遍
-   还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功），见
-   [utils.md 第 4 节](../utils/utils-zh_cn.md#4-startup--shutdown-的等待参数)。
+   拉起相邻两台之间等 `[startup_queue] bot_login_interval_ms`；拉起后先判定一次，等满 `timing.check_grace_ms` 再判定一次
+   （每次启动请求只等一次）。第二遍还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功；
+   见 [utils.md 第 4 节](../utils/utils-zh_cn.md#4-startup--shutdown-的等待参数)。
 4. 失败判定都看 utils 返回的明细自己的方法（`outcome.has_failed_lines()` 为真就把
    `outcome.to_failure_text()` 当错误返回；停止明细用的是同形的 `has_failed_lines()`）。明细由
    utils 返回，拼装方法必须在这里显式调用（见 [utils.md](../utils/utils-zh_cn.md)）。文案按能验证到哪一步就只说到
@@ -327,7 +327,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 ### 3.4 `/log` 的细节
 
 * 行数必须大于 0，且被 `runtime.max_reply_log_lines` 封顶（一条指令不能把整份大日志拉回来）。
-* 只读最新那一份日志（`utils::bot_log_files::latest_log_path`，只认时间戳命名）：每个会话启动前
+* 只读最新那一份日志（`utils::bot_logs::latest_log_path`，只认时间戳命名）：每个会话启动前
   `create_bot_log_file` 先建好文件，会话里 `grep -v -E` 过滤后 `tee -a` 追加。
 * FishingBot 自己的日志写在同层 `raw/log0.log`（指向 `/dev/null` 的符号链接，内容丢弃），所以磁盘上
   只有一份日志，`/log` 不可能读回未过滤的刷屏内容。细节见
@@ -431,7 +431,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    [BOT_COMMANDS_AND_MESSAGES](../../refs/BOT_COMMANDS_AND_MESSAGES-zh_cn.md) 第 3.4 节），最长等 60 秒。等不到就停
    会话、放回旧凭据，并按"会话起来就退了"（复用 `/start` 那句结论）或"没等到登录提示"给结论。
 
-没有有效凭据时 JAR 只是等着你登录，**不会去连游戏服务器** —— 所以登录期间既不占用游戏账号，也不会在游戏里
+没有有效凭据时 JAR 只等待登录，**不会去连游戏服务器** —— 所以登录期间既不占用游戏账号，也不会在游戏里
 留下一次"进服又掉线"。
 
 第二段（`login::await_login`，最多 10 分钟）：轮询凭据文件是否出现 —— **以文件为准**，不去解析"授权成功"
@@ -498,7 +498,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   一致（只发给配好 Token 且在跑的）。
 
 `/restartall` 刻意不按 Token 过滤：重启是先停再起，而缺 Token 的目标起不来（登录必然失败），白停一次
-会把一个可能还在钓鱼的账号弄下线。过滤因此放在重启流程里、且放在停止之前，那些目标会以"缺少 Token
+会让一个可能仍在钓鱼的账号下线。过滤因此放在重启流程里、且放在停止之前，那些目标会以"缺少 Token
 文件，已保持原状"出现在失败明细里，而不是静默消失。
 
 ### 5.3 各指令的流程
@@ -506,7 +506,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 * `/startall`：先按 Token 就绪拆成两组（`split_bot_entries_by_token_status`），有效账号再按运行状态
   拆开（`split_bot_entries_by_is_running`）。一个有效账号都没有时回 `未配置任何有效账号，未启动。`
   （若还有缺 Token 的账号，会追一句提示）；全部在运行时回 `全部有效机器人均已运行`；否则调
-  `utils::start_bot_sessions(&not_running_bot_entries)`，之后用 `Report::set_counts` 覆盖计数行
+  `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)`，之后用 `Report::set_counts` 覆盖计数行
   （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、已取消、启动失败）。没被启动的账号
   都进 `skipped` 明细（已在运行、缺 Token 与被取消三种原因各一条），不算失败：被取消的那些是"停止全部机器人"
   （`/stopall`、掉线收尾、退出收尾）撤下来的（`BotStartOutcome::Cancelled`）。

@@ -336,19 +336,19 @@ other; startup validates this, otherwise that echo line cannot be attributed to 
      start, and a pointless stop would take an account that is still fishing offline.
 3. Call the `utils` flow functions (neither the waits nor the staggering take parameters; `utils` decides from how many
    bots are in this batch):
-   * `/start` goes through `start_bot_sessions(std::slice::from_ref(bot_dir_entry))`;
+   * `/start` goes through `StartupQueue::get_or_init().start_bots(std::slice::from_ref(bot_dir_entry))`;
    * `/stop` goes through `stop_single_bot_session(bot_dir_entry.clone())` (which returns the details; success or
      failure is read off them);
    * `/restart` goes through `restart_bot_sessions(std::slice::from_ref(bot_dir_entry))`.
 
-   All three take a `&[BotDirEntry]`, and a single bot is a slice of one element - which is exactly why "support
-   several bots at once later" will not need them rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
-   section 8).
+   The `/start` and `/restart` flows take a `&[BotDirEntry]` (a single bot is a slice of one element), while `/stop`
+   takes a single entry. The slice shape is why "support several bots at once later" will not need the start and restart
+   flows rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 8).
 
-   Between two neighbouring launches it waits `[startup_queue] bot_login_interval_ms`, and after launching them all it waits
-   (count x `timing.check_grace_ms`) to check twice, with the same wait in between again, because the JVM may exit by itself one or two seconds after
-   starting and a single check would report "started and gone" as a success; see
-   [utils-en_us.md](../utils/utils-en_us.md) section 4.
+   Adjacent launches are separated by `[startup_queue] bot_login_interval_ms`. After all bots in the request are
+   launched it checks once immediately and once after `timing.check_grace_ms` (one wait per start request), because the
+   JVM may exit by itself one or two seconds after starting and a single check would report "started and gone" as a
+   success; see [utils-en_us.md](../utils/utils-en_us.md) section 4.
 4. Failure is always decided by the methods on the details utils returns (when `outcome.has_failed_lines()` is true,
    `outcome.to_failure_text()` is returned as the error; the stop details use a `has_failed_lines()` of the same
    shape). utils returns the details, and the assembly method has to be called explicitly here (see
@@ -379,7 +379,7 @@ other; startup validates this, otherwise that echo line cannot be attributed to 
 
 * The line count must be greater than 0 and is capped by `runtime.max_reply_log_lines` (one command must not pull a whole
   large log back).
-* Only the newest log is read (`utils::bot_log_files::latest_log_path`, which only accepts timestamp-shaped names):
+* Only the newest log is read (`utils::bot_logs::latest_log_path`, which only accepts timestamp-shaped names):
   `create_bot_log_file` creates the file before every session launch, and the session appends through `grep -v -E` and
   `tee -a`.
 * FishingBot's own log is written to `raw/log0.log` beside it (a symlink to `/dev/null`, so its contents are
@@ -594,7 +594,7 @@ file missing, left as it is" rather than disappearing silently.
   valid accounts by run state (`split_bot_entries_by_is_running`). With no valid account at all it replies
   `未配置任何有效账号，未启动。` (with an extra note when there are also accounts missing a token); when all of them
   are running it replies `全部有效机器人均已运行`; otherwise it calls
-  `utils::start_bot_sessions(&not_running_bot_entries)` and then overwrites the count rows with `Report::set_counts`
+  `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)` and then overwrites the count rows with `Report::set_counts`
   (valid accounts in total, start commands sent, skipped (already running), skipped (token missing), cancelled, start
   failures). Every account that was not started goes into the `skipped` details (one entry each for "already running",
   "token missing" and "cancelled") and does not count as a failure: the cancelled ones are the starts that "stop every

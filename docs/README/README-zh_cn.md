@@ -4,26 +4,28 @@
 
 * **本项目暂时不支持离线模式的服务器或单人游戏**。
 * **本项目暂时只支持运行在 64 位 Linux 系统下**。
+* 由于[FishingBot](https://github.com/MrKinau/FishingBot)的官方构建版本尚未支持/pause和/unpause命令（作者已计划加入），本项目暂时无法正确处理暂停钓鱼功能的逻辑，其余功能不受影响。
 
 ## 1. 项目概要
 
-本项目通过 Discord 斜杠指令管理多个 Minecraft 自动钓鱼机器人，由 Rust 完成的非官方控制器。机器人本身由独立的 [FishingBot](https://github.com/MrKinau/FishingBot) 项目提供，运行 `FishingBot.jar` 需要 Java JRE。
+本项目通过 Discord 群聊管理多个 Minecraft 自动钓鱼机器人。机器人本身由独立的 [FishingBot](https://github.com/MrKinau/FishingBot) 项目提供，运行 `FishingBot.jar` 需要 Java JRE。
 
 简而言之，本项目只提供管理 FishingBot 钓鱼机器人的方法，暂时不涉及具体的钓鱼机器人行为逻辑。
 
 ## 2. 必要说明
 
-* 适用人群：拥有 Linux 机器，且需要在**正版** MC 服务器内管理多个自动钓鱼机器人的人。
-* 不适用人群：单人游戏玩家，只开一个账号自动钓鱼的人。
-* 目标是尽量通过配置满足常见需求，减少用户查看代码或自行编译的需要。
+* 适用人群：希望在MC服务器中挂机钓鱼，拥有多个游戏账号且希望集中管理的（一群）玩家。
+* 不适用人群：单人游戏玩家。
+* 本项目解决的问题：
+  * 节省分散挂机钓鱼的开销（当一群好友在各自的电脑上挂机钓鱼时，开销比集中钓鱼大得多）。
+  * 便于管理多个账号。
+  * 满足一些常见需求（暂停钓鱼以作为假人使用、可向机器人发送命令、向服务器内发送聊天消息、查看日志等）。
 
 ## 3. 开始部署
 
 见 [部署教程](../tutorial/tutorial-zh_cn.md)。
 
-## 4. 使用
-
-顶层指令 18 条、子指令 9 条，共 27 个命令（`/bot` 与 `/show` 是带子指令的父指令，本身无动作）。
+## 4. 命令预览
 
 所有人可用：
 
@@ -52,16 +54,12 @@
 
 ## 5. 项目现状
 * 单人维护，目前仍处于测试阶段，配置项与指令回复随更新而调整，更新会在 Release 中声明不兼容变更。
-* 推荐使用带补丁的 FishingBot.jar：上游原版默认不支持游戏内的 /pause、/unpause 命令，暂停状态是错误的，其他功能不受影响。
-* 语言目前仅支持 ENGLISH 与 CHINESE_SIMPLIFIED 两种（取值就是 FishingBot 项目对语言的命名）。可用文档见 docs 文档索引。全部的英语文本和英语文档均为AI翻译。
-* 非目标：Web 管理面板(作者认为通过群聊管理已经足够简单)、内置代理服务。
-* 未来目标：适配 Windows。内建钓鱼机器人，允许用户自由选择使用FishingBot.jar或内置的机器人。
+* 原版 FishingBot.jar 暂时不支持游戏内的 /pause、/unpause 命令（但功能已实现，并于作者修改的版本上验证），暂停状态是错误的，其他功能不受影响。
+* 语言目前仅支持 ENGLISH 与 CHINESE_SIMPLIFIED 两种（取值就是 FishingBot 项目对语言的命名）。全部的英语文本和英语文档均为AI翻译。
+* 非目标：Web 面板、内置代理服务。
+* 未来目标：适配 Windows。内建钓鱼机器人，允许用户选择使用FishingBot.jar或内置的机器人。
 
-## 6. 项目结构
-
-见 [docs/mods/architecture/architecture-zh_cn.md](../mods/architecture/architecture-zh_cn.md)。
-
-## 7. 许可证
+## 6. 许可证
 
 本项目许可证采用 [MIT License](../../LICENSE)。
 
@@ -69,19 +67,19 @@
 
 [FishingBot](https://github.com/MrKinau/FishingBot) 使用 [GPL-3.0 许可证](https://github.com/MrKinau/FishingBot/blob/main/LICENSE)的独立程序，本项目只管理它，不包含它，也不与它一起打包发布。
 
-## 8. 参与贡献
+## 7. 参与贡献
 欢迎参与贡献。发现问题或有功能建议，请[提交 Issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)。也欢迎提交 Pull Request；对于较大的改动，建议先开 Issue 讨论方案。
 
 ### 翻译
 面向用户的文本目前定义在 `src/text/` 模块中，并在启动时加载。修改或新增翻译时，请参考现有语言模块，例如 `src/text/zh_cn.rs`。语言加载前显示的消息会使用英语。
   **未来可能会重构多语言功能**
 
-## 9. 其他常用文档
+## 8. 常用文档
 
 全部文档见 [docs 文档索引](../index-zh_cn.md)，常用文档如下：
 
 * [docs/tutorial/tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md)：从零开始的部署教程（面向第一次用 Discord 的人）。
 * [docs/troubleshooting/troubleshooting-zh_cn.md](../troubleshooting/troubleshooting-zh_cn.md)：故障提示与排查。
-* [docs/mods/config/config-zh_cn.md](../mods/config/config-zh_cn.md)：配置文件的位置、加载流程、每个字段的含义与启动校验。
+* [docs/mods/config/config-zh_cn.md](../mods/config/config-zh_cn.md)：配置文件的说明、加载流程、每个字段的含义与启动校验。
 * [docs/mods/commands/commands-zh_cn.md](../mods/commands/commands-zh_cn.md)：指令总览与命令层的两条消息、ephemeral、候选规则。
 * [docs/CONTEXTS/CONTEXT-zh_cn.md](../CONTEXTS/CONTEXT-zh_cn.md)：建议阅读代码前先读此文档。

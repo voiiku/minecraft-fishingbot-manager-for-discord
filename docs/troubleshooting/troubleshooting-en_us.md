@@ -87,12 +87,13 @@ launch. Whether that is reported as a failure depends on the verification window
   one `timing.check_grace_ms` after launch, so "rejected by a 429 after 2-5 seconds" is often invisible and gets
   reported as a success.
 
-The real gap between two sign-ins (what the rate limit actually sees) is set by the single key
-`[startup_queue] bot_login_interval_ms`:
+The real gap between two sign-ins (what the rate limit actually sees) is set by the two interval keys in
+`[startup_queue]`:
 
 * two bots inside one batch: `bot_login_interval_ms`;
-* last bot of a batch -> first bot of the next batch: `bot_login_interval_ms` (the wait between batches is it minus
-  one `timing.check_grace_ms`).
+* last bot of a batch -> first bot of the next batch: `batch_login_interval_ms` minus the time already spent since the
+  batch was popped through the launch of its last bot (the verification runs in parallel on the command side and does
+  not consume this wait).
 
 Empirical values for one egress IP: **one sign-in every 20 seconds (about 3 per minute) is stable**; one every 12
 seconds (5 per minute) loses the last one; several sign-ins within a few seconds trip a penalty window, and every

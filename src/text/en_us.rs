@@ -404,7 +404,7 @@ impl Text for EnUs {
     fn bot_login_prompt_missing(&self, bot_name: &str) -> String {
         format!(
             "Error: the session for bot '{bot_name}' started, but no device code was displayed. \
-             Check its output with /log {bot_name}. Common causes include incorrect JAR arguments, \
+             Check its output with /log {bot_name}. Common causes: incorrect JAR arguments, \
              insufficient memory, or a build without device-code sign-in support."
         )
     }
@@ -841,19 +841,19 @@ impl Text for EnUs {
 
     fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
         format!(
-            "Bot {bot_name}: timed out waiting for the launch result ({seconds} seconds); closed as unconfirmed (check the program log or /show status)"
+            "Bot {bot_name}: timed out waiting for the launch result ({seconds} seconds); marked unconfirmed (check the program log or /show status)"
         )
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
         format!(
-            "Bot {bot_name}: failed to start (usually because Microsoft refuses frequent logins, or out of memory)"
+            "Bot {bot_name}: failed to start (usually because Microsoft throttles frequent logins, or because it ran out of memory)"
         )
     }
 
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
         format!(
-            "Bot {bot_name}: no token file, restarting would fail to log in, left as is (run /token first, then restart)"
+            "Bot {bot_name}: no token file, so restarting would fail to log in; left unchanged (run /token first, then restart)"
         )
     }
 
@@ -1089,14 +1089,14 @@ impl Text for EnUs {
             }
             LogText::StartResultTimeout { bot_name, seconds } => {
                 format!(
-                    "timed out after {seconds} seconds waiting for the launch result of bot {bot_name}; closed as unconfirmed"
+                    "timed out after {seconds} seconds waiting for the launch result of bot {bot_name}; marked unconfirmed"
                 )
             }
             LogText::StarterRestarting { reason } => {
                 format!("the startup thread crashed ({reason}); restarting it")
             }
             LogText::StartVerificationFailed { bot_name, reason } => {
-                format!("the start of bot {bot_name} failed the re-check: {reason}")
+                format!("the start of bot {bot_name} did not pass the re-check: {reason}")
             }
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "unexpected file '{file_name}' in the FishingBot log directory {dir} (if this keeps \

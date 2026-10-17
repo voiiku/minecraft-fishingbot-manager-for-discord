@@ -149,7 +149,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     keeping a raw log;
   * program log: `<deployment dir>/logs/YYYY-MM-DD-HH-MM-SS.log`, with a copy on the terminal, one per run, never
     rotated and never cleaned up, see [docs/mods/process-log/process-log-en_us.md](../mods/process-log/process-log-en_us.md);
-  * the single source of truth for log file names is `bot_log_files::create_timestamped_log_file` - do not assemble a
+  * the single source of truth for log file names is `bot_logs::create_timestamped_log_file` - do not assemble a
     timestamped file name anywhere else.
 * A bot has two sources of state: the connection state can only be confirmed from the log (only the JVM knows whether
   it connected or dropped), so it is not stored across calls and is read afresh on every call
@@ -407,16 +407,12 @@ project's dedicated code for a deliberate failure, which a systemd unit can keep
 
 ## 4. The start-up pipeline (an example of writing the steps explicitly)
 
-`utils::startup::start_bot_sessions` contains four consecutive explicit steps, run once per bot:
+The start-up queue runs the pipeline in four stages; the command side only touches the first:
 
-1. `create_bot_log_file(bot_dir)`: create this run's log file (named with a timestamp; on failure no session is
-   launched).
-2. `reset_fishingbot_logs_dir(bot_dir)`: prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, whose path
-   and configuration it computes itself), pointing `raw/log0.log` at `/dev/null` so the content is discarded.
-3. `launch_bot_session(name, dir, log_path, game_logs_dir)`: start the session with `screen -dmS`, with a command shaped
-   like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`.
-4. Stagger the waits, then verify with two `screen -list` snapshots whether the session really is still there (only
-   still being there on the second one counts as started).
+1. `StartupQueue::start_bots(bots)`: the command-side entry, which creates the ledger, calls `add_bots_to_queue` and `wait_until_done()` until every entry has been launched once, then hands the results to `verify_batch`.
+2. The starter thread `run_starter`: wait for a non-empty queue, wait for `[startup_queue] batch_login_interval_ms` (counted from when the previous batch was popped), then `pop_bots_from_head(max_batch_size)`.
+3. `start_single_batch` calls `launch_one_bot` → `add_bot_for_login` per bot: create this run's log file (on failure no session is launched) → prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, with `raw/log0.log` pointing at `/dev/null`) → start the session with `screen -dmS` and a command shaped like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`; adjacent bots in a batch are separated by `bot_login_interval_ms`.
+4. `verify_batch`: take a `screen -list` snapshot immediately after launch, wait for `timing.check_grace_ms`, then take a second snapshot; only surviving the second one counts as started, and the log only states whether the bot is confirmed in-game.
 
 Follow this style for new flows: one function per step, and every step readable on its own.
 
@@ -477,7 +473,7 @@ src/bot_manage/             account management business (one file per command)
 src/all_bots_control/       bulk server-wide business (admins only, one file per command)
 src/show/                   read-only query business (one file per command)
 src/general/                general business (one file per command)
-src/utils/                  primitive layer: bot_command / bot_dirs / bot_name / bot_log_files /
+src/utils/                  primitive layer: bot_command / bot_dirs / bot_name / bot_logs /
                             bot_status / fs / fishingbot_config / permission / reply / restart /
                             running_bots / screen / shutdown / startup / uptime
 ```

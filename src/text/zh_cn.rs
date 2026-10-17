@@ -99,7 +99,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             ("name", "机器人名"),
             (
                 "lines",
-                "读取最新多少行 (默认 50，上限见配置 runtime.max_reply_log_lines)",
+                "读取最新日志行数 (默认 50，上限见配置 runtime.max_reply_log_lines)",
             ),
         ],
     },
@@ -153,7 +153,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
         description: "向全部运行中的机器人发送同一条游戏内指令 (仅管理员)",
         options: &[(
             "command",
-            "游戏内指令 (带斜杠是指令，不带是聊天；直接写，含空格也不用加引号)",
+            "游戏内指令 (带斜杠为指令，不带为聊天；直接写入，含空格时无需加引号)",
         )],
     },
 ];
@@ -246,15 +246,15 @@ impl Text for ZhCn {
 
     // ============ 单机器人指令（`bot_control/*`） ============
     fn bot_start_missing_token(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 缺少 Token 文件，无法启动！")
+        format!("错误: 机器人 '{bot_name}' 缺少 Token 文件，无法启动！")
     }
 
     fn bot_start_already_running(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 已在运行中，无需启动！")
+        format!("错误: 机器人 '{bot_name}' 已在运行中，无需启动！")
     }
 
     fn bot_start_already_queued(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 已在启动队列中，无需重复启动")
+        format!("错误: 机器人 '{bot_name}' 已在启动队列中，无需重复启动")
     }
 
     fn bot_start_command_sent(&self, bot_name: &str) -> String {
@@ -262,7 +262,7 @@ impl Text for ZhCn {
     }
 
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 未在运行，无需停止")
+        format!("错误: 机器人 '{bot_name}' 未在运行，无需停止")
     }
 
     fn bot_stop_succeeded(&self, bot_name: &str) -> String {
@@ -280,11 +280,11 @@ impl Text for ZhCn {
     }
 
     fn bot_command_empty(&self) -> &'static str {
-        "错误:发送的指令不能为空！"
+        "错误: 发送的指令不能为空！"
     }
 
     fn bot_command_not_running(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 未运行，无法发送指令！")
+        format!("错误: 机器人 '{bot_name}' 未运行，无法发送指令！")
     }
 
     fn bot_command_sent(&self, bot_name: &str, bot_command: &str) -> String {
@@ -304,11 +304,11 @@ impl Text for ZhCn {
     }
 
     fn bot_log_zero_lines(&self) -> &'static str {
-        "错误:日志读取行数必须大于 0！"
+        "错误: 日志读取行数必须大于 0！"
     }
 
     fn bot_log_missing(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 日志文件不存在")
+        format!("错误: 机器人 '{bot_name}' 日志文件不存在")
     }
 
     // ============ 账号管理指令（`bot_manage/*`） ============
@@ -322,11 +322,11 @@ impl Text for ZhCn {
     }
 
     fn bot_add_failed(&self, raw_bot_name: &str, reason: &str) -> String {
-        format!("错误:添加机器人 '{raw_bot_name}' 失败: {reason}")
+        format!("错误: 添加机器人 '{raw_bot_name}' 失败: {reason}")
     }
 
     fn bot_delete_failed(&self, bot_name: &str, reason: &str) -> String {
-        format!("错误:删除机器人 '{bot_name}' 失败，原因如下:\n{reason}")
+        format!("错误: 删除机器人 '{bot_name}' 失败，原因如下:\n{reason}")
     }
 
     fn bot_delete_succeeded(&self, bot_name: &str) -> String {
@@ -334,21 +334,21 @@ impl Text for ZhCn {
     }
 
     fn bot_rename_same_name(&self) -> &'static str {
-        "错误:新旧名称一致，无需修改！"
+        "错误: 新旧名称一致，无需修改！"
     }
 
     fn bot_rename_name_taken(&self, clean_new_bot_name: &str) -> String {
         format!(
-            "错误:机器人名 '{clean_new_bot_name}' 已被占用，请使用 /show allbots 查看全部机器人"
+            "错误: 机器人名 '{clean_new_bot_name}' 已被占用，请使用 /show allbots 查看全部机器人"
         )
     }
 
     fn bot_rename_no_parent_dir(&self) -> &'static str {
-        "错误:无法获取原机器人目录的父目录！"
+        "错误: 无法获取原机器人目录的父目录！"
     }
 
     fn bot_rename_failed(&self, reason: &str) -> String {
-        format!("错误:重命名失败: {reason}")
+        format!("错误: 重命名失败: {reason}")
     }
 
     fn bot_rename_succeeded(&self, old_bot_name: &str, new_bot_name: &str) -> String {
@@ -384,18 +384,18 @@ impl Text for ZhCn {
     }
 
     fn bot_login_rejected(&self, bot_name: &str) -> String {
-        format!("错误:机器人 {bot_name} 的登录被微软拒绝。请重试或使用 /token")
+        format!("错误: 机器人 {bot_name} 的登录被微软拒绝。请重试或使用 /token")
     }
 
     fn bot_login_prompt_missing(&self, bot_name: &str) -> String {
         format!(
-            "错误:机器人 {bot_name} 的会话已启动，但没有设备码。请用 /log {bot_name} 查看输出：常见原因是 jar 参数不对、内存不足，或这份构建没有设备码登录"
+            "错误: 机器人 {bot_name} 的会话已启动，但没有显示设备码。请用 /log {bot_name} 查看输出。常见原因：JAR 参数不正确、内存不足，或该构建不支持设备码登录"
         )
     }
 
     fn bot_login_timed_out(&self, bot_name: &str, waited_minutes: u64) -> String {
         format!(
-            "错误:获取机器人 {bot_name} 凭据超时（{waited_minutes} 分钟），已取消登录会话。请重试或用 /token"
+            "错误: 获取机器人 {bot_name} 凭据超时（{waited_minutes} 分钟），已取消登录会话。请重试或用 /token"
         )
     }
 
@@ -564,11 +564,11 @@ impl Text for ZhCn {
     }
 
     fn botconfig_read_failed(&self, path: &str, reason: &str) -> String {
-        format!("错误:读取钓鱼配置 {path} 失败: {reason}(它由本程序在启动时按 [fishingbot] 生成)")
+        format!("错误: 读取钓鱼配置 {path} 失败: {reason}(它由本程序在启动时按 [fishingbot] 生成)")
     }
 
     fn botconfig_too_large(&self, bytes: usize, max_bytes: usize) -> String {
-        format!("错误:钓鱼配置 {bytes} 字节，超过附件上限 {max_bytes} 字节，无法作为附件发送。")
+        format!("错误: 钓鱼配置 {bytes} 字节，超过附件上限 {max_bytes} 字节，无法作为附件发送。")
     }
 
     // ============ 通用指令（`general/*`） ============
@@ -668,7 +668,7 @@ impl Text for ZhCn {
         batch_login_interval_ms: u64,
     ) -> String {
         format!(
-            "启动队列: 每批最多 {batch_size} 台，批内相邻两台间隔 {bot_login_interval_ms} 毫秒，批与批之间间隔 {batch_login_interval_ms} 毫秒"
+            "启动队列: 每批最多启动 {batch_size} 台，批内间隔 {bot_login_interval_ms} 毫秒，批间隔 {batch_login_interval_ms} 毫秒"
         )
     }
 
@@ -719,46 +719,46 @@ impl Text for ZhCn {
     }
 
     fn bot_dir_not_found(&self, clean_bot_name: &str) -> String {
-        format!("错误:未找到机器人 '{clean_bot_name}' 对应的目录，或你没有权限访问")
+        format!("错误: 未找到机器人 '{clean_bot_name}' 对应的目录，或你没有权限访问")
     }
 
     fn bot_add_name_taken(&self, bot_name: &str) -> String {
-        format!("错误:机器人名 '{bot_name}' 已被占用")
+        format!("错误: 机器人名 '{bot_name}' 已被占用")
     }
 
     fn create_bot_dir_failed(&self, reason: &str) -> String {
-        format!("错误:创建机器人目录失败: {reason}")
+        format!("错误: 创建机器人目录失败: {reason}")
     }
 
     fn read_bot_list_failed(&self, reason: &str) -> String {
-        format!("错误:读取机器人列表失败: {reason}")
+        format!("错误: 读取机器人列表失败: {reason}")
     }
 
     fn read_bots_root_failed(&self, reason: &str) -> String {
-        format!("错误:读取机器人根目录失败: {reason}")
+        format!("错误: 读取机器人根目录失败: {reason}")
     }
 
     fn refusal_bot_running(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 正在运行，请先停止它")
+        format!("错误: 机器人 '{bot_name}' 正在运行，请先停止它")
     }
 
     fn refusal_bot_queued(&self, bot_name: &str) -> String {
-        format!("错误:机器人 '{bot_name}' 正在启动队列中排队，请先取消它的排队启动")
+        format!("错误: 机器人 '{bot_name}' 正在启动队列中排队，请先取消它的排队启动")
     }
 
     fn send_command_failed(&self, bot_name: &str, reason: Option<&str>) -> String {
         match reason {
-            Some(reason) => format!("错误:向机器人 '{bot_name}' 发送指令失败: {reason}"),
-            None => format!("错误:向机器人 '{bot_name}' 发送指令失败"),
+            Some(reason) => format!("错误: 向机器人 '{bot_name}' 发送指令失败: {reason}"),
+            None => format!("错误: 向机器人 '{bot_name}' 发送指令失败"),
         }
     }
 
     fn stop_signal_failed(&self, reason: &str) -> String {
-        format!("错误:发送停止信号失败: {reason}")
+        format!("错误: 发送停止信号失败: {reason}")
     }
 
     fn force_quit_failed(&self, reason: &str) -> String {
-        format!("错误:强制终止机器人失败: {reason}")
+        format!("错误: 强制终止机器人失败: {reason}")
     }
 
     // ============ 启动 / 停止流程的明细行 ============
@@ -795,7 +795,7 @@ impl Text for ZhCn {
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 启动失败(常见原因是微软拒绝频繁登录或内存不足)")
+        format!("机器人 {bot_name}: 启动失败 (常见原因是微软对频繁登录限流，或内存不足)")
     }
 
     fn start_cancelled(&self, bot_name: &str) -> String {
@@ -804,12 +804,14 @@ impl Text for ZhCn {
 
     fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
         format!(
-            "机器人 {bot_name}: 等待启动结果超时（{seconds} 秒），已按未确认处理（请查看日志或用 /show status 确认）"
+            "机器人 {bot_name}: 等待启动结果超时 ({seconds} 秒)，已按未确认处理 (请查看日志或用 /show status 确认)"
         )
     }
 
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 缺少 Token 文件，拒绝重启，若希望停止请用/stop 命令")
+        format!(
+            "机器人 {bot_name}: 缺少 Token 文件，重启会登录失败，因此不作改动 (如需停止请使用 /stop)"
+        )
     }
 
     fn restart_not_running(&self, bot_name: &str) -> String {
@@ -936,7 +938,7 @@ impl Text for ZhCn {
                 notified_guilds,
                 failed_guilds,
             } => format!(
-                "已重新连接 Discord (期间掉线 {offline_secs} 秒)；恢复通知已发往 {notified_guilds} 个服务器(发送失败 {failed_guilds} 次)"
+                "已重新连接 Discord (期间掉线 {offline_secs} 秒)；恢复通知已发往 {notified_guilds} 个服务器 (发送失败 {failed_guilds} 次)"
             ),
             LogText::ReconnectNoticeFailed { guild_name, reason } => {
                 format!("向服务器 {guild_name} 发掉线恢复通知失败: {reason}")
@@ -962,10 +964,10 @@ impl Text for ZhCn {
                 guild_name,
                 count,
             } => format!(
-                "已清掉服务器 {guild_name} 上遗留的 {count} 条 guild 指令 (本程序只做全局注册)"
+                "已清除服务器 {guild_name} 上遗留的 {count} 条 guild 指令 (本程序只做全局注册)"
             ),
             LogText::GuildCommandsClearFailed { guild_name, reason } => format!(
-                "清掉服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (不影响全局注册，下次启动会再试)"
+                "清除服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (不影响全局注册，下次启动会重试)"
             ),
             LogText::GlobalCommandsReadFailed { reason } => {
                 format!("读不到现有的全局指令，本轮跳过 guild 指令残留清理: {reason}")
@@ -1028,7 +1030,7 @@ impl Text for ZhCn {
             LogText::StarterRestarting { reason } => {
                 format!("启动线程异常退出（{reason}），正在重启它")
             }
-            LogText::StartVerificationFailed { bot_name, reason } => format!("机器人 {bot_name} 启动复核没过: {reason}"),
+            LogText::StartVerificationFailed { bot_name, reason } => format!("机器人 {bot_name} 启动复核未通过: {reason}"),
             LogText::UnexpectedGameLogFile { dir, file_name } => format!(
                 "FishingBot 日志目录 {dir} 内存在意料之外的文件 '{file_name}' (若反复出现说明 FishingBot 更改了日志文件名，\
                  请把配置 [raw_game_logs] 的 file_name 更新成这个名字)"
@@ -1132,7 +1134,7 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
             "此项禁止绝对路径，必须写成相对路径 (相对于 base_dir)".to_string()
         }
         ConfigRequirement::AdminsKeyUserId { user_id } => format!(
-            "的键 {user_id:?} 不是 Discord 用户 ID：应写成纯数字，例如 \"123456789012345678\" = \"名字\""
+            "的键 {user_id:?} 不是 Discord 用户 ID: 应写成纯数字，例如 \"123456789012345678\" = \"名字\""
         ),
         ConfigRequirement::AdminsNameEmpty { user_id } => {
             format!("里用户 {user_id} 的名字不能为空")

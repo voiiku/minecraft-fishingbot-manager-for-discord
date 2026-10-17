@@ -11,7 +11,7 @@
   utils 内部，不必导出）。
 * utils 只返回原始信息，不拼最终报告：流程函数给的是明细（停止的 `StopOutcome`、启动的
   `LaunchOutcome`、重启的 `RestartOutcome`），它们自带 `into_report()` 与 `to_failure_text()` 这类
-  方法，但要由上层显式调用。utils 不会替你返回拼好的 `Report`，见 [lib.md](../lib/lib-zh_cn.md)。
+  方法，但要由上层显式调用。utils 不返回拼好的 `Report`，见 [lib.md](../lib/lib-zh_cn.md)。
 
 ## 1. 模块地图
 
@@ -26,7 +26,7 @@
   `BotTokenStatus`（判据 `BotTokenStatus::from_dir`）、`token_file_path`（Token 文件路径口径）。
 * `screen`：`screen` 会话的快照、探测与指令注入（注入是不做校验的原语，等待与强杀判定在 `shutdown`）。
   入口 `active_screen_sessions`（会话名 → `ScreenSession`，含 PID 与"是不是 `(Dead ...)` 残壳"，残壳也
-  算在跑，好让 `/stop` 能清掉它）、`is_bot_screen_running`、`session_name`、
+  算在跑，以便 `/stop` 能够结束它）、`is_bot_screen_running`、`session_name`、
   `send_command_to_single_bot`、`send_stop_signal_to_session`、`force_quit_session`。
 * `running_bots`：机器人的状态口径（是否启动看会话、是否排队看队列）。按运行状态分组、运行中的名字、
   `/show status` 的数据行、运行中与排队中拒绝文案。入口 `split_bot_entries_by_is_running`、
@@ -51,7 +51,7 @@
   顺序固定为"请求启动线程别再拉起新的 → 清空等待列表 → 关掉全部会话 → 再扫一遍会话"：最后那遍收掉
   第一次快照之后才出现的会话（启动线程正拉着的那一台拦不住，只能事后收）。
   （`/stopall`、看门狗的掉线收尾与退出收尾都走它。）
-* `bot_log_files`：机器人日志的创建与挑选（FishingBot 原始日志的处置在 `startup`）。入口
+* `bot_logs`：机器人日志的创建与挑选（FishingBot 原始日志的处置在 `startup`）。入口
   `create_bot_log_file`、`create_timestamped_log_file`、`target_logs_dir`、`latest_log_path`。
 * `fishingbot_config`：游戏侧配置（FishingBot 的 `conf.json`）的生成：先删旧文件，再用随仓库发布的模板
   `fishingbot-config.example.json` 当底、覆盖 `[fishingbot]` 那几个键（`misc.language` 直接写
@@ -115,24 +115,14 @@
 
 ## 4. `startup` / `shutdown` 的等待参数
 
-* 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；
-  调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动
-  `[startup_queue] max_batch_size` 台；该请求完成后才处理下一个 FIFO 请求。两次登录之间至少隔
-  `[startup_queue] bot_login_interval_ms`：批内相邻两台按它错峰，批间等的时间 = 它减去本批的复核等待
-  （复核最多再等一个 `timing.check_grace_ms`：它是每台的会话存活宽限期，不乘批大小）。队列空闲时未满批次会关闭，但"上一次登录时刻"跨命令保留，
-  连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
-* `start_bot_sessions` 负责批内启动与错峰，队列调度器负责批间等待，复核按每台的 `check_grace_ms` 观察会话存活
-  （两次会话快照间隔相同）。登录频率才是被限制的东西，所以批内与批间用同一个间隔值：批内台数只影响复核窗口的
-  长度与 JVM 启动时的内存峰值，不影响总耗时（总耗时 ≈ 台数 × 间隔）。见
-  [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
+* 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动 `[startup_queue] max_batch_size` 台；该请求的条目全部出队后才处理下一个 FIFO 请求。批内相邻两台至少隔 `[startup_queue] bot_login_interval_ms`；批与批之间至少隔 `[startup_queue] batch_login_interval_ms`，从上一批出队的时刻算起（复核在命令侧并行进行，不计入这段等待）。队列空闲时未满批次会关闭，但"上一次出队时刻"跨命令保留，连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
+* `StartupQueue::start_bots()` 是命令侧唯一入口（建账本 → 入队 → 等这些条目都被拉起 → 取结果并复核）；启动线程负责批内错峰与逐台拉起，复核按每次启动请求的 `check_grace_ms` 观察会话存活（拉起后判定一次，等满宽限期再判定一次）。登录频率是受限项，批内与批间分别由 `bot_login_interval_ms` 与 `batch_login_interval_ms` 控制；批内台数只影响 JVM 启动时的内存峰值，每次启动请求复核只等一次。见 [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
 * 停止流程的两种等待都不吃参数、由流程自己读配置：`stop_grace_ms` 在 `shutdown::stop_bot_sessions`
   里读（先发信号，等不到才强杀），`stop_settle_ms` 也在 `stop_bot_sessions` 里读（强杀后、复核前的
   注销缓冲）。
 * 停止流程先发退出信号，等 `stop_grace_ms` 再不成就强杀，强杀后再等 `stop_settle_ms` 让
   旧会话彻底注销，因为立刻复核会读到还没消失的旧会话。
-* 复核统一走 `running_bots`，所以拉起成功的定义是两遍复核后会话仍在（`screen -list` 快照），而不是
-  命令已发出；但会话出现也不等于已经上线（登录、进服由 JVM 自己跑），报告与回复因此只写"启动命令已
-  发送，会话已出现"。
+* 复核统一走 `startup::verify_batch`，所以"拉起成功"的定义是第二遍复核后会话仍在（`screen -list` 快照），而不是命令已发出；但会话出现也不等于已经上线（登录、进服由 JVM 自己跑），报告与回复因此只写"启动命令已发送，会话已出现"。
 
 ## 5. `reply`：回执格式只写一处
 
@@ -218,7 +208,7 @@
 `IOException` 就 `setRunning(false)`），所以只能给它一个能写但什么都不存的目标。磁盘上因此只有一份真正
 的日志，也不会再有两份互相干扰。
 
-挑文件的口径只在 `bot_log_files::latest_log_path` 一处，两步：先只认时间戳命名（`is_bot_log_file`，名字
+挑文件的口径只在 `bot_logs::latest_log_path` 一处，两步：先只认时间戳命名（`is_bot_log_file`，名字
 由 `create_timestamped_log_file` 生成），再按名字取最大。名字是定宽零填充的 `年-月-日-时-分-秒`，字典序
 就等于时间序，所以它挑到的是最后启动的那一轮，而不是最后被写入的那个文件（后者会被还在刷屏的旧会话带
 偏）。两步都不能省：早先少了名字过滤，而当时 FishingBot 的 `log0.log` 就在同一层、又一直在刷屏，于是

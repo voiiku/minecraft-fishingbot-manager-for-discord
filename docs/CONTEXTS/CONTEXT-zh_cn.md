@@ -4,7 +4,7 @@
 本文件是给下一位接手的人（或 AI 会话）的最短上下文：开头几行说清项目是什么，后面列清必须关注、不能
 被忘记的硬约束。改动代码前先读这里，改完如有新约定请更新这里。
 
-记号与代码注释同一套（定义见 [architecture-zh_cn.md 第 5 节](../mods/architecture/architecture-zh_cn.md)）：以 `?` 开头的行是待实跑确认的问题；确认之后删记号、保留结论。第 8 节另列真实部署检查与暂缓改进。
+记号与代码注释同一套（定义见 [architecture-zh_cn.md 第 5 节](../mods/architecture/architecture-zh_cn.md)）：以 `?` 开头的行是待实机运行确认的问题；确认之后删记号、保留结论。第 8 节另列真实部署检查与暂缓改进。
 
 入门文档：[README-zh_cn.md](../README/README-zh_cn.md)、[tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md) 与
 [troubleshooting-zh_cn.md](../troubleshooting/troubleshooting-zh_cn.md)。模块说明在 `mods/`，上游 JAR 对照表在
@@ -28,7 +28,7 @@
   按 `[i18n] language` 派生（那是配置精简计划里还没做的一步））。由此派生两条约束：一是 `/pause`、`/unpause` 的确认生效只在
   带补丁的 jar 上成立，用原版 jar 只会回"命令已发送"、暂停状态永远是"钓鱼中"；二是那份补丁是 GPL-3.0
   的衍生作品，本仓库不放它、也不放它的 jar（另立 GPL-3.0 仓库维护）。
-* 干什么：用 Discord 斜杠指令批量管理多个 Minecraft 账号的
+* 功能：用 Discord 斜杠指令批量管理多个 Minecraft 账号的
   [FishingBot](https://github.com/MrKinau/FishingBot) 自动钓鱼实例。
 * 技术栈：Rust（edition 2024）、[serenity](https://github.com/serenity-rs/serenity) 0.12.5、
   [poise](https://github.com/serenity-rs/poise) 0.7.0、`screen`、JVM。默认目标
@@ -114,7 +114,7 @@
     拒绝启动，所以给它一个能写但什么都不存的目标。不要改成保留一份原始日志；
   * 程序日志：`<部署目录>/logs/年-月-日-时-分-秒.log`，终端同时有一份，一次运行一份、不轮转也不
     清理，见 [docs/mods/process-log/process-log-zh_cn.md](../mods/process-log/process-log-zh_cn.md)；
-  * 日志文件名的唯一来源是 `bot_log_files::create_timestamped_log_file`，不要在别处拼时间戳文件名。
+  * 日志文件名的唯一来源是 `bot_logs::create_timestamped_log_file`，不要在别处拼时间戳文件名。
 * 机器人状态的两个来源：连接状态只能由日志确认（只有 JVM 知道它连没连上、有没有掉线），所以它不跨调用
   保存，每调用一次就现取一次（`BotDirEntry::connection_status`，调用者拿到的永远是最新的）；暂停状态以
   自己确认到的命令回显为准，进程内记着（`bot_status::BotPauseStatus`，按机器人名存，
@@ -170,12 +170,12 @@
 * 运行中不许动要先查会话：`/bot del`、`/bot rename`、`/token`、`/bot login` 动手前都先
   `is_bot_screen_running`（`refusal_if_not_stopped` 一处出文案，运行中直接拒绝）：改成运行中的 Token 不会生效、
   删运行中的目录会毁掉数据、改运行中的目录名会把它接下来的日志写丢、登录要先独占凭据文件。重启流程更严：
-  缺 Token 的目标在停止之前就剔掉（重启是先停再起，白停一次会把还在钓鱼的账号弄下线）。
+  缺 Token 的目标在停止之前就剔掉（重启是先停再起，无谓的停止会让仍在钓鱼的账号下线）。
 * 凭据只由 JAR 写，本项目不自己实现微软登录：`/bot login` 拉起的会话就是该机器人平时的会话，它把 JAR
   打印的设备码（登录网址 + 代码）转给调用者，凭据**以 `refreshToken` 文件出现为准**（不解析"授权成功"那
-  条消息）：新凭据一出现就说明认证成功，这一步顺手删掉挪开的旧凭据（`<凭据文件名>.renewing`）。动手前要把
+  条消息）：新凭据一出现就说明认证成功，这一步同时删除挪开的旧凭据（`<凭据文件名>.renewing`）。动手前要把
   已有凭据挪走，否则 JAR 看到它就直接用、不打印设备码，这条指令会变成"什么都没发生"。
-  两条观察到的 JAR 行为：**没有有效凭据时它只是等着你登录、不会去连游戏服务器**；请求频繁被微软拒绝
+  两条观察到的 JAR 行为：**没有有效凭据时它只等待登录、不会去连游戏服务器**；请求频繁被微软拒绝
   （返回空 token）时它会自己结束 JVM —— 所以第二段把"会话消失"直接当"启动后退出"报出来。
   详见 [docs/mods/commands/commands-zh_cn.md 第 4.6 节](../mods/commands/commands-zh_cn.md#46-bot-login)。
 * 游戏侧配置（FishingBot 的 `conf.json`）是**生成物**：进程启动时先删旧文件、再用随仓库发布的完整模板
@@ -205,7 +205,7 @@
     没权限回同一句话）。底层函数一律不校验，也不接 `caller_id`。
 
   命令层只取值与校验参数个数，不看权限。新增指令一律照这个来：命令层必须把结果交给 `lib::handle_*`、
-  不许自己拼回复（`/whoami` 也一样），因为没有注册表或框架钩子兜底，靠这条约定与评审。
+  不许自己拼回复（`/whoami` 也一样），因为没有注册表或框架钩子兜底，只能依赖这条约定与评审。
   * 选项候选不另立一套权限：`src/commands/autocomplete.rs` 查询有权限查看的机器人目录、按运行状态和指令语义筛选
   机器人名候选（管理员是全部机器人，其他人是自己 `bots/<用户ID>/` 下的，与 `OwnerOrAdmin` 同一口径），并负责
   Discord interaction 适配及 `AutocompleteChoice` 转换。候选只是建议：用户仍可
@@ -299,14 +299,12 @@
 
 ## 4. 启动管道（示范步骤显式的写法）
 
-`utils::startup::start_bot_sessions` 里是四个连续的显式步骤，每个机器人都走一遍：
+启动由启动队列分四段完成，命令侧只碰第一段：
 
-1. `create_bot_log_file(bot_dir)`：建这次运行的日志文件（时间戳命名，失败就不拉会话）。
-2. `reset_fishingbot_logs_dir(bot_dir)`：准备 FishingBot 的 raw 日志目录（`<bot_dir>/<bot_logs_dir>/raw`，
-   路径与配置都由它自己算），让 `raw/log0.log` 指向 `/dev/null`，内容丢弃。
-3. `launch_bot_session(name, dir, log_path, game_logs_dir)`：用 `screen -dmS` 起会话，命令形如
-   `java … | grep -v -E '<filter_regex>' | tee -a '<log_path>'`。
-4. 错峰等待，再用两次 `screen -list` 快照复核会话是否真的还在（第二遍还在才算起来）。
+1. `StartupQueue::start_bots(bots)`：命令侧入口，建账本 → `add_bots_to_queue` 入队 → `wait_until_done()` 等这些条目都被拉起过一遍，取回结果交给 `verify_batch`。
+2. 启动线程 `run_starter`：等队列非空 → 等够 `[startup_queue] batch_login_interval_ms`（从上一批出队时刻算起）→ `pop_bots_from_head(max_batch_size)` 取一批。
+3. `start_single_batch` 逐台调用 `launch_one_bot` → `add_bot_for_login`：建本次日志文件（失败就不拉会话）→ 准备 FishingBot 的 raw 日志目录（`<bot_dir>/<bot_logs_dir>/raw`，`raw/log0.log` 指向 `/dev/null`）→ 用 `screen -dmS` 拉起会话，命令形如 `java … | grep -v -E '<filter_regex>' | tee -a '<log_path>'`；相邻两台之间等 `bot_login_interval_ms`。
+4. `verify_batch`：拉起后立即用 `screen -list` 快照判定一次，等满 `timing.check_grace_ms` 再判定一次；只有第二遍仍在才算拉起成功，日志只说明是否已确认进服。
 
 新增流程请沿用这个风格：每一步一个函数、每步都能被单独读懂。
 
@@ -360,7 +358,7 @@ src/bot_manage/             账号管理业务（一指令一文件）
 src/all_bots_control/       全服批量业务（仅管理员，一指令一文件）
 src/show/                   只读查询业务（一指令一文件）
 src/general/                通用业务（一指令一文件）
-src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_log_files /
+src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_logs /
                             bot_status / fs / fishingbot_config / permission / reply / restart /
                             running_bots / screen / shutdown / startup / uptime
 ```
@@ -418,3 +416,67 @@ src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_
 * 全部文档见 [docs 文档索引](../index-zh_cn.md)。
 * 按主题查：[tutorial/tutorial-zh_cn.md](../tutorial/tutorial-zh_cn.md)（部署）、[architecture-zh_cn.md](../mods/architecture/architecture-zh_cn.md)（分层与目录结构）。
 * 模块技术文档：[mods](../mods) 下每个模块一份（见索引第 3 节）。
+
+---
+
+## 附录 A：本轮"注释与文档整理"的工作状态（会话交接用）
+
+> 本节由 AI 协作者在整理过程中写入，供下一次会话直接接续；它不属于项目不变量，整理完成后可删除。
+
+### A.1 用户提出的要求（逐条照办）
+
+1. **只改行文与注释**：不动键名、取值、占位符、代码结构与行为；改完必须 `cargo test` 全绿。
+2. **不提交**：所有改动留在工作区，由用户一次性提交（常用聚合提交，如 `git commit -am "Improved comments"`）。
+3. **行文标准**：自然、简洁、逻辑清晰；顺序为"是什么/做什么 → 为什么 → 怎么用"。
+4. **一句话不拆成多行**：Markdown 里也不要把同一句拆到两行，示例配置的注释同样适用。
+5. **避免口语化**：不写"清掉""也不用""白等""没过""顺手""搞定""干脆""其实"这类说法；不称呼读者（不用"你/我们"）；不拟人。
+6. **中英成对同步**：`zh_cn` 与 `en_us`（以及 `docs/.../*-zh_cn.md` 与 `*-en_us.md`）逐句对应，术语一致（`JAR`、`Token`、`screen` 会话）。
+7. **删除写死的无用测试**：逐字钉文案的测试一律删掉，也不要为新文案再补这类测试。
+8. **简化逻辑**：能删的类型/函数就删。示例：`/show status` 去掉 `RunningBotInfo`、`status_table_header()`、`into_row()`，改为在调用处用数组 + `join(" | ")` 拼行。
+9. **按顺序推进**：`docs/mods/architecture/` → `docs/mods/config/` → `docs/mods/lib/` → `docs/mods/commands/` → `docs/mods/utils/` → `docs/CONTEXTS/` → 外围（index、README、tutorial、refs、troubleshooting）。
+
+### A.2 已完成的改动（全部未提交）
+
+**代码与文案**
+
+* `src/text.rs`：删除 `add_and_login_messages_are_exact_in_both_languages`（原 593–676 行）及其残留注释，共 -89 行；保留的文本测试均为结构性（语言名解析、英文实现、重连前后缀非空且中英不同、`log_text` 拼装、语言名可解析、未安装时回落默认语言）。
+* `src/text/zh_cn.rs`（9 处）：156（"带斜杠是指令/也不用加引号" → "为指令/无需加引号"）、392（`错误:` 补空格、"JAR 参数不正确"）、655（"按当前分批设置，预计最长耗时…等待启动结果的超时时间"）、798（"微软对频繁登录限流"、`(` 前补空格）、807（全角括号改半角）、812（"重启会登录失败，因此不作改动 (如需停止请使用 /stop)"）、939（`服务器 (` 补空格）、1031（"启动复核未通过"）、1135（全角冒号改 `:`）。
+* `src/text/en_us.rs`（6 处）：407（`Common causes:` 直陈罗列）、844 与 1092（`closed as unconfirmed` → `marked unconfirmed`）、850（`Microsoft throttles frequent logins, or because it ran out of memory`）、856（`no token file, so … ; left unchanged`）、1099（`did not pass the re-check`）。
+* `/show status` 的简化已由用户提交为 `093d1a4`：删 `RunningBotInfo`、`status_table_header()`、`into_row()`，新增 `all_running_bot_status_rows()` 与私有 `status_row()`，表头在 `show/status.rs` 就地拼。
+
+**文档**
+
+* `README.md`（英文；`docs/README/README-en_us.md` 是它的符号链接）：按中文版重排为 §1–§8，补上"官方 `FishingBot.jar` 尚不支持 `/pause` `/unpause`"的警告与 `THIRD-PARTY-NOTICES.html` 一行，去掉英文版独有的"27 commands"计数与"Project structure"节；`cargo test --test docs_links` 为 6 passed。
+* `docs/mods/architecture/architecture-zh_cn.md`（5 处）与 `architecture-en_us.md`（4 处）：`bot_log_files.rs` → `bot_logs.rs`、`running_bots` 不再生成表头、`utils::start_bot_sessions` → `StartupQueue::start_bots()`、拆开 §1 术语长句与 §5 单例长句。
+* `docs/mods/config/config-zh_cn.md`（多处）：§1 三段长句拆分与去口语、§2 `get_or_init` 拆句、§3 排序句与 `[startup_queue]` 超长单行、§3.1 两句、§3.2 三处、§4 `[log]` 与 `[fishingbot]`、§5 把 `command_echo` 段移出列表、§7 首尾。
+* `docs/mods/config/config-en_us.md`（3 处）：§2 `get_or_init` 拆句、§4 `[log]`、§5 `[log] debug`。
+* `docs/mods/commands/commands-{zh_cn,en_us}.md`、`docs/mods/utils/utils-{zh_cn,en_us}.md`、`docs/CONTEXTS/CONTEXT-{zh_cn,en_us}.md`、`docs/mods/architecture/*`：清掉对已删 API 的引用（`status_table_header`、`RunningBotInfo`、`all_running_bot_infos`、`into_row`），并改写 `/show status` 表格的说明（表头在 `show/status.rs`、数据行在 `running_bots`，两处列序须一致，没有快照类型）。
+
+**第二轮（本轮续做）**
+
+* `docs/mods/config/config-en_us.md`：§1 的 trim、反序列化与生成 `conf.json` 三段改为短句；§3 表顺序与 `[startup_queue]` 段重写；§3.1 去口语并修正语言对齐的说法；§3.2 三处改直陈；§4 `[fishingbot]` 改为"整张表必填"并去掉"有默认值"的错误说法；§5 把 `command_echo` 段移到列表之后；§7 首尾改写。
+* `docs/mods/config/config-{zh_cn,en_us}.md`：按代码修正 `StartupQueue::result_timeout` 公式（`check_grace_ms` 只计一次）、`[startup_queue]` 批间等待从出队时刻起算、`check_grace_ms` 为每次启动请求一次、`[fishingbot]` 整表必填。
+* 失效名称：`docs/` 内 `bot_log_files` 全部改为 `bot_logs`；`start_bot_sessions` 改为 `StartupQueue::start_bots()`，`CONTEXT` 第 4 节的启动管道按当前 `start_bots` / `run_starter` / `start_single_batch` / `verify_batch` 重写。
+* `docs/mods/lib/*`：对外面补全（`BotLoginPrompt`、`ProcessLog`、`StartupQueue`、`WATCHDOG`、`pub mod utils`），autocomplete 段落改为"命令层私有函数"。
+* `docs/mods/commands/*` 与 `docs/mods/utils/*`：修正复核口径（拉起后立即判定一次、等满宽限期再判定一次，每次启动请求一次）、`/start` 与 `/startall` 的调用入口、`stop_single_bot_session` 的签名差异，复核归属改为 `startup::verify_batch`。
+* `docs/CONTEXTS/CONTEXT-zh_cn.md`、`docs/index-*.md`、`docs/troubleshooting/*`：去除主要口语化表述，修正批间等待的算法；`docs/index-*.md` 去掉写死的指令条数。
+* `minecraft-fishingbot-manager-for-discord.conf.example.toml` 与 `src/config/schema.rs`、`src/utils/startup*.rs`：修正 `batch_login_interval_ms`、`check_grace_ms` 的注释口径（从出队时刻起算、每次启动请求一次），只改注释。
+* `src/text/zh_cn.rs`：全部 `错误:` 统一为 `错误: `；设备码缺失一句改为直陈原因（`。常见原因：`）。
+* `src/**`：公开项的文档不再链接私有项（`MAX_AUTOCOMPLETE_CHOICES`、`result_timeout`、`create_bot_log_file`、`running_bots`、`ConnectionStatus::Stopped`、`PauseCommand::*`、`Report::push_list_block`、`Utf16Len::utf16_len`、`token_ready_bot_dir_entries`、`permitted_bot_dir_entry` 等改为普通代码字面量），`cargo doc --no-deps` 的 12 条警告清零。
+* 验证：`cargo fmt --check`、`cargo test`（141 / 13 / 6 / 5 / 0，`failed=0`）、`cargo clippy --all-targets -- -D warnings`、`cargo check --all-targets`、`cargo doc --no-deps` 全部通过。
+
+### A.3 状态
+
+* `docs/mods/config/config-en_us.md` 的指定段落已处理。
+* `lib`、`commands`、`utils`、`CONTEXT` 与外围文档已清理失效 API、修正批次与复核口径，并去除主要口语化表述。
+* `src/text/zh_cn.rs` 与 `src/text/en_us.rs` 的长行已逐条复查；剩余超过阈值的都是单条格式化文案，保持整句。
+* 未再发现阻塞项。可选的后续：`docs/mods/i18n/` 逐句复读（不在 A.1 的推进顺序内）。
+
+### A.4 工作方法与已知的坑
+
+* 终端工具常报 `exit 130` 且"抓不到输出"，但命令**实际已执行**。确认结果的办法：把输出重定向到 `/tmp/x.txt`，再用 `sed -n '/test result/p' /tmp/x.txt` 回读，或直接回读终端缓冲。
+* **报告"拼写错误"前必须用 `read_files` 读原文**：窄终端缓冲会在长行折行处吞掉空格，本轮曾两次误报（`devicecode`、`wentto` 实际都不存在）。
+* 扫描长行：`awk '/"/ && length($0)>80 {print NR": "$0}' src/text/zh_cn.rs`，英文阈值用 110。
+* `docs/README/README-en_us.md` 是仓库根 `README.md` 的符号链接，改根文件即可；`cargo test --test docs_links` 校验链接与锚点。
+* `minecraft-fishingbot-manager-for-discord.conf.example.toml` 由 `src/config/template.rs` 用 `include_str!` 内嵌，是用户首次启动所得配置的注释来源；改注释后必须保持 TOML 合法（`example_config_matches_schema` 校验），键名与取值一律不动。
+* 测试基线：`cargo test` 为 `141 / 13 / 6 / 5 / 0`，`failed=0`。若失败集中出现在 `text::tests`，先检查是否又出现了"逐字比对"的测试——应当删除该测试，而不是改文案去迁就它。

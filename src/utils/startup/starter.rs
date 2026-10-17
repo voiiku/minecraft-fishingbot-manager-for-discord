@@ -91,7 +91,7 @@ impl StartupQueue {
         }
     }
 
-    /// 复核的宽限期：每台拉起后观察其会话存活多久（见 `timing.check_grace_ms`）。
+    /// 复核的宽限期：每次启动请求拉起后观察这批会话存活多久（见 `timing.check_grace_ms`）。
     pub(super) fn check_grace(&self) -> Duration {
         Duration::from_millis(self.check_grace_ms)
     }
@@ -260,7 +260,7 @@ mod tests {
 
     use super::*;
 
-    /// 每批最多 3 台、批内间隔 20s、批间间隔 30s、每台复核等待 300ms 的队列。
+    /// 每批最多 3 台、批内间隔 20s、批间间隔 30s、每次启动请求复核等待 300ms 的队列。
     fn queue() -> StartupQueue {
         StartupQueue::new_for_test(3, 20_000, 30_000, 300, 32)
     }

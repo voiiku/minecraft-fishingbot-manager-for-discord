@@ -44,7 +44,7 @@ pub struct StartupQueue {
     batch_login_interval_ms: u64,
     /// `[startup_queue] max_pending_requests`：队列最多暂存几台。
     max_pending_requests: usize,
-    /// `timing.check_grace_ms`：每台拉起后的会话存活宽限期（复核据此判定拉起成败）。
+    /// `timing.check_grace_ms`：每次启动请求拉起后的会话存活宽限期（复核据此判定拉起成败）。
     check_grace_ms: u64,
     /// 待启动列表（先进先出；每台带着自己属于哪个账本，见 `queue.rs`）。
     waiting_bots: Mutex<VecDeque<QueuedBot>>,
@@ -387,7 +387,7 @@ mod tests {
     /// 兜底超时是算出来的：队列排满时最慢的一次启动的两倍（不单独配置，按节奏参数推导）。
     #[test]
     fn the_result_timeout_covers_a_full_queue_with_margin() {
-        // 批数 = ⌈32 / 3⌉ = 11，每批最慢 = max(批间 20s, 批内 2 × 20s) = 40s，宽限期 300ms（每台一次）。
+        // 批数 = ⌈32 / 3⌉ = 11，每批最慢 = max(批间 20s, 批内 2 × 20s) = 40s，宽限期 300ms（每次启动请求一次）。
         let queue = StartupQueue::new_for_test(3, 20_000, 20_000, 300, 32);
         let slowest_start_ms = 11 * 40_000 + 300;
         assert_eq!(

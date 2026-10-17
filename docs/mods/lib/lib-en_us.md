@@ -17,13 +17,13 @@
   utils never hands you a finished `Report`. The batch stop is assembled explicitly in
   `all_bots_control::stopall::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
   `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs).
-* Visibility, one public face per module: the crate's public face is `lib.rs` alone (`pub fn handle_*`, the two
-  view types re-exported with `pub use` - `BotLogView` and `FishingbotConfigView` - plus `pub mod config` and
-  `pub mod text`). The five business modules below and `utils` have the same shape: submodules are private `mod`s,
-  and the face is one hand-picked `pub(crate) use` list at the top of the parent module. So `lib.rs` only knows
-  paths such as `crate::bot_control::start_bot`, and "may this function be called from outside" has exactly one
-  answer: that list at the top of the parent module (there are six: `utils.rs`, `bot_control.rs`, `bot_manage.rs`,
-  `general.rs`, `show.rs`, `all_bots_control.rs`).
+* Visibility, one public face per module: the crate's public face is `lib.rs` (`pub fn handle_*`; the view types
+  `BotLogView`, `BotLoginPrompt` and `FishingbotConfigView`; the primitives such as `ProcessLog` and `StartupQueue`;
+  `WATCHDOG` and `Watchdog`; plus `pub mod config`, `pub mod text` and `pub mod utils`). The five business modules
+  below and `utils` have the same shape: submodules are private `mod`s, and the face is one hand-picked `pub(crate) use`
+  list at the top of the parent module. So `lib.rs` only knows paths such as `crate::bot_control::start_bot`, and "may
+  this function be called from outside" has exactly one answer: that list at the top of the parent module (there are
+  six: `utils.rs`, `bot_control.rs`, `bot_manage.rs`, `general.rs`, `show.rs`, `all_bots_control.rs`).
 * Nothing is cleaned up here either: the command layer only splits values and passes them through (the action enums
   carry `raw_*`), and whoever really needs a value cleans it once (bot names in
   `utils::ToCleanBotName::to_clean_bot_name`, command fragments in `utils::ToCleanBotCommand`).
@@ -51,12 +51,7 @@ The four action enums and their entry points:
 * `AllBotsControlAction`, handled by `handle_all_bots_control`: `/startall`, `/stopall`, `/restartall`,
   `/commandall`.
 
-One more entry point does not run a command: `bot_name_candidate_states(caller_id)` returns bot names and run states the
-caller is allowed to see; missing bot directories produce an empty list and explicit directory I/O failures return
-`Err`. The autocomplete feature itself belongs to the command layer and lives in `src/commands/autocomplete.rs`: it owns
-`BotNameScope`, prefix filtering, state labels and the candidate cap, then adapts the result to Discord. These are only
-suggestions and do not perform bot operations. Which `scope` each command uses is in
-[commands-en_us.md](../commands/commands-en_us.md), section 2.
+There is no entry point other than the commands. The autocomplete candidate lookup `bot_name_candidate_states(caller_id)` is a private command-layer function: it returns the bot names and run states the caller is allowed to see; missing bot directories produce an empty list and explicit directory I/O failures return `Err`. The command layer owns `BotNameScope`, prefix filtering, state labels and the candidate cap, then adapts the result to Discord. These are only suggestions and do not perform bot operations. Which `scope` each command uses is in [commands-en_us.md](../commands/commands-en_us.md), section 2.
 
 ## 2. The two kinds of error
 

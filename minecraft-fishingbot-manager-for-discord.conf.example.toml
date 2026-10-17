@@ -121,7 +121,7 @@ max_batch_size = 1
 # Affects: the stagger inside one batch of the start queue (`utils/startup`).
 bot_login_interval_ms = 1000
 # Wait between two batches, in milliseconds.
-# A batch is done (launched and rechecked) before the next one is popped, so this wait starts counting from the moment that batch was popped, and it applies even when the batch held one bot.
+# Counted from the moment the previous batch was popped; verification runs in parallel and does not delay the next batch, and this wait applies even when the batch held one bot.
 # Affects: the gap between batches of the start queue (`utils/startup`).
 batch_login_interval_ms = 20000
 # Maximum number of queued requests waiting for the dispatcher. Does not include the active request.
@@ -131,7 +131,7 @@ max_pending_requests = 32
 # ------------------------------ Timing ------------------------------
 # All values are milliseconds.
 [timing]
-# Session-survival grace period per launched bot, in milliseconds: a bot is considered started when its session is still there after this long (a failed launch dies within seconds).
+# Session-survival grace period per start request, in milliseconds: a bot is considered started when its session is still there after this long (a failed launch dies within seconds).
 # Whether it joined the game is reported from the log, but does not decide the outcome.
 check_grace_ms = 5000
 # Grace period for a JVM to exit before it is force-killed.
