@@ -116,7 +116,7 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
   is semantics rather than text.
 * `text::get()` only returns an installed implementation. A production build panics when none is installed (an
   entry-point ordering error); a test build returns the English implementation so tests do not each have to call
-  `install()`. `Language` has no `Default` implementation; the first call in `validate()` is `validate_language`,
+  `install()`. `Language` has no `Default` implementation; the first call in `validate()` is `validate_i18n`,
   whose error text is fixed English, and the config entry then prints it to the terminal and exits with code 1. Text
   assertions therefore fall into two kinds:
   1. Wiring (which table this sentence comes from, and that it follows the language): expected values come from

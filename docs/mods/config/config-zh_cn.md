@@ -191,7 +191,7 @@ FishingBot 只认 JSON（`-config <path>`），**没有任何逐项覆盖配置�
 校验按表拆开：`Config` 的每个字段（即每张 TOML 表）一个 `validate_<表名>` 函数，`validate()` 里只有这些
 调用，按启动时的先后顺序排下来；`[log]` 只有一个布尔开关 `debug`，没有校验函数。
 
-语言是第一个校验项：`validate()` 先调用 `validate_language`，它只解析 `i18n.language`，失败信息固定英文、
+语言是第一个校验项：`validate()` 先调用 `validate_i18n`，它只解析 `i18n.language`，失败信息固定英文、
 不调用 `text::get()`；语言合法后立刻 `install()`，其余按表拆开的 `validate_<表名>` 才使用配置语言。
 
 只覆盖"写错就无法启动"的三类问题（见 `validate.rs` 的模块文档）：

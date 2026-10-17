@@ -249,7 +249,7 @@ Validation is split per table: every field of `Config` (that is, every TOML tabl
 function, and `validate()` holds nothing but those calls, in start-up order; `[log]` only has the boolean `debug`
 switch and no validator.
 
-The language is checked first: `validate()` calls `validate_language` before anything else. It only parses
+The language is checked first: `validate()` calls `validate_i18n` before anything else. It only parses
 `i18n.language`; its error text is fixed English and does not call `text::get()`. Once valid the language is installed,
 and the per-table `validate_<table>` functions then use the configured language.
 
