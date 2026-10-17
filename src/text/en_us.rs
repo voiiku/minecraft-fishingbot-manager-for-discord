@@ -638,12 +638,20 @@ impl Text for EnUs {
         format!("CPU usage: {cpu_usage:.1}%")
     }
 
-    fn checkserver_memory_usage(&self, mem_usage_pct: f64) -> String {
-        format!("Memory usage: {mem_usage_pct:.1}%")
+    fn checkserver_memory_used_total(&self, used_mem_mb: u64, total_mem_mb: u64) -> String {
+        if total_mem_mb >= 1024 {
+            format!(
+                "Memory used/total: {:.1} GB / {:.1} GB",
+                used_mem_mb as f64 / 1024.0,
+                total_mem_mb as f64 / 1024.0
+            )
+        } else {
+            format!("Memory used/total: {used_mem_mb} MB / {total_mem_mb} MB")
+        }
     }
 
-    fn checkserver_available_memory(&self, available_mem_mb: u64) -> String {
-        format!("Memory available: {available_mem_mb} MB")
+    fn checkserver_memory_usage(&self, mem_usage_pct: f64) -> String {
+        format!("Memory usage: {mem_usage_pct:.1}%")
     }
 
     fn checkserver_disk_usage(&self, disk_usage_pct: f64) -> String {
@@ -652,6 +660,14 @@ impl Text for EnUs {
 
     fn checkserver_uptime(&self, uptime_text: &str) -> String {
         format!("Host uptime: {uptime_text}")
+    }
+
+    fn checkserver_process_uptime(&self, uptime_text: &str) -> String {
+        format!("This run uptime: {uptime_text}")
+    }
+
+    fn checkserver_system_time(&self, time_text: &str) -> String {
+        format!("System time: {time_text}")
     }
 
     // ============ 命令层的固定话术（`commands/*`） ============

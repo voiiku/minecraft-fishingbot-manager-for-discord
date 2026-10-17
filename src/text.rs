@@ -294,14 +294,18 @@ pub trait Text: Send + Sync {
     fn checkserver_title(&self) -> &'static str;
     /// `/checkserver`：CPU 占用率。
     fn checkserver_cpu_usage(&self, cpu_usage: f32) -> String;
+    /// `/checkserver`：已用内存与总内存（MB；显示时按总量自动换成 GB）。
+    fn checkserver_memory_used_total(&self, used_mem_mb: u64, total_mem_mb: u64) -> String;
     /// `/checkserver`：内存占用率。
     fn checkserver_memory_usage(&self, mem_usage_pct: f64) -> String;
-    /// `/checkserver`：可用内存（MB）。
-    fn checkserver_available_memory(&self, available_mem_mb: u64) -> String;
     /// `/checkserver`：磁盘占用率。
     fn checkserver_disk_usage(&self, disk_usage_pct: f64) -> String;
     /// `/checkserver`：系统已运行时长（`uptime_text` 是已格式化好的运行时长文本）。
     fn checkserver_uptime(&self, uptime_text: &str) -> String;
+    /// `/checkserver`：本次运行时长（`uptime_text` 是已格式化好的运行时长文本）。
+    fn checkserver_process_uptime(&self, uptime_text: &str) -> String;
+    /// `/checkserver`：当前系统时间与时区（`time_text` 是已格式化好的时间文本）。
+    fn checkserver_system_time(&self, time_text: &str) -> String;
 
     // ================= 命令层的固定话术（`commands/*`） =================
     /// 非启动长耗时指令的第一条进度消息；`command_tag` 形如 `/stopall`。

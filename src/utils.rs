@@ -40,4 +40,4 @@ pub use running_bots::{
 pub use screen::{is_bot_screen_running, send_command_to_single_bot};
 pub(crate) use shutdown::{stop_all_bot_sessions, stop_single_bot_session};
 pub use startup::StartupQueue;
-pub use uptime::format_uptime;
+pub use uptime::{format_uptime, process_elapsed_seconds};

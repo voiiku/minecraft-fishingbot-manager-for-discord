@@ -796,7 +796,9 @@ these return the result of `Report::render()`, following the same naming rule as
 
 * What it reports is the resources of the machine running this program (the machine the fishing process is on), not the
   game server.
-* The data comes from `sysinfo`: CPU usage, memory, disk and system uptime.
+* The data comes from `sysinfo`: CPU usage, used and total memory (MB or GB, chosen from the total), memory usage,
+  disk and system uptime; this run's uptime is read from `/proc`, and the system time and time zone come from the
+  host's `chrono::Local`.
 * CPU usage is computed from two samples taken a very short time apart: a single sample gives the average since boot,
   which stays high for a long time and looks like a machine at full load.
 * The output is multi-line text with fixed fields, easy to screenshot, and it does not depend on a log file.

@@ -612,12 +612,20 @@ impl Text for ZhCn {
         format!("CPU 占用率: {cpu_usage:.1}%")
     }
 
-    fn checkserver_memory_usage(&self, mem_usage_pct: f64) -> String {
-        format!("内存占用率: {mem_usage_pct:.1}%")
+    fn checkserver_memory_used_total(&self, used_mem_mb: u64, total_mem_mb: u64) -> String {
+        if total_mem_mb >= 1024 {
+            format!(
+                "已用内存/总内存: {:.1} GB / {:.1} GB",
+                used_mem_mb as f64 / 1024.0,
+                total_mem_mb as f64 / 1024.0
+            )
+        } else {
+            format!("已用内存/总内存: {used_mem_mb} MB / {total_mem_mb} MB")
+        }
     }
 
-    fn checkserver_available_memory(&self, available_mem_mb: u64) -> String {
-        format!("可用内存: {available_mem_mb} MB")
+    fn checkserver_memory_usage(&self, mem_usage_pct: f64) -> String {
+        format!("内存占用率: {mem_usage_pct:.1}%")
     }
 
     fn checkserver_disk_usage(&self, disk_usage_pct: f64) -> String {
@@ -626,6 +634,14 @@ impl Text for ZhCn {
 
     fn checkserver_uptime(&self, uptime_text: &str) -> String {
         format!("服务器物理运行时间: {uptime_text}")
+    }
+
+    fn checkserver_process_uptime(&self, uptime_text: &str) -> String {
+        format!("本次运行时间: {uptime_text}")
+    }
+
+    fn checkserver_system_time(&self, time_text: &str) -> String {
+        format!("当前系统时间: {time_text}")
     }
 
     // ============ 命令层的固定话术（`commands/*`） ============
