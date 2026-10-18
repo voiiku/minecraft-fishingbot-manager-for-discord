@@ -271,29 +271,49 @@ fn invite_url(application_id: serenity::UserId) -> String {
 mod tests {
     use super::*;
 
-    /// 链接里那串权限位要和注释逐位一致：少了 Embed Links，带链接的回复不会展开；
-    /// 多了 Mention Everyone / Administrator 就是白送权限。
+    /// 邀请链接应申请的最小权限集合。
+    const EXPECTED_PERMISSIONS: u64 = 0x400 | 0x800 | 0x2000 | 0x4000 | 0x8000;
+    /// Discord 权限位：Administrator。
+    const ADMINISTRATOR: u64 = 0x8;
+    /// Discord 权限位：Manage Server。
+    const MANAGE_GUILD: u64 = 0x20;
+    /// Discord 权限位：Mention Everyone。
+    const MENTION_EVERYONE: u64 = 0x1_0000;
+
+    /// 邀请链接的权限位必须与最小权限集合一致，且不得包含高权限位。
     #[test]
     fn invite_url_carries_the_documented_permissions() {
         let permissions = permissions_in(&invite_url(serenity::UserId::new(123)));
 
-        assert_eq!(permissions, 0x400 | 0x800 | 0x2000 | 0x4000 | 0x8000);
-        assert_eq!(permissions & 0x8, 0, "不能要 Administrator");
-        assert_eq!(permissions & 0x20, 0, "不能要 Manage Server");
-        assert_eq!(permissions & 0x1_0000, 0, "不能要 Mention Everyone");
+        assert_eq!(permissions, EXPECTED_PERMISSIONS);
+        assert_eq!(
+            permissions & ADMINISTRATOR,
+            0,
+            "不得申请 Administrator 权限"
+        );
+        assert_eq!(permissions & MANAGE_GUILD, 0, "不得申请 Manage Server 权限");
+        assert_eq!(
+            permissions & MENTION_EVERYONE,
+            0,
+            "不得申请 Mention Everyone 权限"
+        );
     }
 
-    /// 从邀请链接里取出 `permissions=` 那串数字：断言的是链接里真正写着的东西，不是另一个副本。
+    /// 解析邀请链接中 `permissions` 查询参数的十进制值。
     fn permissions_in(url: &str) -> u64 {
-        url.split("permissions=")
-            .nth(1)
-            .expect("邀请链接要带 permissions 参数")
-            .parse()
-            .expect("permissions 参数应当是十进制数字")
+        let (_, after_permissions) = url
+            .split_once("permissions=")
+            .expect("邀请链接必须包含 permissions 参数");
+        let raw_value = after_permissions
+            .split('&')
+            .next()
+            .expect("permissions 参数必须有值");
+
+        raw_value.parse().expect("permissions 参数必须是十进制整数")
     }
 
-    /// 邀请链接必须同时带 `bot` 与 `applications.commands`：少了后者，机器人即使进了服，
-    /// 装配阶段注册斜杠指令也会被 Discord 回 `50001 Missing Access`。
+    /// 邀请链接必须同时包含 `bot` 与 `applications.commands` 作用域。
+    /// 缺少 `applications.commands` 时，斜杠命令注册会返回 `50001 Missing Access`。
     #[test]
     fn invite_url_carries_both_scopes() {
         let url = invite_url(serenity::UserId::new(123));

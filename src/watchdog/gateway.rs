@@ -170,12 +170,12 @@ mod tests {
 
     use super::*;
 
-    /// 测试用的时序参数（值本身不重要，用例都按它们算相对时刻）。
+    /// 测试用超时参数；具体数值仅用于计算相对时刻。
     const WINDOW: Duration = Duration::from_secs(30);
     const PROBE_INTERVAL: Duration = Duration::from_secs(10);
     const FIRST_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// 造一个"启动于 0 时刻"的看门狗，所有用例都用相对时刻断言。
+    /// 创建启动时刻为 0 的看门狗，测试使用相对时刻断言。
     fn watchdog_at_start() -> (Watchdog, Instant) {
         let started = Instant::now();
         (
@@ -184,7 +184,7 @@ mod tests {
         )
     }
 
-    /// 还没握手：首次握手超时内是 Waiting，超过它才判 NeverReady。
+    /// 首次握手超时前为 Waiting，达到超时时刻后为 NeverReady。
     #[test]
     fn missing_handshake_is_lost_after_timeout() {
         let (watchdog, started) = watchdog_at_start();
@@ -200,7 +200,7 @@ mod tests {
         );
     }
 
-    /// "看门狗已就绪"每进程只报一次：`is_first_handshake` 只在首次返回 `true`。
+    /// 就绪提示每进程只输出一次：`is_first_handshake` 仅在首次返回 `true`。
     #[test]
     fn only_the_first_handshake_reports_ready() {
         let (watchdog, started) = watchdog_at_start();
@@ -208,12 +208,12 @@ mod tests {
         assert!(watchdog.is_first_handshake());
         assert!(!watchdog.is_first_handshake());
 
-        // 重连：`begin_connection_attempt` 清掉的是本轮记账，"报过没有"是进程级事实，不该被清。
+        // 重连只清除本轮状态；“是否已报告过就绪”是进程级状态，必须保留。
         watchdog.begin_connection_attempt(started);
         assert!(!watchdog.is_first_handshake());
     }
 
-    /// 握过手、探活也通：Alive。
+    /// 握手成功且探活正常时状态为 Alive。
     #[test]
     fn handshake_and_probe_are_alive() {
         let (watchdog, started) = watchdog_at_start();
@@ -221,12 +221,12 @@ mod tests {
         watchdog.clear_probe_failures();
 
         assert_eq!(watchdog.state(started), GatewayState::Alive);
-        // 时间过去很久也没关系，只要探活一直在成功（每轮都会 clear_probe_failures）。
+        // 时间继续推进不影响状态，只要探活持续成功。
         watchdog.clear_probe_failures();
         assert_eq!(watchdog.state(started + WINDOW * 10), GatewayState::Alive);
     }
 
-    /// 探活连续失败：刚开始只是 Waiting（正在等窗口走满），满一个窗口才判 Unreachable。
+    /// 连续探活失败时先保持 Alive，满一个判定窗口后转为 Unreachable。
     #[test]
     fn continuous_probe_failure_loses_after_window() {
         let (watchdog, started) = watchdog_at_start();
@@ -241,14 +241,14 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Unreachable);
     }
 
-    /// 失败的起始时刻只记第一次：期间反复失败不会把判定无限往后推。
+    /// 失败起始时刻只记录第一次；重复失败不会延后判定截止时间。
     #[test]
     fn repeated_failures_do_not_push_the_deadline() {
         let (watchdog, started) = watchdog_at_start();
         watchdog.record_handshake_success(started);
         watchdog.record_probe_failure_start(started);
 
-        // 模拟探活任务一直在失败：每次失败都调一次，但起点不变。
+        // 模拟持续失败：重复记录不会改变起始时刻。
         for _ in 0..5 {
             watchdog.record_probe_failure_start(started);
         }
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Unreachable);
     }
 
-    /// 判定可逆：探活恢复后立刻回到 Alive。
+    /// 探活恢复后状态立即回到 Alive。
     #[test]
     fn recovered_probe_revives_the_watchdog() {
         let (watchdog, started) = watchdog_at_start();
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Alive);
     }
 
-    /// 重新握手（掉线后重连成功）同样算健康，并清掉失败计时。
+    /// 重新握手成功视为健康，并清除探活失败状态。
     #[test]
     fn resumed_handshake_revives_the_watchdog() {
         let (watchdog, started) = watchdog_at_start();
@@ -282,8 +282,8 @@ mod tests {
         assert_eq!(watchdog.state(resumed_at + WINDOW), GatewayState::Alive);
     }
 
-    /// 开始新的一次尝试：首次握手超时从此刻重新算，上一轮的握手与失败记账一起清掉。
-    /// 不重置的话，重连一上来就会被判 `NeverReady`（超时起点还停在进程启动那一刻）。
+    /// 新连接尝试从当前时刻重新计算首次握手超时，并清除上一轮状态。
+    /// 若不重置，重连后会沿用进程启动时刻而立即判为 `NeverReady`。
     #[test]
     fn beginning_a_new_attempt_restarts_the_timeout() {
         let (watchdog, started) = watchdog_at_start();

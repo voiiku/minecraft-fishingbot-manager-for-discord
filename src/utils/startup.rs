@@ -374,7 +374,7 @@ impl StartupQueue {
 mod tests {
     use super::*;
 
-    /// 上报给用户的取值就是配置里的取值（回复里的"每批最多 N 台、批内 M 毫秒、批间 K 毫秒"）。
+    /// 队列对外上报的节奏参数必须与配置一致（每批数量、批内间隔、批间间隔）。
     #[test]
     fn the_queue_reports_the_configured_values() {
         let queue = StartupQueue::new_for_test(4, 15_000, 45_000, 300, 32);
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(queue.batch_login_interval_ms(), 45_000);
     }
 
-    /// 兜底超时是算出来的：队列排满时最慢的一次启动的两倍（不单独配置，按节奏参数推导）。
+    /// 结果超时按队列排满时最慢一次启动耗时的两倍计算，不单独配置。
     #[test]
     fn the_result_timeout_covers_a_full_queue_with_margin() {
         // 批数 = ⌈32 / 3⌉ = 11，每批最慢 = max(批间 20s, 批内 2 × 20s) = 40s，宽限期 300ms（每次启动请求一次）。
@@ -403,7 +403,7 @@ mod tests {
         );
     }
 
-    /// 一个测试用条目（不装配置也能造：非法名字让"拼会话名"这一步先失败）。
+    /// 构造测试条目；不读取配置，非法名称可在拼会话名阶段直接失败。
     fn bot(bot_name: &str) -> BotDirEntry {
         BotDirEntry {
             owner_id: 1,
@@ -413,7 +413,7 @@ mod tests {
         }
     }
 
-    /// 条目离开作用域时把账本收齐：写回过的那一份照原样进账本，没写过的补一条"取消"。
+    /// 条目离开作用域时收齐账本：已写回的结果保持不变，未写回的补记为取消。
     #[test]
     fn dropping_an_entry_fills_the_ledger_exactly_once() {
         let recorded_ledger = StartLedger::new(&[bot("duck")]);
@@ -421,22 +421,22 @@ mod tests {
         recorded_entry.record(BotStartOutcome::Succeeded);
         drop(recorded_entry);
 
-        assert!(recorded_ledger.is_done(), "写回之后账本该齐了");
+        assert!(recorded_ledger.is_done(), "写回后账本必须完成");
         let recorded_results = recorded_ledger.take_results();
         assert_eq!(
             recorded_results.iter().next().map(|(_, outcome)| outcome),
             Some(&BotStartOutcome::Succeeded),
-            "写回的就是那一份结论"
+            "账本应保留已写入的结果"
         );
         assert!(
             !recorded_results.has_cancelled_bots(),
-            "写回过的不再补第二条"
+            "已写回的结果不得再补记为取消"
         );
 
         let dropped_ledger = StartLedger::new(&[bot("goose")]);
         drop(QueuedBot::new(bot("goose"), Arc::clone(&dropped_ledger)));
 
-        assert!(dropped_ledger.is_done(), "直接被丢弃也要把账本收齐");
+        assert!(dropped_ledger.is_done(), "直接丢弃条目也必须完成账本");
         assert!(dropped_ledger.take_results().has_cancelled_bots());
     }
 }

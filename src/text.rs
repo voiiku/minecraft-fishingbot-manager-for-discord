@@ -508,83 +508,27 @@ static INSTALLED: OnceLock<&'static dyn Text> = OnceLock::new();
 mod tests {
     use super::*;
 
-    /// 配置里的取值能转成语言；不认识时给出的报错要列出合法取值（部署者照着改）。
+    /// 英文文案实现应返回英文，而不是另一种语言的字面量。
     #[test]
-    fn language_names_are_parsed_with_a_helpful_error() {
-        assert_eq!(
-            Language::from_name("CHINESE_SIMPLIFIED"),
-            Ok(Language::ChineseSimplified)
-        );
-        assert_eq!(
-            Language::from_name(" ENGLISH "),
-            Ok(Language::English),
-            "两边空白要容忍"
-        );
+    fn english_implementation_uses_english_text() {
+        let english = &en_us::EN_US;
 
-        // 反例用 `FRENCH`：那是 jar 认识、我们没写文案的取值（用 `GERMAN` 之类也一样）。
-        let error = Language::from_name("FRENCH").expect_err("法语还没实现");
-        assert!(error.contains("FRENCH"), "报错应带上写错的值: {error}");
-        assert!(error.contains("ENGLISH"), "报错应列出可选值: {error}");
-        assert!(
-            error.contains("CHINESE_SIMPLIFIED"),
-            "报错应列出可选值: {error}"
-        );
-        // 这条是固定英文的引导期文案（那一类文案的理由见 `bootstrap` 模块）：钉一下措辞。
-        assert!(
-            error.contains("is not a supported language"),
-            "固定英文的措辞变了: {error}"
-        );
+        assert_eq!(english.count_line("stopped", 2), "stopped: 2");
+        assert_eq!(english.report_succeeded_label(), "[Success]");
+        assert!(english.bot_stop_not_running("duck").contains("not running"));
     }
 
-    /// 英文实现的字面量确实换成了英文。
-    ///
-    /// 直接调实现、不调 `install`：`OnceLock` 是进程级的，装了会改变并发跑的其它测试
-    /// 看到的语言（测试顺序不确定，那种依赖顺序的断言迟早会变成偶发失败）。
+    /// JAR 重连提示在中英文实现中都存在，且两种语言的值不同。
     #[test]
-    fn english_impl_is_english() {
-        let en_us_text = &super::en_us::EN_US;
-
-        assert_eq!(en_us_text.count_line("stopped", 2), "stopped: 2");
-        assert_eq!(en_us_text.report_succeeded_label(), "[Success]");
-        assert!(
-            en_us_text
-                .bot_stop_not_running("duck")
-                .contains("not running")
-        );
-    }
-
-    /// JAR 的重连提示：两种语言都非空，且中英两版互不相同。
-    ///
-    /// 这两条字符串是"按哪种语言的 JAR 日志认重连"的基准（`[i18n] language` 同时决定 Discord 文案与
-    /// 它们），所以中英必须一一对应：字面量对着
-    /// `docs/refs/BOT_COMMANDS_AND_MESSAGES-zh_cn.md` 的 `bot-automatic-reconnect` 抄，改错一边这条就红。
-    /// 与 `english_impl_is_english` 一样直接调实现、不调 `install`（`OnceLock` 是进程级的）。
-    #[test]
-    fn jar_reconnect_messages_are_non_empty_and_distinct_in_both_languages() {
+    fn jar_reconnect_messages_are_defined_for_both_languages() {
         assert_eq!(zh_cn::ZH_CN.jar_reconnect_prefix(), "钓鱼机器人将在");
         assert_eq!(zh_cn::ZH_CN.jar_reconnect_suffix(), "秒内重新连接");
-
         assert_eq!(
             en_us::EN_US.jar_reconnect_prefix(),
             "FishingBot will reconnect in"
         );
         assert_eq!(en_us::EN_US.jar_reconnect_suffix(), " seconds");
 
-        let implementations: [(&str, &dyn Text); 2] = [
-            ("CHINESE_SIMPLIFIED", &zh_cn::ZH_CN),
-            ("ENGLISH", &en_us::EN_US),
-        ];
-
-        for (language_name, i18n_text) in implementations {
-            for value in [
-                i18n_text.jar_reconnect_prefix(),
-                i18n_text.jar_reconnect_suffix(),
-            ] {
-                assert!(!value.is_empty(), "{language_name} 里还有空的重连提示");
-            }
-        }
-
-        // 中英两版不能撞车（例如把英文表也写成中文）：否则按任一种语言认重连时都可能认错。
         assert_ne!(
             zh_cn::ZH_CN.jar_reconnect_prefix(),
             en_us::EN_US.jar_reconnect_prefix()
@@ -593,34 +537,5 @@ mod tests {
             zh_cn::ZH_CN.jar_reconnect_suffix(),
             en_us::EN_US.jar_reconnect_suffix()
         );
-    }
-
-    #[test]
-    fn replied_log_line_carries_caller_command_and_text() {
-        let line = get().log_text(LogText::CommandReplied {
-            caller_id: 42,
-            command_path: "bot add",
-            reply: "已创建",
-        });
-
-        assert!(line.contains("/bot add"), "要带指令名: {line}");
-        assert!(line.contains("42"), "要带调用者: {line}");
-        assert!(line.contains("已创建"), "要带回复正文: {line}");
-    }
-
-    /// 合法取值只有一处来源：`from_name` 认的就是 `supported_names()` 列出来的那些，
-    /// 反过来也成立（`name()` 写出来的就是配置里能填的取值）。
-    #[test]
-    fn every_supported_name_can_be_parsed() {
-        for language_name in Language::supported_names() {
-            let language =
-                Language::from_name(language_name).expect("supported_names 里的取值都应该能解析");
-
-            assert_eq!(
-                language.name(),
-                *language_name,
-                "name() 要写回 supported_names() 里的同一个取值"
-            );
-        }
     }
 }

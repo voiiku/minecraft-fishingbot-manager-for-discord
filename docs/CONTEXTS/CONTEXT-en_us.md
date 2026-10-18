@@ -128,9 +128,11 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 
 ### 2.2 The invariant list (confirm each one before changing something)
 
-* Stopping must be thorough: every stop entry point goes only through `utils::stop_bot_sessions` (Ctrl+C, waiting,
-  force kill, re-check), and an orphan JVM holding a game account may never be left behind; on the systemd side
-  `KillMode=control-group` catches whatever is left.
+* Stopping must be thorough: `/stop` goes through `utils::shutdown::stop_single_bot_session`, `/stopall` and the
+  process shutdown go through `utils::shutdown::stop_all_bot_sessions`, and the stop stage of a restart calls
+  `utils::shutdown::stop_bot_sessions` directly. All three paths ultimately reuse `stop_bot_sessions` (Ctrl+C,
+  waiting, force kill, re-check), and an orphan JVM holding a game account may never be left behind; on the systemd
+  side `KillMode=control-group` catches whatever is left.
 * There are two logging lines, but only one bot log on disk:
   * bot log: `<bot dir>/<runtime.bot_logs_dir>/YYYY-MM-DD-HH-MM-SS.log`, created before the session is launched
     (`create_bot_log_file`), and inside the session it is appended through `grep -v -E` filtering plus `tee -a`; `/log`
@@ -243,13 +245,13 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   configuration does print) nor change our file **by a single character**, and the language takes effect as the value we
   wrote (`Using language: CHINESE_SIMPLIFIED`). Hand edits to that JSON do not survive to the next start-up; the
   template is the only thing that has to be swapped when upstream changes the configuration structure (swap it and run
-  `cargo test`: a managed path that cannot be found turns red).
+  `cargo test`: a managed path that cannot be found makes the test fail).
   `misc.language` is exactly the value of `[i18n] language` (the value is the jar's constant name, it is not mapped from
   something else), and there is no chance to fill it in by hand, so "which language's JAR log to match a reconnect
   against" cannot get out of sync again. A generation failure is treated like a wrong configuration (exit code 1).
   See [docs/mods/config/config-en_us.md section 3.2](../mods/config/config-en_us.md).
 * Which set of directories a command works on is each command's own choice: `utils::split_bot_entries_by_is_running(&[BotDirEntry])`
-  (in `running_bots`) only groups entries, and the caller picks the range with its own function:
+  (in `running_bots`) only groups entries, and the caller selects the range by choosing a function:
   `all_bot_dir_entries()` (everything, used by `/startall`, `/restartall`, `/stopall` and shutdown, so that orphan
   processes without a token can be cleaned up too), `token_ready_bot_dir_entries()` (only those with a configured
   token, used by `/commandall` and `/show status`) and `bot_dir_entries_of_owner(owner_id)` (only one account, used by
@@ -285,11 +287,12 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs: "shutdown signal received, wrap-up"; that
   report reaches every server's notice channel as well as the log, within a 30-second overall limit past which the
   send is dropped and not retried, while the disconnect and permanent-failure wrap-ups only reach the log).
-* Visibility, one public face per module: the crate's outside face is only `lib.rs` (`pub fn handle_*`, the two view
-  types it re-exports with `pub use`, `pub mod config`, `pub mod text`); `utils` and the five business modules have the
-  same shape - their submodules are private `mod`s and one curated `pub(crate) use` block at the top of the parent
-  module is their face, so `lib.rs` only knows paths such as `crate::bot_control::start_bot` (whether something can be
-  called from outside is decided by that list).
+* Visibility: the crate's external entry point is `lib.rs`, including `pub fn handle_*`, the public view types, and
+  `pub mod config`, `pub mod text` and `pub mod utils`. The submodules of `utils` are private `mod`s and the parent
+  module's `pub use` block is the public tool surface; the five business modules likewise keep their submodules
+  private, with a `pub(crate) use` block at the top of each parent module as the crate-internal surface. `lib.rs`
+  therefore reaches business modules only through paths such as `crate::bot_control::start_bot`; whether something
+  can be called from outside the crate is determined by the export lists in `lib.rs` and `utils.rs`.
 * The gateway watchdog is the only place that decides a disconnect: the
   rules are in section 3, and the cleanup is the library side's private `stop_all_bots_on_disconnect` (stop the bots
   and record the reason and the moment): the judging side only calls `request_reconnect` to hand the reason to the
@@ -353,7 +356,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 
 ## 3. The gateway watchdog (the only place that decides a disconnect)
 
-Purpose: once this process has been judged to have lost contact with Discord, stop pretending that it can still be
+Purpose: once this process has been judged to have lost contact with Discord, no longer assume that it can still be
 commanded. While Discord is unreachable we cannot control the bots, yet they still occupy game accounts (FishingBot's
 automatic reconnect competes with real players for the accounts), so the shutdown has to be clean; the process then does
 not exit, but waits one judgement window before rebuilding the connection (details are in
@@ -414,35 +417,36 @@ Follow this style for new flows: one function per step, and every step readable 
 
 ```bash
 cargo fmt --check                      # formatting
-cargo test --lib                       # library tests (watchdog decision, config schema and validation, Report): on Linux the default musl target runs them directly
-cargo test --bins                      # tests for the command layer and the process entry point
+cargo test --all-targets               # library, binary and integration tests
 cargo check --all-targets              # the real target: x86_64-unknown-linux-musl (static)
 cargo doc --no-deps                    # doc links: must be warning-free (cargo check alone does not catch broken links)
+cargo clippy --all-targets -- -D warnings
 ```
 
-Tests come in two kinds (the Rust standard) and must not be moved into each other:
+Tests are layered:
 
-* unit tests live in the same file as the code (`#[cfg(test)] mod tests` inside `src/*.rs`): they test private logic, so
-  changing a private function means changing them too;
-* integration tests live in `tests/`: they use the library as an external dependency and only touch items in
-  `src/lib.rs` that are `pub` and reachable from the crate root. They are the gatekeeper of the external contract
-  (making a public item private or changing a signature breaks them at compile time).
-
-* Shared test helpers: unit tests use `src/test_support.rs` (only compiled with `#[cfg(test)]`), integration tests use
-  `tests/common/mod.rs` (created when it is needed).
+* Unit tests live in the same file as the code (`#[cfg(test)] mod tests` inside `src/*.rs`): they cover private logic
+  and cases that need access to internal data; behaviour that can be verified through the public API belongs in
+  `tests/` instead.
+* Integration tests live in `tests/`: they use the library as an external dependency and cover public behaviour and
+  the external contract.
+* Shared test helpers: unit tests use `src/test_support.rs` (only compiled with `cfg(test)`); integration tests use
+  `tests/common/mod.rs`, which provides temporary directories, English text initialisation and the example config.
+* Migration rule: when a test does not depend on private functions, private types or binary internals, move it to
+  `tests/`; tests that depend on those implementation details stay in the source tree, so the public API is not
+  widened only for testing.
 
 A few more rules:
 
 * Changing a configuration field requires updating `minecraft-fishingbot-manager-for-discord.conf.example.toml` and
   [docs/mods/config/config-en_us.md](../mods/config/config-en_us.md) at the same time, otherwise `cargo test` fails
-  (there is a test pinning both).
+  (there is a test checking both).
 * Code items of this crate inside backticks in comments are written as clickable links (`` [`logger`] `` and the like),
   the wording is formal prose without bold markers, dashes or book-title quotes, and section-header comments use
   `============ X ============`.
 * In doc comments, public items must not reference private items (rustdoc cannot link them and readers cannot see them):
   state the meaning directly instead, and add links where linking is possible. A private item's own documentation may
   link to private items normally.
-* `cargo clippy --all-targets -- -D warnings` must also be warning-free before committing.
 
 ## 6. Code map (in the order where the name is enough)
 
@@ -472,9 +476,11 @@ src/utils/                  primitive layer: bot_command / bot_dirs / bot_name /
                             running_bots / screen / shutdown / startup / uptime
 ```
 
-The command layer is grouped by business module: the seven files under `src/commands/` align with the action enum in
-`lib.rs`, so file names still say which module and function they cover without spreading commands across many tiny
-files. The business layer remains one file per command.
+The command layer is grouped by business module: the seven business files under `src/commands/` (`all_bots`,
+`bot_control`, `bot_manage`, `general`, `log`, `show`, `token`) align with the action enum in `lib.rs`, while
+`autocomplete.rs` adapts interaction candidates and `registration.rs` handles global command registration and leftover
+cleanup. File names still say which module and function they cover without spreading commands across many tiny files.
+The business layer remains one file per command.
 
 ## 7. The technical choices that are settled (they were discussed - do not keep revisiting them)
 

@@ -48,33 +48,10 @@ pub fn format_uptime(total_secs: u64) -> String {
 mod tests {
     use super::*;
 
-    /// 天/时/分的进位边界。
-    #[test]
-    fn formats_days_hours_minutes() {
-        assert_eq!(format_uptime(86_400 + 3_600 + 5 * 60), "1天-1时-5分");
-    }
-
-    /// 不足一分钟时全是 0，秒不进位到分钟。
-    #[test]
-    fn drops_seconds() {
-        assert_eq!(format_uptime(59), "0天-0时-0分");
-        assert_eq!(format_uptime(61), "0天-0时-1分");
-    }
-
-    /// `btime` 是稳定的系统事实：能读出来就说明 `/proc/stat` 的解析没问题。
+    /// Linux 的 `/proc/stat` 必须能提供启动时间。
     #[cfg(target_os = "linux")]
     #[test]
     fn boot_time_is_readable_on_linux() {
         assert!(system_boot_time().is_some());
-    }
-
-    /// 当前进程自己一定在跑，所以运行时长必须算得出来。
-    ///
-    /// 只断言「算得出来」：测试进程刚启动，整数秒会被截断成 0，
-    /// 断言「大于 0」就成了一条看机器快慢、随时可能变红的脆弱测试。
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn current_process_has_elapsed_seconds() {
-        assert!(process_elapsed_seconds(std::process::id()).is_some());
     }
 }

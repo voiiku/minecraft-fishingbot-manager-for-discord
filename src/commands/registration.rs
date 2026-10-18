@@ -190,7 +190,7 @@ fn guild_name(ctx: &serenity::Context, guild_id: serenity::GuildId) -> String {
 mod tests {
     use super::*;
 
-    /// 雪票里编码的创建时间要能算回 Unix 毫秒。
+    /// Snowflake ID 中编码的创建时间必须能还原为 Unix 毫秒。
     #[test]
     fn snowflakes_decode_to_their_creation_time() {
         let created_ms = DISCORD_EPOCH_MS + 1_600_000_000_000;
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(created_at_ms(serenity::CommandId::new(1)), DISCORD_EPOCH_MS);
     }
 
-    /// 只有"名字一一对应 + 最年轻的一条也满 1 小时"才算稳定，才允许清残留。
+    /// 只有指令名称完全匹配，且最年轻的一条也超过传播窗口时，才允许清理残留。
     #[test]
     fn leftovers_are_only_cleared_after_the_global_set_settled() {
         let commands = super::super::declared_commands();
@@ -234,7 +234,7 @@ mod tests {
         assert!(!global_commands_settled(&[], &commands, now));
     }
 
-    /// 还要等多久：名字对不上算"本轮刚改过"（等满 1 小时），否则按最年轻的那条算剩余时间。
+    /// 等待时间：名称不匹配时按完整传播窗口计算；否则按最年轻指令的剩余时间计算。
     #[test]
     fn waiting_time_counts_down_from_the_youngest_command() {
         let commands = super::super::declared_commands();
@@ -245,31 +245,31 @@ mod tests {
         let now = DISCORD_EPOCH_MS + 1_600_000_000_000;
         let hour = GLOBAL_PROPAGATION_MS;
 
-        // 全部满 1 小时的同一套：不用等，可以清。
+        // 全部超过传播窗口且名称一致：无需等待。
         assert_eq!(
             minutes_until_cleanup(&registered(&names, now - hour), &commands, now),
             0
         );
 
-        // 最年轻的一条 5 分钟前创建：还差 55 分钟。
+        // 最年轻的一条创建于 5 分钟前：剩余 55 分钟。
         let mut young = registered(&names, now - 2 * hour);
         young[0] = registered_command(names[0], now - 5 * 60 * 1000);
         assert_eq!(minutes_until_cleanup(&young, &commands, now), 55);
 
-        // 名字对不上（本轮刚改过）：等满 1 小时。
+        // 名称不匹配（本轮刚修改）：等待完整传播窗口。
         assert_eq!(
             minutes_until_cleanup(&registered(&names[1..], now - 2 * hour), &commands, now),
             full_propagation_minutes()
         );
 
-        // 只差 30 秒也报 1 分钟，不会显示成"还差 0 分钟"却不清。
+        // 不足 1 分钟时向上取整为 1 分钟，避免显示 0 分钟但仍不清理。
         assert_eq!(
             propagation_wait_minutes(&registered(&names, now - hour + 30 * 1000), now),
             1
         );
     }
 
-    /// 造一批"Discord 侧现存"的全局指令：字段按 `GET /applications/<app>/commands` 的返回形状。
+    /// 构造 Discord 侧现存的全局指令列表，字段形状与 `GET /applications/<app>/commands` 一致。
     fn registered(names: &[&str], created_ms: u64) -> Vec<serenity::Command> {
         names
             .iter()
@@ -277,7 +277,7 @@ mod tests {
             .collect()
     }
 
-    /// 造一条"Discord 侧现存"的全局指令。
+    /// 构造一条 Discord 侧现存的全局指令。
     fn registered_command(name: &str, created_ms: u64) -> serenity::Command {
         let id = command_id(created_ms);
 
@@ -302,7 +302,7 @@ mod tests {
         .expect("指令的 JSON 形状应当能解析")
     }
 
-    /// 由创建时间反推雪票（只保留毫秒，低位补 0）。
+    /// 根据创建时间构造 Snowflake ID：保留毫秒时间并左移 22 位。
     fn command_id(created_ms: u64) -> serenity::CommandId {
         serenity::CommandId::new((created_ms - DISCORD_EPOCH_MS) << 22)
     }

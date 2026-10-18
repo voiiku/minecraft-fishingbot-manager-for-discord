@@ -164,7 +164,7 @@ fn select_candidates(
 mod tests {
     use super::*;
 
-    /// 测试二进制里的语言是进程级单例：需要文案的测试先装一次英语。
+    /// 测试进程的语言实现是进程级单例；需要文案的测试先安装英语。
     fn install_english_text() {
         minecraft_fishingbot_manager_for_discord::text::install(
             minecraft_fishingbot_manager_for_discord::text::Language::English,
@@ -176,7 +176,7 @@ mod tests {
 
     fn sample_candidates() -> Vec<(String, bool, bool)> {
         [
-            // duck 在跑，red 排队中，cup 与 duck2 既没在跑也没排队。
+            // duck 运行中，red 排队中，cup 与 duck2 均未运行且未排队。
             ("duck", true, false),
             ("red", false, true),
             ("cup", false, false),
@@ -207,12 +207,12 @@ mod tests {
             values(&candidates, "", BotNameScope::RunningOnly),
             ["duck"].map(String::from)
         );
-        // 排队中的不算"已停止"：`/start` 之类的指令会在入队前拒绝它。
+        // 排队中的机器人不属于“已停止”；`/start` 等指令会在入队前拒绝它。
         assert_eq!(
             values(&candidates, "", BotNameScope::StoppedOnly),
             ["cup", "duck2"].map(String::from)
         );
-        // 在跑的排前面，其次是排队中的，最后是没在跑也没排队的。
+        // 排序优先级：运行中、排队中、未运行且未排队。
         assert_eq!(
             values(&candidates, "", BotNameScope::AnyState),
             ["duck", "red", "cup", "duck2"].map(String::from)

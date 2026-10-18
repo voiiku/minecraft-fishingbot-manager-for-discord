@@ -165,6 +165,7 @@ mod tests {
 
     use super::*;
 
+    /// 构造测试条目，不读取配置。
     fn bot(bot_name: &str) -> BotDirEntry {
         BotDirEntry {
             owner_id: 1,
@@ -174,7 +175,7 @@ mod tests {
         }
     }
 
-    /// 结果里的机器人名（按记下的顺序）。
+    /// 按写入顺序返回结果中的机器人名称。
     fn names(results: &BotStartResults) -> Vec<&str> {
         results
             .iter()
@@ -182,13 +183,13 @@ mod tests {
             .collect()
     }
 
-    /// 写齐之前不算完成；写齐后能取到按跑完顺序的结果，取走就空了。
+    /// 所有机器人写回后才完成；完成后可按写入顺序取结果，取走后清空。
     #[test]
     fn a_ledger_is_done_only_after_every_bot_is_recorded() {
         let ledger = StartLedger::new(&[bot("duck"), bot("goose")]);
 
         ledger.record(bot("duck"), BotStartOutcome::Succeeded);
-        assert!(!ledger.is_done(), "还差 goose");
+        assert!(!ledger.is_done(), "goose 尚未写回");
 
         ledger.record(bot("goose"), BotStartOutcome::Skipped);
         assert!(ledger.is_done());
@@ -197,7 +198,7 @@ mod tests {
         assert_eq!(names(&results), ["duck", "goose"]);
 
         let taken_again = ledger.take_results();
-        assert!(taken_again.iter().next().is_none(), "结果取走之后就空了");
+        assert!(taken_again.iter().next().is_none(), "取走后结果应为空");
     }
 
     /// 两个账本互不混淆：结果只落在登记该机器人的账本里。
@@ -208,14 +209,14 @@ mod tests {
 
         start.record(bot("crane"), BotStartOutcome::Succeeded);
         startall.record(bot("goose"), BotStartOutcome::Succeeded);
-        assert!(!startall.is_done(), "还差 duck");
+        assert!(!startall.is_done(), "duck 尚未写回");
         startall.record(bot("duck"), BotStartOutcome::Skipped);
 
         assert_eq!(names(&start.take_results()), ["crane"]);
         assert_eq!(names(&startall.take_results()), ["goose", "duck"]);
     }
 
-    /// 队列满、线程没起来这类"还没拉起就知道失败"：直接记成失败明细。
+    /// 启动前已确定的失败（例如队列已满、线程启动失败）直接写入失败明细。
     #[test]
     fn recorded_failures_show_up_in_the_failure_lines() {
         let ledger = StartLedger::new(&[bot("duck")]);
@@ -228,25 +229,22 @@ mod tests {
         assert_eq!(results.failure_lines(), ["队列已满"]);
     }
 
-    /// 取消的结果既不算失败、也不算"已在运行"：它进跳过明细，并且能被单独数出来。
+    /// 取消结果不属于失败或“已在运行”；它进入跳过明细，并可单独计数。
     #[test]
     fn recorded_cancellations_are_counted_separately() {
         let ledger = StartLedger::new(&[bot("duck")]);
 
         ledger.record_cancelled(&bot("duck"));
 
-        assert!(
-            ledger.is_done(),
-            "取消也要把账本写齐，否则等账本的人会一直等"
-        );
+        assert!(ledger.is_done(), "取消也必须写齐账本，否则等待方会持续阻塞");
         let results = ledger.take_results();
-        assert!(!results.has_failed_lines(), "取消不是失败");
+        assert!(!results.has_failed_lines(), "取消不属于失败");
         assert!(!results.has_skipped_running_bots(), "取消不等于已在运行");
         assert!(results.has_cancelled_bots());
         assert_eq!(results.cancelled_bot_names(), ["duck"]);
     }
 
-    /// 超时：尚未回结果的按"没等到"收尾，等待账本者不会被一直阻塞。
+    /// 超时后，未返回结果的条目录入失败明细，等待方不会无限阻塞。
     #[test]
     fn waiting_gives_up_after_the_timeout_and_records_the_rest() {
         let ledger = StartLedger::new(&[bot("duck"), bot("goose")]);
@@ -254,7 +252,7 @@ mod tests {
 
         ledger.wait_until_done_with(Duration::from_millis(20));
 
-        assert!(ledger.is_done(), "超时也要把待核对清空");
+        assert!(ledger.is_done(), "超时后也必须完成账本");
         let results = ledger.take_results();
         assert_eq!(
             names(&results),

@@ -166,7 +166,7 @@ mod tests {
 
     use crate::test_support::temp_test_dir;
 
-    /// 测试用的托管配置：值都是固定字面量，与 `[fishingbot]` 的解析无关，只用来断言生成结果。
+    /// 测试用托管配置：字段为固定字面量，与 `[fishingbot]` 解析无关，仅用于断言生成结果。
     fn sample_fishingbot_config() -> FishingBotConfig {
         FishingBotConfig {
             server_ip: "127.0.0.1".to_string(),
@@ -180,10 +180,10 @@ mod tests {
         }
     }
 
-    /// 模板是完整配置，且每个托管路径都在里面。
+    /// 模板必须是完整配置，并包含全部托管路径。
     ///
-    /// 上游改了键名或删了键时这条先红 —— 那时把新 jar 生成的默认 `conf.json` 覆盖成模板，
-    /// 再同步 `managed_values` 与生成代码。
+    /// 上游增删或重命名键时，此测试会失败；此时需要用新 jar 生成的默认 `conf.json` 更新模板，
+    /// 并同步 `managed_values` 与生成代码。
     #[test]
     fn template_holds_every_managed_path() {
         let template = template_value();
@@ -196,8 +196,8 @@ mod tests {
         }
     }
 
-    /// 生成的文件 = 模板 + 本项目的键：除托管路径外，其余键必须与模板逐值相同
-    ///（这就是"写出来的是完整配置、不依赖 jar 补齐"的保证）。
+    /// 生成文件等于模板加本项目托管键：除托管路径外，其余键必须与模板逐值相同。
+    /// 这保证生成结果是完整配置，不依赖 jar 补齐。
     #[test]
     fn generated_config_differs_from_template_only_in_managed_paths() {
         let template = template_value();
@@ -214,7 +214,7 @@ mod tests {
             assert_eq!(
                 value_at(&generated, &path),
                 Some(&template_value),
-                "{path} 不在托管清单里，却与模板不一样"
+                "{path} 不在托管清单中，但与模板不一致"
             );
         }
 
@@ -296,38 +296,39 @@ mod tests {
         assert_eq!(value_at(&generated, "start-text.text").unwrap(), &json!([]));
     }
 
-    /// 删旧文件：存在就删掉（并记一行），不存在不算错 —— 生成流程靠它做到"不留旧键"。
+    /// 删除旧配置：文件存在时删除并记录日志；文件不存在视为成功。
+    /// 生成流程依赖该行为确保旧键不残留。
     #[test]
     fn old_fishingbot_config_is_removed_and_missing_is_fine() {
         let dir = temp_test_dir("remove-old-game-config");
-        // `temp_test_dir` 只给一个路径，目录要自己建（这里要往里面写文件）。
+        // `temp_test_dir` 仅返回路径，需要手动创建目录以写入文件。
         fs::create_dir_all(&dir).expect("建临时目录");
         let path = dir.join("conf.json");
 
-        // 不存在：什么都不做，也不算失败。
+        // 文件不存在：操作成功且无副作用。
         assert!(remove_old_fishingbot_config(&path).is_ok());
 
         fs::write(&path, "{\"server\":{\"ip\":\"old\"}}").expect("写旧文件");
         assert!(remove_old_fishingbot_config(&path).is_ok());
-        assert!(!path.exists(), "旧文件要被删掉");
+        assert!(!path.exists(), "旧文件必须被删除");
 
-        // 路径是个目录时不能当成"没找到"混过去：那是真错误。
+        // 路径为目录时返回错误，不能按文件不存在处理。
         assert!(
             remove_old_fishingbot_config(&dir).is_err(),
-            "把目录当文件删要报错"
+            "删除目录必须返回错误"
         );
 
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 生成流程里"干活"那半：先删旧、再整份覆盖写 —— 写出来的是模板 + 托管键，旧文件里的键不会留下。
+    /// 写入步骤先删除旧文件，再整份覆盖写入模板与托管键，确保旧键不残留。
     #[test]
     fn write_step_replaces_the_old_file_with_a_complete_config() {
         let dir = temp_test_dir("write-game-config");
         fs::create_dir_all(&dir).expect("建临时目录");
         let path = dir.join("conf.json");
 
-        // 旧文件里放一个模板里没有的键：整份替换之后它必须消失。
+        // 旧文件包含模板之外的键；整份替换后该键必须消失。
         fs::write(&path, "{\"legacy\":{\"keep\":true}}").expect("写旧文件");
 
         write_fishingbot_config(&path, &sample_fishingbot_config(), "ENGLISH").expect("写配置");
@@ -342,13 +343,13 @@ mod tests {
         assert_eq!(value_at(&written, "server.ip").unwrap(), "127.0.0.1");
         assert!(
             value_at(&written, "legacy").is_none(),
-            "旧文件里的键不该留下：整份是模板 + 托管键"
+            "旧文件中的键不得保留：结果必须是模板与托管键的完整组合"
         );
 
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 模板里找不到托管路径时，报错点名那条路径（生成流程靠它指出"上游改了键名"）。
+    /// 模板缺少托管路径时，错误信息必须包含该路径，用于提示上游键名变更。
     #[test]
     fn missing_template_path_reports_the_path() {
         let mut template = json!({ "server": {} });

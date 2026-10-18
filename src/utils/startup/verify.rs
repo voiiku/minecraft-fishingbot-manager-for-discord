@@ -107,12 +107,12 @@ mod tests {
         }
     }
 
-    /// 一条"拉起命令发出去了"的结果（等复核）。
+    /// 构造等待复核的启动结果。
     fn launched(bot_name: &str) -> BotStartEntry {
         (bot(bot_name), BotStartOutcome::Succeeded)
     }
 
-    /// 一条拉起阶段就失败的结果。
+    /// 构造拉起阶段失败的结果。
     fn failed(bot_name: &str, failure_line: &str) -> BotStartEntry {
         (
             bot(bot_name),
@@ -120,7 +120,7 @@ mod tests {
         )
     }
 
-    /// 一批结果（测试摆结果用）。
+    /// 构造一批测试结果。
     fn results(entries: Vec<BotStartEntry>) -> BotStartResults {
         let mut results = BotStartResults::default();
         for (bot_dir_entry, outcome) in entries {
@@ -130,7 +130,7 @@ mod tests {
         results
     }
 
-    /// 复核批次只挑"拉起命令发出去了"的那些：跳过与失败的都不复核。
+    /// 复核批次仅包含“拉起命令已发送”的结果；跳过与失败的结果不参与复核。
     #[test]
     fn only_launched_bots_are_verified() {
         let results = results(vec![
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(verified_names, ["duck"]);
     }
 
-    /// 成功明细的两种说法由"日志是否已确认进服"决定：已标记的用已确认说法，其余用未确认说法。
+    /// 成功明细文案由“日志是否已确认进服”决定：已确认与未确认使用不同文案。
     #[test]
     fn the_success_line_follows_the_online_mark() {
         let mut results = results(vec![launched("duck"), launched("goose")]);

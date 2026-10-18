@@ -264,14 +264,14 @@ async fn say_final_report(ctx: Context<'_>, report: &str) -> Result<(), Error> {
 mod tests {
     use super::*;
 
-    /// 测试二进制里的语言是进程级单例：需要文案的测试先装一次英语。
+    /// 测试进程的语言实现是进程级单例；需要文案的测试先安装英语。
     fn install_english_text() {
         minecraft_fishingbot_manager_for_discord::text::install(
             minecraft_fishingbot_manager_for_discord::text::Language::English,
         );
     }
 
-    /// 把指令树摊平成 `(指令路径, 选项名列表)`：路径形如 `"start"`、`"bot add"`。
+    /// 将指令树展开为 `(指令路径, 选项名列表)`，路径示例：`"start"`、`"bot add"`。
     fn command_paths(
         commands: &[poise::Command<Data, Error>],
         parent_path: &str,
@@ -298,7 +298,7 @@ mod tests {
         paths
     }
 
-    /// 验证注册前已替换为语言表中的说明。
+    /// 注册前，指令说明必须已替换为当前语言表中的文案。
     #[test]
     fn command_descriptions_come_from_the_language_table() {
         install_english_text();
@@ -344,13 +344,13 @@ mod tests {
         );
     }
 
-    /// 一条指令摊平后的说明：`(指令路径, 指令说明, [(选项名, 选项说明)])`。
+    /// 一条指令展开后的说明：`(指令路径, 指令说明, [(选项名, 选项说明)])`。
     type FlatDescription = (String, Option<String>, Vec<(String, Option<String>)>);
 
-    /// 整棵指令树摊平后的说明列表。
+    /// 整棵指令树展开后的说明列表。
     type FlatDescriptions = Vec<FlatDescription>;
 
-    /// 把指令树摊平成说明列表：比对"兜底"与"本地化结果"用。
+    /// 将指令树展开为说明列表，用于比较宏声明文案与本地化结果。
     fn descriptions(
         commands: &[poise::Command<Data, Error>],
         parent_path: &str,
@@ -385,40 +385,37 @@ mod tests {
         collected
     }
 
-    /// 宏里的文案副本与 `en_us.rs` 表里那句逐字相同。
+    /// 宏声明的文案副本必须与 `en_us.rs` 中的英文表逐字一致。
     ///
-    /// `///` 首段与 `#[description]` 是 poise 宏在编译期烘进去的副本：语言表里缺项时会真的注册到
-    /// Discord。副本等于英文表，缺项时就不可能"是另一种语言"；这条同时把这份重复钉住，改了
-    /// `en_us.rs` 那句却忘了改宏里的，这里会红。
-    /// 测试先装英语 → `text::get()` 返回英语实现，所以本地化后的那一份就是英语。
+    /// poise 宏会在编译期将 `///` 首段与 `#[description]` 写入指令定义；
+    /// 语言表缺项时，这些副本会被直接注册到 Discord。该测试同时验证：
+    /// 宏副本与英文表一致，且本地化后的指令树与宏声明结构一致。
     #[test]
     fn macro_texts_match_the_english_table() {
         install_english_text();
         let declared = descriptions(&declared_commands(), "");
         let localized = descriptions(&all_commands(), "");
 
-        assert_eq!(declared.len(), localized.len(), "两棵树的形状应当一样");
+        assert_eq!(declared.len(), localized.len(), "指令树结构必须一致");
         for (declared_command, localized_command) in declared.iter().zip(&localized) {
-            assert_eq!(declared_command.0, localized_command.0, "指令路径应当一样");
+            assert_eq!(declared_command.0, localized_command.0, "指令路径必须一致");
             assert_eq!(
                 declared_command.1, localized_command.1,
-                "指令 {} 的文案副本应等于英文表里那句",
+                "指令 {} 的说明必须与英文表一致",
                 declared_command.0
             );
             assert_eq!(
                 declared_command.2, localized_command.2,
-                "指令 {} 的选项说明同上",
+                "指令 {} 的选项说明必须与英文表一致",
                 declared_command.0
             );
         }
     }
 
-    /// 文案长度上限 100（Discord 硬限制）：命令描述超了 poise 在编译期就报错，
-    /// 选项描述没有任何编译期检查，用这条兜住（两种语言都查；按 UTF-16 计数，
-    /// 与 `utils/reply.rs` 记消息长度的口径一致）。
+    /// 指令与选项说明必须落在 Discord 的 100 字符上限内。
     ///
-    /// 真超了会在注册指令时被 Discord 拒掉，属于"启动即坏"，必须在测试里早发现
-    ///（`/command` 与 `/commandall` 的选项说明曾涨到 103，就是被这条逼回来的）。
+    /// Discord 按 UTF-16 码元计数，与 `utils/reply.rs` 的消息长度口径一致。
+    /// 命令说明超限时 poise 会在编译期报错；选项说明没有编译期检查，需要此测试覆盖。
     #[test]
     fn every_description_fits_discords_100_character_limit() {
         for text_impl in minecraft_fishingbot_manager_for_discord::text::all_languages() {
@@ -442,10 +439,10 @@ mod tests {
         }
     }
 
-    /// 每种语言的说明表都要覆盖每一条指令与每一个选项。
+    /// 每种语言的说明表必须覆盖全部指令与选项。
     ///
-    /// 这是"加了指令却忘了写说明"的兜底：真有缺口时把缺哪条列出来。
-    /// 直接读两种语言的表、不调 `install`（`OnceLock` 是进程级的，会污染并发跑的其它用例）。
+    /// 该测试发现“新增指令或选项但未补充文案”的遗漏，并列出缺失项。
+    /// 直接读取语言表，不调用 `install`，避免污染并发测试的全局语言状态。
     #[test]
     fn every_command_and_option_has_text_in_every_language() {
         install_english_text();

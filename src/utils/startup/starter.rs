@@ -260,18 +260,18 @@ mod tests {
 
     use super::*;
 
-    /// 每批最多 3 台、批内间隔 20s、批间间隔 30s、每次启动请求复核等待 300ms 的队列。
+    /// 创建指定节奏参数（每批 3 台、批内 20s、批间 30s、复核等待 300ms）的测试队列。
     fn queue() -> StartupQueue {
         StartupQueue::new_for_test(3, 20_000, 30_000, 300, 32)
     }
 
-    /// 复核等待按整批最坏情况算，与"这次调用有几台"无关。
+    /// 复核等待时间按整批最坏情况计算，与本次调用数量无关。
     #[test]
     fn verify_wait_covers_a_full_batch() {
         assert_eq!(queue().check_grace(), Duration::from_millis(300));
     }
 
-    /// 批间等待从"上一次取出一批"算起；间隔已经过完（例如空闲很久后的第一条命令）就不用等。
+    /// 批间等待从上一次取出批次开始计算；间隔已结束时无需等待。
     #[test]
     fn the_wait_between_batches_counts_from_the_last_pop() {
         let interval = Duration::from_secs(20);
@@ -280,17 +280,17 @@ mod tests {
         assert_eq!(
             remaining_batch_wait(interval, now - Duration::from_secs(60), now),
             Duration::ZERO,
-            "空闲很久之后的第一条命令不该白等"
+            "超过批间间隔后不应继续等待"
         );
         assert_eq!(
             remaining_batch_wait(interval, now - Duration::from_secs(3), now),
             Duration::from_secs(17),
-            "只等剩下的那部分"
+            "只等待剩余间隔"
         );
         assert_eq!(
             remaining_batch_wait(interval, now - Duration::from_secs(20), now),
             Duration::ZERO,
-            "间隔刚好过完就不再等"
+            "间隔恰好结束时等待时间为 0"
         );
     }
 
@@ -298,10 +298,8 @@ mod tests {
     mod launch_command_tests {
         use super::*;
 
-        /// 启动命令的拼接：JVM 输出过滤后追加进日志（`-logsdir` 指向丢弃目标）。
-        ///
-        /// 这条命令错了就拉不起机器人，所以按逐字对照钉住；期望串里的路径也用 `display()` 拼，
-        /// 避免 Windows 上因路径分隔符不同而误报。
+        /// 验证启动命令行：JVM 输出过滤后追加到日志，`-logsdir` 指向丢弃目标。
+        /// 路径使用 `display()` 拼接，避免平台路径分隔符差异导致误报。
         #[test]
         fn launch_command_is_built_as_expected() {
             let log_path = Path::new("/srv/bots/1/duck/logs/2026-09-28-01-47-01.log");
@@ -332,7 +330,7 @@ mod tests {
             );
         }
 
-        /// `java_opts` 为空（或只有空白）时不能在 `java` 与 `-jar` 之间留出多余空格。
+        /// `java_opts` 为空或仅含空白时，不得在 `java` 与 `-jar` 之间产生多余空格。
         #[test]
         fn empty_java_opts_leaves_no_gap() {
             let command = launch_command_line(

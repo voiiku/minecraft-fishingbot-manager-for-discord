@@ -114,7 +114,7 @@ fn trim_string_values(value: &mut toml::Value) {
 mod tests {
     use super::*;
 
-    /// 示例配置可解析，路径按规则展开。
+    /// 示例配置可解析，路径字段按配置规则展开。
     #[test]
     fn example_config_parses() {
         let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
@@ -132,7 +132,7 @@ mod tests {
         assert!(!config.paths.fishingbot_config.as_os_str().is_empty());
     }
 
-    /// 解析错误包含文件名与字段名。
+    /// 解析错误必须包含配置文件名与出错字段名。
     #[test]
     fn parse_error_mentions_field() {
         let text = "[ping]\nhost = \"example.com\"\nport = \"不是端口\"\n";
@@ -145,7 +145,7 @@ mod tests {
         assert!(err.contains("port"), "报错应指出字段名: {err}");
     }
 
-    /// 拼错字段名（例如升级后配置里留下的旧字段）会报出字段名与所在表，而不是一句"未知字段"。
+    /// 未知字段（例如升级后残留的旧字段）必须报告字段名与所属表。
     #[test]
     fn unknown_field_is_reported_with_its_table() {
         let text = include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml")
@@ -158,7 +158,7 @@ mod tests {
         assert!(err.ends_with('`'), "报错末尾不应留下空行: {err:?}");
     }
 
-    /// 值两头的空白在解析时就抹掉：表、数组、嵌在数组里的表都算。
+    /// 解析阶段递归去除字符串两端空白，包括表、数组与数组中的表。
     #[test]
     fn string_values_are_trimmed() {
         let mut value: toml::Value = toml::from_str(
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(value["table"]["nested"].as_str(), Some("d"));
     }
 
-    /// 真配置里也一样：值两头多敲的空白不会带进代码，所以读配置的人不必自己 `trim()`。
+    /// 实际配置解析同样去除值两端空白，调用方无需再次 `trim()`。
     #[test]
     fn config_values_come_out_trimmed() {
         let example =
@@ -183,7 +183,10 @@ mod tests {
             "token = \"Paste Your Discord Bot Token Here\"",
             "token = \"  Paste Your Discord Bot Token Here  \"",
         );
-        assert_ne!(text, example, "示例配置里那行 token 变了，这条用例要跟着改");
+        assert_ne!(
+            text, example,
+            "示例配置中的 token 行已变更，需要同步更新测试"
+        );
 
         let config = Config::from_toml_text(&text).expect("示例配置应当能解析");
 

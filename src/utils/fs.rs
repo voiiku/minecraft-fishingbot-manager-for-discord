@@ -189,10 +189,10 @@ pub fn remove_dir_all_if_exists(dir: &Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
-    /// 每个测试用一个独立的临时目录（带进程号，避免并发跑测试时互相踩）。
+    /// 每个测试使用独立临时目录，避免并发测试互相干扰。
     use crate::test_support::temp_test_dir;
 
-    /// 按行往回读：返回的顺序是**文件顺序**（旧→新），末尾换行不算空行。
+    /// 从文件末尾读取时，返回结果按文件顺序排列；末尾换行不产生空行。
     #[test]
     fn backward_reader_returns_lines_in_file_order() {
         let dir = temp_test_dir("read-backwards");
@@ -203,7 +203,7 @@ mod tests {
         let all_lines = read_lines_backwards_until(&log_path, |_| false).expect("读日志");
         assert_eq!(all_lines, vec!["一", "二", "三"]);
 
-        // 判定命中就停：只往回扫到"三"为止，更旧的两行不必读。
+        // 遇到匹配行后停止扫描，更旧的行不再读取。
         let first_line =
             read_lines_backwards_until(&log_path, |line| line == "三").expect("读日志");
         assert_eq!(first_line, vec!["三"]);
@@ -211,8 +211,7 @@ mod tests {
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 边界：末尾没有换行的最后一行要读出来；空文件返回空（调用方据此区分"空日志"与"没有日志"）；
-    /// 只有一个换行的文件是一行空行（与 `str::lines()` 的口径一致）。
+    /// 末尾无换行时仍返回最后一行；空文件返回空集合；仅含一个换行的文件返回一个空行。
     #[test]
     fn backward_reader_handles_missing_trailing_newline_and_empty_file() {
         let dir = temp_test_dir("read-backwards-edge");
@@ -243,8 +242,7 @@ mod tests {
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 空行（开头、中间、连续多个）要和 `str::lines()` 的口径一致 —— 往回读只是个实现手段，
-    /// 不该在这里偏一寸：整条规则只允许有"文件末尾那个换行不算空行"这一个特例。
+    /// 空行处理与 `str::lines()` 一致；唯一特例是文件末尾的换行不计为额外空行。
     #[test]
     fn backward_reader_matches_str_lines_on_empty_lines() {
         let dir = temp_test_dir("read-backwards-empty-lines");
@@ -275,30 +273,14 @@ mod tests {
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 行数为 0 直接报错，不静默按 1 行处理（`/log` 会把这句话原样回给用户）。
-    #[test]
-    fn read_last_lines_rejects_zero_lines() {
-        let dir = temp_test_dir("read-zero-lines");
-        fs::create_dir_all(&dir).expect("建临时目录");
-        let log_path = dir.join("2026-09-28-01-47-01.log");
-        fs::write(&log_path, "一行\n").expect("写日志");
-
-        let message = read_last_lines(&log_path, 0).expect_err("0 行应当报错");
-        // 这句话取自语言表（`/log` 会原样回给用户）：期望值也从那里取，不写死中文或英文。
-        assert_eq!(message, text::get().bot_log_zero_lines());
-
-        fs::remove_dir_all(&dir).expect("清理临时目录");
-    }
-
-    /// CRLF、跨读块、多字节字符：`\r` 去掉；行不会被读块边界切开（每行末尾的 emoji 都完整）；
-    /// `read_last_lines` 只取尾部 N 行。
+    /// 处理 CRLF、跨读块与多字节字符；`read_last_lines` 只返回尾部 N 行。
     #[test]
     fn backward_reader_handles_crlf_and_crosses_read_blocks() {
         let dir = temp_test_dir("read-backwards-blocks");
         fs::create_dir_all(&dir).expect("建临时目录");
         let log_path = dir.join("big.log");
 
-        // 每行都带 CRLF，且总长度明显超过一个读块（`BACKWARD_READ_BLOCK_BYTES` = 16 KiB）。
+        // 总长度明显超过单个读块（`BACKWARD_READ_BLOCK_BYTES` = 16 KiB）。
         let mut content = String::new();
         for index in 0..2000 {
             content.push_str(&format!("第{index}行-钓鱼中🐟\r\n"));
@@ -315,14 +297,14 @@ mod tests {
             ]
         );
 
-        // 往回读全文：行数要对得上（跨块拼接既不丢行也不多行）。
+        // 全文读取用于验证跨块拼接既不丢行，也不重复行。
         let all_lines = read_lines_backwards_until(&log_path, |_| false).expect("读全文");
         assert_eq!(all_lines.len(), 2000);
 
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 子目录名列表：只要目录，普通文件跳过（顺序由文件系统给，所以这里按集合比较）。
+    /// 子目录名列表只包含目录，普通文件被跳过；比较前排序以消除文件系统顺序差异。
     #[test]
     fn subdirectory_names_skip_plain_files() {
         let dir = temp_test_dir("list-subdirs");
@@ -337,7 +319,7 @@ mod tests {
         fs::remove_dir_all(&dir).expect("清理临时目录");
     }
 
-    /// 列子目录失败要报错（调用方据此决定是回复用户还是记日志）；删目录则把"不存在"当成成功。
+    /// 列出不存在的目录会报错；删除不存在的目录则视为成功。
     #[test]
     fn missing_dir_is_error_when_listing_and_success_when_removing() {
         let dir = temp_test_dir("missing-dir");

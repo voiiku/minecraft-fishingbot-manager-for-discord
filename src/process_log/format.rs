@@ -53,7 +53,7 @@ mod tests {
     }
 
     /// 多行记录（`log::info!("{}", report)` 打一整块 `Report`）：每行都在，
-    /// 续行缩进两格，这样第二行起不会"裸奔"，翻日志时仍能看出时间与级别。
+    /// 续行统一缩进两格。
     #[test]
     fn multi_line_record_indents_continuation_lines() {
         assert_eq!(
@@ -62,7 +62,7 @@ mod tests {
         );
     }
 
-    /// 空消息直接丢弃：不给它留"时间 + 级别"，日志里就不会出现来历不明的空行。
+    /// 空消息不生成记录，避免日志中出现无来源的空行。
     #[test]
     fn empty_message_is_dropped() {
         assert_eq!(format_record("T", Level::Error, ""), None);

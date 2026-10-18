@@ -361,8 +361,7 @@ pub fn confirm_pause_command(
 mod tests {
     use super::*;
 
-    /// 测试用的两条回显：与示例配置 `[command_echo]` 的默认值同一对，直接构造、不吃真配置
-    /// （就像 [`keywords`] 那样）。
+    /// 测试用回显：与示例配置 `[command_echo]` 的默认值一致，直接构造，不读取真实配置。
     fn command_echo() -> config::CommandEchoConfig {
         config::CommandEchoConfig {
             pause_echo: "Fishing paused".to_string(),
@@ -372,8 +371,8 @@ mod tests {
         }
     }
 
-    /// 测试用关键词：只填配置里的那两项（各部署不同、只能由部署者提供的那些）——
-    /// 单行判定吃参数，所以这里不需要真配置；JAR 自己的固定文案走 `text::get()`。
+    /// 测试用关键词：仅填充部署相关的两个字段，单行判定直接使用参数。
+    /// JAR 固定文案由 `text::get()` 提供。
     fn keywords() -> config::KeywordsConfig {
         config::KeywordsConfig {
             online: "回到测试服".to_string(),
@@ -381,25 +380,24 @@ mod tests {
         }
     }
 
-    /// 单行判定：只认在线关键词（重连那对由下一条测）；"进程已结束"不在这里判。
-    /// 整段流程（实时读日志、读到结论就停、三种"读不到"报错）在
-    /// [`connection_status_of_log`] 里，它要读真配置，所以这里只测这个吃参数的单行判定；
-    /// "往回读、读到结论就停"那一半由 `bot_logs` 的测试覆盖。
+    /// 单行判定只识别在线关键词；重连判定由下一测试覆盖。
+    /// 完整流程（读取日志、命中后停止、读不到日志时的错误）由
+    /// [`connection_status_of_log`] 覆盖；该函数需要真实配置，因此此处仅测试按参数判定的单行逻辑。
+    /// “向后读取、命中后停止”的行为由 `bot_logs` 的测试覆盖。
     #[test]
     fn connection_keywords_are_recognized() {
         let keywords = keywords();
         let of_line = |line: &str| ConnectionStatus::from_line(line, &keywords.online);
 
         assert_eq!(of_line(&keywords.online), Some(ConnectionStatus::Online));
-        // 外壳脚本时代那句"结束标记"不再参与判定：写不写、写成什么都不影响状态
-        //（"进程已结束"改看会话状态，见 `ConnectionStatus::Stopped`）。
+        // 旧的结束标记不参与连接状态判定；进程结束状态由会话状态提供。
         assert_eq!(of_line(">>> 机器人进程已结束或被手动中止 <<<"), None);
-        // 不沾关键词的行给不出连接状态。
+        // 不包含关键词的行不产生连接状态。
         assert_eq!(of_line("正在加载配置"), None);
     }
 
-    /// 重连提示要求前缀与后缀同时出现，缺一个不算（否则日志里凑巧出现的半个词会误判）。
-    /// 这两句来自 JAR 自己、按当前语言取，所以这里用同一张表拼日志行（不写死某种语言）。
+    /// 重连提示必须同时包含前缀与后缀；只出现其中一个不足以确认重连。
+    /// 提示文案来自当前语言的 JAR 实现，因此测试使用同一语言表拼接日志行。
     #[test]
     fn reconnect_needs_both_affixes() {
         let keywords = keywords();
@@ -416,12 +414,12 @@ mod tests {
             )),
             Some(ConnectionStatus::Reconnecting)
         );
-        // 只有前缀那半句（日志里凑巧出现）：不给结论。
+        // 仅出现前缀时不产生结论。
         assert_eq!(
             of_line(&format!("[INFO   ] {}5", i18n_text.jar_reconnect_prefix())),
             None
         );
-        // 只有后缀那半句：同样不给结论。
+        // 仅出现后缀时同样不产生结论。
         assert_eq!(
             of_line(&format!("[INFO   ] 5{}", i18n_text.jar_reconnect_suffix())),
             None
@@ -441,14 +439,14 @@ mod tests {
         assert_eq!(status.pause_status(), PauseStatus::Fishing);
     }
 
-    /// 找不到日志文件（机器人没启动过，或那份日志被挪走了）时按错误报回去，而不是当成一种状态。
-    /// 这一条走的是 `None` 分支，所以不需要真配置。
+    /// 找不到日志文件（从未启动或日志已移走）时返回错误，不将其视为机器人状态。
+    /// 该测试覆盖 `None` 分支，不读取真实配置。
     #[test]
     fn missing_log_is_an_error() {
         assert!(connection_status_of_log("duck", None).is_err());
     }
 
-    /// 状态按**机器人名**记着：没有条目就是初始值，改过之后按名字取到新值，忘掉又回到初始值。
+    /// 持续状态按机器人名保存：无记录时为初始值，更新后可按名称读取，移除记录后恢复初始值。
     #[test]
     fn bot_status_is_remembered_by_name() {
         let bot_name = "minecraft-fishingbot-manager-for-discord-测试-状态记忆";
@@ -465,13 +463,13 @@ mod tests {
             PauseStatus::Paused
         );
 
-        // 别的机器人不受影响。
+        // 其他机器人的状态不受影响。
         assert_eq!(
             "另一个机器人".to_bot_pause_status().pause_status(),
             PauseStatus::Fishing
         );
 
-        // 会话结束（或开始）：忘掉之后回到初始值。
+        // 会话结束或重新开始时移除记录，状态恢复为初始值。
         bot_name.forget_bot_pause_status();
         assert_eq!(
             bot_name.to_bot_pause_status().pause_status(),
@@ -479,7 +477,7 @@ mod tests {
         );
     }
 
-    /// 回显关键词来自配置：两条指令各取自己那句（配置里没有它们之外的来源）。
+    /// 回显关键词来自配置：两条指令分别读取自身配置项。
     #[test]
     fn echo_keywords_come_from_the_config() {
         let command_echo = command_echo();
@@ -494,8 +492,8 @@ mod tests {
         );
     }
 
-    /// 窗口里最后那条 pause/unpause 回显是谁的：是"我这条"才算生效，是另一条就按"没生效"判。
-    /// 同一台机器人的两条命令撞上时，两条回显都会进窗口，只有后出现的那条算数。
+    /// 以窗口内最后一条 pause/unpause 回显判定实际生效的指令。
+    /// 同一机器人的两条命令并发时，两条回显都会进入窗口，只有最后一条有效。
     #[test]
     fn the_last_pause_or_unpause_echo_wins() {
         let command_echo = command_echo();
@@ -520,7 +518,7 @@ mod tests {
             last_of(&[pause_echo], PauseCommand::SetPause),
             Some(PauseCommand::SetPause)
         );
-        // `/pause` 之后又来了一条 `/unpause`：对 `/pause` 来说这就是"没生效"。
+        // `/pause` 之后出现 `/unpause`：对 `/pause` 而言表示未生效。
         assert_eq!(
             last_of(&[pause_echo, unpause_echo], PauseCommand::SetPause),
             Some(PauseCommand::SetUnpause)
@@ -533,11 +531,11 @@ mod tests {
             last_of(&[pause_echo, unpause_echo], PauseCommand::SetUnpause),
             Some(PauseCommand::SetUnpause)
         );
-        // 两条回显都不在窗口里时不下结论。
+        // 两条回显均不在窗口中时返回 `None`。
         assert_eq!(last_of(&["正在加载配置"], PauseCommand::SetPause), None);
     }
 
-    /// 两条指令各自的指令名与"确认到之后要改成什么状态"是对得上的一对。
+    /// 指令名与确认后应更新的状态必须一一对应。
     #[test]
     fn pause_command_names_and_targets() {
         assert_eq!(PauseCommand::SetPause.command(), "/pause");

@@ -96,12 +96,12 @@ mod tests {
 
     use super::*;
 
-    /// 队列只做队列交互，取值随意给（这批用例不考察节奏）。
+    /// 创建仅用于队列交互的测试队列；时间参数不影响本组用例。
     fn queue() -> StartupQueue {
         queue_with_capacity(32)
     }
 
-    /// 同上，但把暂存容量收紧到 `max_pending_requests`。
+    /// 创建指定待处理容量的测试队列。
     fn queue_with_capacity(max_pending_requests: usize) -> StartupQueue {
         StartupQueue::new_for_test(3, 20_000, 30_000, 300, max_pending_requests)
     }
@@ -119,7 +119,7 @@ mod tests {
         bots.into_iter().map(|bot| bot.bot_name.clone()).collect()
     }
 
-    /// 队列里现在排着的那几台（顺序就是先进先出顺序）。
+    /// 返回当前排队机器人名称，顺序与先进先出一致。
     fn waiting_bots(queue: &StartupQueue) -> Vec<String> {
         bot_names(
             queue
@@ -129,7 +129,7 @@ mod tests {
         )
     }
 
-    /// 一个待启动条目（机器人与一个只等它的账本）。
+    /// 构造一个待启动条目（机器人及其对应的账本）。
     fn queued(bot_name: &str) -> QueuedBot {
         let bot_dir_entry = bot(bot_name);
         let ledger = StartLedger::new(std::slice::from_ref(&bot_dir_entry));
@@ -137,14 +137,14 @@ mod tests {
         QueuedBot::new(bot_dir_entry, ledger)
     }
 
-    /// 直接把队列内容换成这几个名字。
+    /// 将队列内容替换为指定机器人名称。
     fn set_waiting_bots(queue: &StartupQueue, bot_names: &[&str]) {
         let entries: Vec<QueuedBot> = bot_names.iter().map(|name| queued(name)).collect();
 
         *queue.waiting_bots_mut() = entries.into();
     }
 
-    /// 容量不够时：先来的收下，超出的原样退回（调用方要在回复里说明这部分）。
+    /// 容量不足时接收前面的机器人，超出部分原样返回给调用方。
     #[test]
     fn bots_beyond_the_capacity_are_handed_back() {
         let queue = queue_with_capacity(2);
@@ -160,7 +160,7 @@ mod tests {
         );
     }
 
-    /// 已经排了人时按剩余空位收，剩下的照旧退回。
+    /// 已排队机器人占用容量，后续请求仅按剩余空位接收。
     #[test]
     fn already_waiting_bots_consume_the_capacity() {
         let queue = queue_with_capacity(2);
@@ -179,11 +179,11 @@ mod tests {
         );
     }
 
-    /// 从队首取：先进先出；不够就少给，不留空位。
+    /// 从队首按先进先出取机器人；数量不足时返回现有全部条目。
     #[test]
     fn popping_takes_the_oldest_bots_first() {
         let queue = queue();
-        assert!(queue.pop_bots_from_head(2).is_empty(), "空队列取不到东西");
+        assert!(queue.pop_bots_from_head(2).is_empty(), "空队列应返回空结果");
 
         set_waiting_bots(&queue, &["duck", "goose", "crane"]);
 
@@ -205,19 +205,23 @@ mod tests {
                     .map(|queued_bot| queued_bot.bot())
             ),
             ["crane"],
-            "只剩一台就只给一台"
+            "数量不足时返回剩余条目"
         );
         assert!(queue.pop_bots_from_head(1).is_empty());
     }
 
-    /// 取出的时刻会被记下来；只有真的取到东西时更新（空取不算一批）。
+    /// 仅在成功取出条目时更新时间戳；空队列取出不改变时间戳。
     #[test]
     fn only_a_real_pop_updates_the_timestamp() {
         let queue = queue();
         let loaded_at = queue.latest_poped_timestamp();
 
         queue.pop_bots_from_head(1);
-        assert_eq!(queue.latest_poped_timestamp(), loaded_at, "空取不该动时刻");
+        assert_eq!(
+            queue.latest_poped_timestamp(),
+            loaded_at,
+            "空队列不应更新时间戳"
+        );
 
         set_waiting_bots(&queue, &["duck"]);
         queue.pop_bots_from_head(1);
@@ -227,10 +231,10 @@ mod tests {
         set_waiting_bots(&queue, &["goose"]);
         queue.pop_bots_from_head(1);
         let second_pop = queue.latest_poped_timestamp();
-        assert!(second_pop >= first_pop, "再取一次要更新");
+        assert!(second_pop >= first_pop, "成功取出后应更新时间戳");
     }
 
-    /// 查询：队列里有没有这几台（外部命令判断"正在排队启动"用它）。
+    /// 队列可查询指定机器人是否正在等待启动。
     #[test]
     fn the_queue_reports_which_bots_are_waiting() {
         let queue = queue();
@@ -245,7 +249,7 @@ mod tests {
         assert_eq!(flags, [true, false, true]);
     }
 
-    /// 撤单：撤到的报 `true`，已经不在队列里的（可能刚被拉起）报 `false`，整体不失败。
+    /// 移除机器人时逐项返回是否成功；不存在于队列的条目返回 `false`，整体操作不失败。
     #[test]
     fn removing_bots_from_the_queue_answers_per_bot() {
         let queue = queue();
@@ -254,11 +258,11 @@ mod tests {
         let answers = queue.remove_bots_from_queue(&[bot("duck"), bot("crane")]);
         let flags: Vec<bool> = answers.into_iter().map(|(_, removed)| removed).collect();
 
-        assert_eq!(flags, [true, false], "crane 本来就不在队列里");
+        assert_eq!(flags, [true, false], "crane 不在队列中");
         assert_eq!(waiting_bots(&queue), ["goose"]);
     }
 
-    /// 清空队列（`/stopall`）。
+    /// 清空队列（用于 `/stopall`）。
     #[test]
     fn clearing_the_queue_empties_it() {
         let queue = queue();
@@ -269,7 +273,7 @@ mod tests {
         assert!(waiting_bots(&queue).is_empty());
     }
 
-    /// 停止请求也能叫醒等待中的启动线程（队列空着时只靠它），并且取走一次就没了。
+    /// 停止请求可以唤醒等待中的启动线程；请求被取走一次后清除。
     #[test]
     fn a_stop_request_wakes_the_waiting_starter_once() {
         let queue = Arc::new(queue());

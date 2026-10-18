@@ -402,7 +402,7 @@ mod tests {
 
     use std::path::PathBuf;
 
-    /// 配置示例；测试只依赖其结构。
+    /// 配置示例；测试仅依赖其结构。
     const EXAMPLE: &str =
         include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
 
@@ -451,10 +451,9 @@ mod tests {
         output.join("\n")
     }
 
-    /// 造一个临时目录，并在里面按示例配置写的 jar 文件名放一个占位文件；
-    /// 然后把 `base_dir` 指向这个目录（示例里写的是占位路径，测试必须换掉）。
+    /// 创建临时目录，并按示例配置中的 jar 文件名放置占位文件；随后将 `base_dir` 指向该目录。
     ///
-    /// 目录名的唯一来源是 [`crate::test_support::temp_test_dir`]（带进程号、跑前先清）。
+    /// 临时目录由 [`crate::test_support::temp_test_dir`] 创建：名称包含进程号，使用前会清理旧目录。
     fn staged_example(tag: &str) -> (PathBuf, String) {
         let dir = crate::test_support::temp_test_dir(&format!("validate-{tag}"));
         std::fs::create_dir_all(&dir).expect("创建临时目录失败");
@@ -474,14 +473,14 @@ mod tests {
         (dir, text)
     }
 
-    /// 跑一遍 `load_from` 的核心流程：解析 + 校验（含语言校验与安装）。
+    /// 执行解析与校验流程（包含语言校验与安装）。
     fn load_text(text: &str) -> Result<Config, String> {
         let config = Config::from_toml_text(text)?;
         validate(&config)?;
         Ok(config)
     }
 
-    /// 路径都就位时，示例配置应当通过校验。
+    /// 路径满足条件时，示例配置应通过校验。
     #[test]
     fn example_config_passes_validation() {
         let (dir, text) = staged_example("ok");
@@ -687,8 +686,8 @@ mod tests {
         );
     }
 
-    /// 管理员的名字不能是空的，否则 /show admins 会很难看（全空白的名字在 `parse.rs` 里已经被去成空串，
-    /// 所以进到 `validate` 的只可能是空串）。
+    /// 管理员名称不得为空；空名称会使 `/show admins` 输出空字段。
+    /// 全空白名称已在 `parse.rs` 中去成空串，因此校验层只需处理空串。
     #[test]
     fn admin_name_must_not_be_empty() {
         let admins = admins_from("\"2878855255\" = \"\"");
@@ -711,7 +710,7 @@ mod tests {
         assert!(admins.is_admin(123456));
     }
 
-    /// 按真实格式解析一份管理员名单：`Admins` 的字段是私有的，测试里走一遍 TOML 更贴近实际。
+    /// 通过 TOML 构造管理员名单；`Admins` 字段私有，该路径更接近实际加载流程。
     fn admins_from(text: &str) -> Admins {
         toml::from_str(text).expect("测试用的管理员名单应当能解析")
     }

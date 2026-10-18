@@ -57,8 +57,8 @@ impl LogLevels {
 mod tests {
     use super::*;
 
-    /// 默认（`[log] debug = false`）：本项目自己的记录按配置放，第三方 crate 只放到 `WARN`
-    /// （否则 serenity 的 `recv; do_heartbeat;` 会把本项目的关键几行淹没）。
+    /// 默认配置下，本项目记录从 `INFO` 开始，第三方 crate 仅记录 `WARN` 及以上。
+    /// 这可以避免 serenity 的心跳日志掩盖本项目的关键记录。
     #[test]
     fn third_party_records_are_capped_to_warn_by_default() {
         let levels = LogLevels::new(false);
@@ -66,7 +66,7 @@ mod tests {
         assert_eq!(levels.own, LevelFilter::Info);
         assert_eq!(levels.dependencies, LevelFilter::Warn);
 
-        // "是不是自己的记录"只看 target 前缀：lib 与 bin 都是 `minecraft_fishingbot_manager_for_discord`。
+        // 项目记录通过 target 前缀识别：lib 与 bin 共用同一个 crate 前缀。
         assert_eq!(
             levels.ceiling_for("minecraft_fishingbot_manager_for_discord"),
             LevelFilter::Info
@@ -82,8 +82,7 @@ mod tests {
         assert_eq!(levels.ceiling_for("poise::framework"), LevelFilter::Warn);
     }
 
-    /// `debug = true` 时两档都放到 `DEBUG`：本项目自己的记录 + 第三方 crate 的
-    ///（"打开 debug 就是全都要"）。
+    /// `debug = true` 时两档上限都提升到 `DEBUG`。
     #[test]
     fn debug_widens_both_tiers() {
         let levels = LogLevels::new(true);
