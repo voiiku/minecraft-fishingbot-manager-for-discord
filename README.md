@@ -4,6 +4,12 @@
 
 **English** | [简体中文](docs/README/README-zh_cn.md)
 
+> **Third-party project notice**
+>
+> This project is a third-party management tool and is not officially affiliated with the original FishingBot author. If you encounter any issue (bug) while using this project, please do not report it to the upstream author; report it through this project's [Issues](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues) instead.
+>
+> This project does not contain, modify, or distribute any FishingBot source code or binaries. Download the official JAR from the [FishingBot repository](https://github.com/MrKinau/FishingBot).
+
 * **Offline-mode servers and single-player worlds are not supported yet.**
 * **This project runs only on 64-bit Linux for now.**
 * The official build of [FishingBot](https://github.com/MrKinau/FishingBot) does not support `/pause` and `/unpause` yet (the author plans to add them), so this project cannot handle the pause logic correctly for now; every other feature is unaffected.

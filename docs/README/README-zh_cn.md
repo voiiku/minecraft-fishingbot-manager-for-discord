@@ -2,10 +2,16 @@
 
 [English](../../README.md) | **简体中文**
 
+> **第三方项目声明**
+>
+> 本项目属于第三方管理工具，与 FishingBot 的原作者并无官方关联。若在使用过程中发现任何问题（Bug），请勿向原作者反馈，而应通过本项目的[“问题”（Issues）](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)板块进行提交。
+>
+> 本项目不包含、不修改，也未分发任何 FishingBot 的源代码或二进制文件。请前往 [FishingBot 官方仓库](https://github.com/MrKinau/FishingBot) 下载官方 JAR 文件。
+
 * **本项目暂时不支持离线模式的服务器或单人游戏**。
 * **本项目暂时只支持运行在 64 位 Linux 系统下**。
-* 想使用 QQ？可以考虑 [QQ 版本（已停止功能更新）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
-* 由于 [FishingBot](https://github.com/MrKinau/FishingBot) 的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于26.4加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），暂时无法正确处理暂停钓鱼功能(逻辑已经实现)，其余功能不受影响。
+* 无法使用 Discord？可以考虑 [QQ 版本（已停止功能更新）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
+* 由于 [FishingBot](https://github.com/MrKinau/FishingBot) 的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于 26.4 加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），本项目暂时无法正确处理暂停钓鱼功能（相关逻辑已经实现），其余功能不受影响。
 
 ## 1. 项目概要
 
