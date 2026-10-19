@@ -1,6 +1,6 @@
 //! English 文案，与 `zh_cn.rs` 的接口和占位符一一对应。
 
-use super::{CommandText, ConfigRequirement, LogText, Text};
+use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
 
 /// 英文实现（不需要实例状态）。
 pub(super) struct EnUs;
@@ -172,6 +172,53 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
 ];
 
 impl Text for EnUs {
+    fn watchdog_text(&self, message: WatchdogText) -> &'static str {
+        match message {
+            WatchdogText::StartedLockReset => {
+                "Failed to reset the start of this connection attempt: the mutex for Watchdog.started is poisoned"
+            }
+            WatchdogText::LastHandshakeLockClear => {
+                "Failed to clear the previous handshake state: the mutex for Watchdog.last_handshake is poisoned"
+            }
+            WatchdogText::LastHandshakeLockRecord => {
+                "Failed to record the handshake state: the mutex for Watchdog.last_handshake is poisoned"
+            }
+            WatchdogText::LastHandshakeLockRead => {
+                "Failed to evaluate the network state: the mutex for Watchdog.last_handshake is poisoned"
+            }
+            WatchdogText::UnhealthySinceLockClear => {
+                "Failed to clear the probe-failure state: the mutex for Watchdog.unhealthy_since is poisoned"
+            }
+            WatchdogText::UnhealthySinceLockRecord => {
+                "Failed to record a probe failure: the mutex for Watchdog.unhealthy_since is poisoned"
+            }
+            WatchdogText::UnhealthySinceLockRead => {
+                "Failed to evaluate the network state: the mutex for Watchdog.unhealthy_since is poisoned"
+            }
+            WatchdogText::StartedLockRead => {
+                "Failed to evaluate the network state: the mutex for Watchdog.started is poisoned"
+            }
+            WatchdogText::OfflineSinceLockRecord => {
+                "Failed to record the offline state: the mutex for Watchdog.offline_since is poisoned"
+            }
+            WatchdogText::OfflineSinceLockRead => {
+                "Failed to read the offline state: the mutex for Watchdog.offline_since is poisoned"
+            }
+            WatchdogText::PendingDisconnectReasonLockRecord => {
+                "Failed to record the disconnect reason: the mutex for Watchdog.pending_disconnect_reason is poisoned"
+            }
+            WatchdogText::PendingDisconnectReasonLockRead => {
+                "Failed to read the disconnect reason: the mutex for Watchdog.pending_disconnect_reason is poisoned"
+            }
+            WatchdogText::NoticeCtxLockSendReport => {
+                "Failed to send the shutdown report: the mutex for Watchdog.notice_ctx is poisoned"
+            }
+            WatchdogText::NoticeCtxLockRecord => {
+                "Failed to record the Discord context: the mutex for Watchdog.notice_ctx is poisoned"
+            }
+        }
+    }
+
     fn report_succeeded_label(&self) -> &'static str {
         "[Success]"
     }

@@ -4,13 +4,25 @@
 //! - `lifecycle`：按 `Watchdog` 的状态实现掉线记录、重连信号与进程收尾。
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LockResult, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use poise::serenity_prelude as serenity;
 
+use crate::text;
+
 mod gateway;
 mod lifecycle;
+
+/// 取看门狗内部互斥锁；中毒时按当前语言给出内部不变量说明并终止。
+///
+/// 锁操作在多个模块重复出现，统一收在这里，避免各处分别拼 `.expect` 文案。
+fn lock_or_panic<'a, T>(
+    lock_result: LockResult<MutexGuard<'a, T>>,
+    message: text::WatchdogText,
+) -> MutexGuard<'a, T> {
+    lock_result.unwrap_or_else(|_| panic!("{}", text::get().watchdog_text(message)))
+}
 
 /// 看门狗：维护网络状态和进程生命周期标识信号。
 #[derive(Debug)]

@@ -1,5 +1,6 @@
 //! 文案按 `[i18n] language` 选择，每个进程使用一种语言。
 //! 回复、日志与状态文案由 [`Text`] 提供；引导期提示固定使用英文。
+//! 看门狗互斥锁的内部不变量文案由 `watchdog` 子模块提供，随 `[i18n] language` 切换。
 //! JAR 日志中的固定关键词也随语言选择，各部署自定义的关键词仍放在配置中。
 
 pub mod bootstrap;
@@ -7,11 +8,13 @@ mod en_us;
 mod log_text;
 mod requirement;
 mod setup_failure;
+mod watchdog;
 mod zh_cn;
 
 // 统一从入口导出文案数据类型。
 pub use log_text::LogText;
 pub use requirement::ConfigRequirement;
+pub use watchdog::WatchdogText;
 // 导出 Discord 装配失败分类函数。
 pub use setup_failure::{failure_is_permanent, setup_failure_log_text};
 
@@ -73,6 +76,10 @@ pub trait Text: Send + Sync {
     fn report_content_label(&self) -> &'static str;
     /// 按行截断时的说明，`dropped_line_count` 是被省略的行数。
     fn report_omitted_lines_note(&self, dropped_line_count: usize) -> String;
+
+    // ===================== 看门狗内部不变量（`text/watchdog.rs`） =====================
+    /// 看门狗互斥锁中毒时的内部不变量说明；属于运行期信息，随 `[i18n] language` 切换。
+    fn watchdog_text(&self, message: WatchdogText) -> &'static str;
 
     // ===================== 机器人状态（`utils/bot_status.rs`） =====================
     /// 报错：挑不到这个机器人的日志文件（正常运行时不会出现：日志由启动流程建好）。

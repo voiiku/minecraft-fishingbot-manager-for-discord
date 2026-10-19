@@ -1,6 +1,6 @@
 //! 简体中文文案。
 
-use super::{CommandText, ConfigRequirement, LogText, Text};
+use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
 
 /// 简体中文的实现（不需要实例状态）。
 pub(super) struct ZhCn;
@@ -159,6 +159,53 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
 ];
 
 impl Text for ZhCn {
+    fn watchdog_text(&self, message: WatchdogText) -> &'static str {
+        match message {
+            WatchdogText::StartedLockReset => {
+                "尝试重置本次连接尝试的起始状态时，看门狗的 started 字段的互斥锁被占用"
+            }
+            WatchdogText::LastHandshakeLockClear => {
+                "尝试清除上一次握手状态时，看门狗的 last_handshake 字段的互斥锁被占用"
+            }
+            WatchdogText::LastHandshakeLockRecord => {
+                "尝试记录握手状态时，看门狗的 last_handshake 字段的互斥锁被占用"
+            }
+            WatchdogText::LastHandshakeLockRead => {
+                "尝试判定网络状态时，看门狗的 last_handshake 字段的互斥锁被占用"
+            }
+            WatchdogText::UnhealthySinceLockClear => {
+                "尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+            }
+            WatchdogText::UnhealthySinceLockRecord => {
+                "尝试记录探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+            }
+            WatchdogText::UnhealthySinceLockRead => {
+                "尝试判定网络状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+            }
+            WatchdogText::StartedLockRead => {
+                "尝试判定网络状态时，看门狗的 started 字段的互斥锁被占用"
+            }
+            WatchdogText::OfflineSinceLockRecord => {
+                "尝试记录掉线状态时，看门狗的 offline_since 字段的互斥锁被占用"
+            }
+            WatchdogText::OfflineSinceLockRead => {
+                "尝试读取掉线状态时，看门狗的 offline_since 字段的互斥锁被占用"
+            }
+            WatchdogText::PendingDisconnectReasonLockRecord => {
+                "尝试记录掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用"
+            }
+            WatchdogText::PendingDisconnectReasonLockRead => {
+                "尝试读取掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用"
+            }
+            WatchdogText::NoticeCtxLockSendReport => {
+                "发送收尾报告时，看门狗的 notice_ctx 字段的互斥锁被占用"
+            }
+            WatchdogText::NoticeCtxLockRecord => {
+                "记录 Discord 上下文时，看门狗的 notice_ctx 字段的互斥锁被占用"
+            }
+        }
+    }
+
     fn report_succeeded_label(&self) -> &'static str {
         "[成功明细]"
     }

@@ -9,7 +9,7 @@ use poise::serenity_prelude as serenity;
 
 use crate::text;
 
-use super::Watchdog;
+use super::{Watchdog, lock_or_panic};
 
 /// 四种网络状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,30 +39,27 @@ impl GatewayState {
 impl Watchdog {
     /// 开始新一轮尝试连接并清除上一轮状态。
     pub fn begin_connection_attempt(&self, now: Instant) {
-        *self
-            .started
-            .lock()
-            .expect("尝试重置本次连接尝试的起始状态时，看门狗的 started 字段的互斥锁被占用") = now;
-        *self
-            .last_handshake
-            .lock()
-            .expect("尝试清除上一次握手状态时，看门狗的 last_handshake 字段的互斥锁被占用") = None;
-        *self
-            .unhealthy_since
-            .lock()
-            .expect("尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用") = None;
+        *lock_or_panic(self.started.lock(), text::WatchdogText::StartedLockReset) = now;
+        *lock_or_panic(
+            self.last_handshake.lock(),
+            text::WatchdogText::LastHandshakeLockClear,
+        ) = None;
+        *lock_or_panic(
+            self.unhealthy_since.lock(),
+            text::WatchdogText::UnhealthySinceLockClear,
+        ) = None;
     }
 
     /// 握手成功：记录最新握手时刻，并清掉探活失败计时。
     pub fn record_handshake_success(&self, now: Instant) {
-        *self
-            .last_handshake
-            .lock()
-            .expect("尝试记录握手状态时，看门狗的 last_handshake 字段的互斥锁被占用") = Some(now);
-        *self
-            .unhealthy_since
-            .lock()
-            .expect("尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用") = None;
+        *lock_or_panic(
+            self.last_handshake.lock(),
+            text::WatchdogText::LastHandshakeLockRecord,
+        ) = Some(now);
+        *lock_or_panic(
+            self.unhealthy_since.lock(),
+            text::WatchdogText::UnhealthySinceLockClear,
+        ) = None;
     }
 
     /// 这一次是不是进程内第一次成功握手。
@@ -72,35 +69,33 @@ impl Watchdog {
 
     /// 探活成功：清掉失败计时，状态随之回到 `Alive`。
     pub fn clear_probe_failures(&self) {
-        *self
-            .unhealthy_since
-            .lock()
-            .expect("尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用") = None;
+        *lock_or_panic(
+            self.unhealthy_since.lock(),
+            text::WatchdogText::UnhealthySinceLockClear,
+        ) = None;
     }
 
     /// 记录首次探活失败时刻（因为从第一次失败起才开始算超时）。
     pub fn record_probe_failure_start(&self, now: Instant) {
-        self.unhealthy_since
-            .lock()
-            .expect("尝试记录探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用")
-            .get_or_insert(now);
+        lock_or_panic(
+            self.unhealthy_since.lock(),
+            text::WatchdogText::UnhealthySinceLockRecord,
+        )
+        .get_or_insert(now);
     }
 
     /// 根据当前时刻判定网络状态（时序取自 [`Watchdog`] 的字段）。
     fn state(&self, now: Instant) -> GatewayState {
         // 先判断本次尝试是否已握手。
-        let handshaken = self
-            .last_handshake
-            .lock()
-            .expect("尝试判定网络状态时，看门狗的 last_handshake 字段的互斥锁被占用")
-            .is_some();
-        // 没握手时还要分：超过首次握手超时判 NeverReady，否则还在 Waiting。
+        let handshaken = lock_or_panic(
+            self.last_handshake.lock(),
+            text::WatchdogText::LastHandshakeLockRead,
+        )
+        .is_some();
+        // 没握手时还要继续判断：超过首次握手超时判 NeverReady，否则还在 Waiting。
         if !handshaken {
             // 首次握手超时的截止点：本次尝试开始 + 首次握手超时。
-            let timeout = *self
-                .started
-                .lock()
-                .expect("尝试判定网络状态时，看门狗的 started 字段的互斥锁被占用")
+            let timeout = *lock_or_panic(self.started.lock(), text::WatchdogText::StartedLockRead)
                 + self.first_handshake_timeout;
             return if now >= timeout {
                 GatewayState::NeverReady
@@ -109,10 +104,10 @@ impl Watchdog {
             };
         }
         // 读取探活失败的起始时刻。
-        let unhealthy_since = *self
-            .unhealthy_since
-            .lock()
-            .expect("尝试判定网络状态时，看门狗的 unhealthy_since 字段的互斥锁被占用");
+        let unhealthy_since = *lock_or_panic(
+            self.unhealthy_since.lock(),
+            text::WatchdogText::UnhealthySinceLockRead,
+        );
         // 失败累计满一个窗口才判掉线；未满只视为网络波动。
         match unhealthy_since {
             Some(unhealthy_since) if now.duration_since(unhealthy_since) >= self.window => {

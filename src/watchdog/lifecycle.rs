@@ -6,7 +6,7 @@ use poise::serenity_prelude as serenity;
 
 use crate::text;
 
-use super::Watchdog;
+use super::{Watchdog, lock_or_panic};
 
 /// 退出信号收尾时，把报告发到各服务器的总时限。
 const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -54,30 +54,29 @@ impl Watchdog {
     fn stop_all_bots_on_disconnect(&self, reason: String) {
         log::warn!("{reason}");
         log::info!("{}", self.shutdown_all_bots());
-        *self
-            .offline_since
-            .lock()
-            .expect("尝试记录掉线状态时，看门狗的 offline_since 字段的互斥锁被占用") =
-            Some((reason, std::time::SystemTime::now()));
+        *lock_or_panic(
+            self.offline_since.lock(),
+            text::WatchdogText::OfflineSinceLockRecord,
+        ) = Some((reason, std::time::SystemTime::now()));
     }
 
     /// 判定掉线的一方把原因交给进程入口并叫醒它：收尾与重建连接都由入口的 [`Watchdog::wait_for_attempt`] 做。
     pub fn request_reconnect(&self, reason: String) {
-        *self
-            .pending_disconnect_reason
-            .lock()
-            .expect("尝试记录掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用") =
-            Some(reason);
+        *lock_or_panic(
+            self.pending_disconnect_reason.lock(),
+            text::WatchdogText::PendingDisconnectReasonLockRecord,
+        ) = Some(reason);
         // 保留唤醒信号，直到入口回到 select。
         self.reconnect_signal().notify_one();
     }
 
     /// 取走判定侧交来的掉线原因；取不到说明是迟到的唤醒（上一轮已收尾）。
     fn take_pending_disconnect_reason(&self) -> Option<String> {
-        self.pending_disconnect_reason
-            .lock()
-            .expect("尝试读取掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用")
-            .take()
+        lock_or_panic(
+            self.pending_disconnect_reason.lock(),
+            text::WatchdogText::PendingDisconnectReasonLockRead,
+        )
+        .take()
     }
 
     /// 收到退出信号后的收尾：记日志、停掉全部机器人，然后以 0 结束进程（正常退出，systemd 不会重拉）。
@@ -115,11 +114,11 @@ impl Watchdog {
 
     /// 把收尾报告发到每个服务器的通报频道；没握手过只写日志，发不出去的留一条告警。
     async fn send_shutdown_report(&self, report: &str) {
-        let ctx = self
-            .notice_ctx
-            .lock()
-            .expect("发送收尾报告时，看门狗的 notice_ctx 字段的互斥锁被占用")
-            .clone();
+        let ctx = lock_or_panic(
+            self.notice_ctx.lock(),
+            text::WatchdogText::NoticeCtxLockSendReport,
+        )
+        .clone();
         let Some(ctx) = ctx else {
             log::warn!(
                 "{}",
@@ -204,11 +203,10 @@ impl Watchdog {
 
     /// 记下本机器人当前的 Discord 上下文（每次握手成功后由入口交过来），退出收尾用它发频道消息。
     pub fn remember_notice_context(&self, ctx: &serenity::Context) {
-        *self
-            .notice_ctx
-            .lock()
-            .expect("记录 Discord 上下文时，看门狗的 notice_ctx 字段的互斥锁被占用") =
-            Some(ctx.clone());
+        *lock_or_panic(
+            self.notice_ctx.lock(),
+            text::WatchdogText::NoticeCtxLockRecord,
+        ) = Some(ctx.clone());
     }
 
     /// 掉线后又成功重连：向本机器人所在的所有服务器发送一条通知，并把结果写进日志。
@@ -267,10 +265,11 @@ impl Watchdog {
 
     /// 获取本次掉线记录并清空（重连成功的通报要用，通报完就清掉）。
     fn take_offline_since(&self) -> Option<(String, std::time::SystemTime)> {
-        self.offline_since
-            .lock()
-            .expect("尝试读取掉线状态时，看门狗的 offline_since 字段的互斥锁被占用")
-            .take()
+        lock_or_panic(
+            self.offline_since.lock(),
+            text::WatchdogText::OfflineSinceLockRead,
+        )
+        .take()
     }
 }
 
