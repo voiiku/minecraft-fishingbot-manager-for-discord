@@ -1,14 +1,15 @@
-# CONTEXT: project overview and the things you must remember
+# CONTEXT: project overview and maintenance constraints
 [简体中文](CONTEXT-zh_cn.md) | **English**
 
-This file is the shortest possible context for the next person (or AI session) taking over: the first few lines say
-what the project is, and everything after that lists the hard constraints that must be watched and must not be
-forgotten. Read it before changing code, and update it when a new convention appears.
-The markers follow the code-comment convention (see [architecture-en_us.md section 5](../mods/architecture/architecture-en_us.md)):
-a line starting with `?` is an open question that needs a real run; once confirmed, remove the mark and keep the
-conclusion. The section 8 list tracks deployment checks and deferred improvements.
+This file provides the minimum necessary context for maintainers and automated sessions: the first section defines the
+project, and the remaining sections list the hard constraints. Read it before modifying code and update it when a new
+convention is established.
+Markers follow the code-comment convention (see
+[architecture-en_us.md section 5](../mods/architecture/architecture-en_us.md)): a line beginning with `?` requires
+confirmation in a real run; after confirmation, remove the marker and retain the conclusion. Section 8 lists deployment
+checks, deferred items and the assessment of the batch-operation reply design.
 
-Start here: [README-en_us.md](../README/README-en_us.md), [tutorial-en_us.md](../tutorial/tutorial-en_us.md) and
+Entry points: [README-en_us.md](../README/README-en_us.md), [tutorial-en_us.md](../tutorial/tutorial-en_us.md) and
 [troubleshooting-en_us.md](../troubleshooting/troubleshooting-en_us.md). Module guides are under `mods/`, the upstream
 JAR reference is under `refs/`, and project constraints and TODOs are in `CONTEXTS/`. The root `README.md` is the default
 English README; `docs/README/README-en_us.md` is a symlink to it, checked by an integration test.
@@ -42,9 +43,9 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   Discord is unreachable we cannot control the bots, yet they still occupy the game accounts, so real players cannot
   log in.
 
-## 2. Global hard constraints (confirm you are not breaking them before changing anything)
+## 2. Global constraints (verify compliance before modification)
 
-### 2.1 The red lines when writing code
+### 2.1 Mandatory coding rules
 
 1. The framework boundary: use its connection and command framework, not its logging or configuration. Use: serenity's
    `Client`, gateway and `Http`, poise's `Framework`, `#[poise::command]`, `FrameworkOptions`, `ctx.say` and
@@ -126,7 +127,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    [docs/mods/utils/utils-en_us.md section 6](../mods/utils/utils-en_us.md) and
    [docs/mods/config/config-en_us.md section 7](../mods/config/config-en_us.md).
 
-### 2.2 The invariant list (confirm each one before changing something)
+### 2.2 Invariant list (verify each item before modification)
 
 * Stopping must be thorough: `/stop` goes through `utils::shutdown::stop_single_bot_session`, `/stopall` and the
   process shutdown go through `utils::shutdown::stop_all_bot_sessions`, and the stop stage of a restart calls
@@ -188,7 +189,8 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval_ms`) the followup always
     fails, so the final report of a long command goes through `commands::say_final_report`: if it cannot be sent as a
     reply it is posted as an ordinary channel message (those are not bound to the interaction token) and a
-    `LogText::ReportPostedToChannel` line records why, together with the failure reason.
+    `LogText::ReportPostedToChannel` line records why, together with the failure reason. The batch-operation reply
+    design is assessed in section 8.1; the current behaviour is unchanged.
 * Sensitive input has to go through a Modal and must not be a command parameter: every invocation of a slash command
   creates a message in the channel (that is exactly Discord's `CHAT_INPUT_COMMAND` message type), the parameter values
   live in that message, and `ephemeral` only covers replies, not the invocation itself. `/token` therefore collects it
@@ -355,7 +357,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   product of that script, whereas this project launches sessions itself and does not write it, deciding instead from the
   screen session state (a `(Dead ...)` shell), so it is unaffected by the jar version and by how the script is written.
 
-## 3. The gateway watchdog (the only place that decides a disconnect)
+## 3. Gateway watchdog (the sole disconnect decision point)
 
 Purpose: once this process has been judged to have lost contact with Discord, no longer assume that it can still be
 commanded. While Discord is unreachable we cannot control the bots, yet they still occupy game accounts (FishingBot's
@@ -403,7 +405,7 @@ configuration (an invalid token, the bot not being invited) goes through `exit_o
 project's dedicated code for a deliberate failure, which a systemd unit can keep from restarting with
 `RestartPreventExitStatus=1`).
 
-## 4. The start-up pipeline (an example of writing the steps explicitly)
+## 4. Start-up pipeline (example of explicit steps)
 
 The start-up queue runs the pipeline in four stages; the command side only touches the first:
 
@@ -449,7 +451,7 @@ A few more rules:
   state the meaning directly instead, and add links where linking is possible. A private item's own documentation may
   link to private items normally.
 
-## 6. Code map (in the order where the name is enough)
+## 6. Code map
 
 ```
 src/main.rs                 process entry: config -> program log -> build the watchdog singleton (WATCHDOG.get_or_init()) -> generate the game-side config -> REST probe task -> poise setup -> run -> reconnect after a disconnect / signal exit
@@ -483,7 +485,7 @@ The command layer is grouped by business module: the seven business files under 
 cleanup. File names still say which module and function they cover without spreading commands across many tiny files.
 The business layer remains one file per command.
 
-## 7. The technical choices that are settled (they were discussed - do not keep revisiting them)
+## 7. Established technical decisions
 
 1. Only one bot log is kept: it is filtered before writing (`grep -v -E` plus `tee -a`), and FishingBot's own log file
    points at `/dev/null`. The two-copy scheme ("raw log into `/tmp`, filtered log into the bot directory") was not
@@ -501,45 +503,87 @@ The business layer remains one file per command.
    far too much information; an attachment can give everything and naturally carries the file name. Privacy is
    guaranteed by `defer_ephemeral()` plus an explicit `.ephemeral(true)` on every reply.
 5. Long commands reply with two messages (the `*all` ones and the single-bot start, stop and restart): first an
-   acknowledgement (start-type commands say the request was accepted into the queue, the others that execution has
-   started), then the full report when it finishes. This is the defer behaviour spelled out in Discord's official
-   documentation (the first replaces the placeholder, the second onwards are new messages).
+   acknowledgement (start-type commands state that the request was accepted into the queue, the others that execution has
+   started), then the full report when it finishes. This follows the defer behaviour in Discord's official documentation
+   (the first replaces the placeholder, the second and later messages are new). The assessment of the batch-operation
+   final-reply design is in section 8.1.
 6. The game-side configuration is generated by this program and the template ships with the repository: FishingBot only
    understands JSON and has no per-item command line overrides, so `[fishingbot]` is the single source of truth, and at
    start-up the old file is deleted and the template is used as the base with our few keys overlaid, so what is written
    is always a complete configuration (it does not depend on the jar filling fields in). The template is
-   `fishingbot-config.example.json` (a complete FishingBot configuration with defaults tuned to this project's taste).
-   Keep its schema in sync with FishingBot and run `cargo test` after template changes.
+   `fishingbot-config.example.json` (a complete FishingBot configuration with defaults adjusted for this project's
+   requirements). Keep its schema in sync with FishingBot and run `cargo test` after template changes.
 
-## 8. Current status and to-dos
+## 8. Current status and pending items
 
-Current status: this is the Discord implementation, and it has been run in a real environment on Linux. Code and
-documentation are maintained together; see the [docs index](../index-en_us.md) for the document list. Run automated
-checks after changes; the deployment checks below require end-to-end validation.
+Current status: the project is the Discord implementation and has been run in a real Linux environment. Code and
+documentation are maintained together; see the [docs index](../index-en_us.md) for the document list. Run the automated
+checks after modifications; the items below require end-to-end validation in a real deployment.
 
-One prerequisite for the build environment: rustls' crypto backend needs a C compiler, and a static musl build also
-needs `musl-gcc` (install `musl` on Arch, `musl-tools` on Debian and Ubuntu); with those in place
-`cargo build --release` (default target `x86_64-unknown-linux-musl`) produces a static binary directly.
+Build prerequisite: the rustls crypto backend requires a C compiler, and a static musl build also requires `musl-gcc`
+(install `musl` on Arch and `musl-tools` on Debian and Ubuntu). Once installed, `cargo build --release` (default target
+`x86_64-unknown-linux-musl`) produces a static binary directly.
 
-Current checks to complete on a live deployment:
+### 8.1 Assessment of the batch-operation reply design (not implemented)
 
-1. Exercise Discord interactions end to end: `/log` and `/show botconfig` attachments, the second reply after defer, and
+Goal: send the final result of the four `*all` commands as an ordinary channel message, avoiding the 15-minute
+interaction-token limit; the message should identify the caller, invocation time and command, and preferably use a
+native quoted reply.
+
+Current implementation: `all_bots_manage` calls `run_and_reply_with_progress`: `ctx.defer()` → progress followup →
+business operation → `say_final_report`. `say_final_report` first attempts `ctx.say`; on failure it posts an ordinary
+channel message and records `LogText::ReportPostedToChannel`. Single-bot commands share the same path.
+
+Findings:
+
+1. Sending the final report as an ordinary channel message is feasible. Ordinary messages are not bound to the interaction
+   token, but remain subject to the 2000-character limit and channel send permission. `ctx.defer()` and the progress
+   acknowledgement must remain; the batch path must be separated from the single-bot path so that single-bot behaviour
+   does not change.
+2. A native quotation of the slash-command invocation is not feasible. `CommandInteraction` contains no source message
+   ID; `Interaction::message` exists only for component and modal interactions; the project subscribes only to
+   `GatewayIntents::GUILDS`, so it cannot receive `CHAT_INPUT_COMMAND` message events. `MessageReference` must target a
+   real message ID, and a native reply requires `READ_MESSAGE_HISTORY`. The user's `/startall` invocation therefore cannot
+   be the reference target.
+3. Caller metadata is available through `ctx.author()`, `ctx.created_at()` (derived from the interaction ID) and
+   `ctx.command().qualified_name`. The invocation time can be rendered with the Discord timestamp `<t:...:f>`. The text
+   should be added as a `Text` method with Chinese and English implementations.
+4. If a native quotation card is required, the bot can quote its own progress message: store the progress message
+   `MessageId` and send the final ordinary message with
+   `CreateMessage::reference_message((channel_id, progress_message_id))`. The card quotes the progress message, not the
+   user's command; it requires `READ_MESSAGE_HISTORY`, must fall back to an ordinary message without a reference when the
+   quotation fails, and requires live validation.
+5. Before implementation, the following must also be addressed: the combined length limit of the final message and its
+   prefix, logging of channel-send failures, adjustment of the `ReportPostedToChannel` semantics (a fixed channel send is
+   no longer a token-expiry fallback), and isolation of the single-bot path. The implementation can reuse the existing
+   `all_bots_manage`, `Report` and `say_final_report` paths without adding a new struct; the batch path still has to be
+   separated from the single-bot path.
+
+Recommendation: implement the first stage as "final report fixed to an ordinary channel message + textual reference";
+evaluate the native quotation card separately, after validating permissions and reference behaviour.
+
+### 8.2 Live deployment checks
+
+1. Validate Discord interactions end to end: `/log` and `/show botconfig` attachments, the second reply after defer, and
    the `/token` modal followup. The modal flow is described in
    [section 1.3 of the command guide](../mods/commands/commands-en_us.md#13-sensitive-content-ephemeral-and-modal).
-2. Exercise `/bot login`: confirm the login link/code are delivered, credentials land in the bot directory, and
-   `refreshToken.renewing` is removed after a successful refresh. See [section 4.6 of the command guide](../mods/commands/commands-en_us.md#46-bot-login).
-3. Exercise the generated FishingBot `conf.json` with a real game server, including connection and the language-specific
-   `/pause` and `/unpause` echoes. The template's completeness has already been checked with a real JAR; see
-   [section 3.2 of the config guide](../mods/config/config-en_us.md).
+2. Validate `/bot login`: confirm delivery of the login link and code, credential creation in the bot directory, and
+   deletion of `refreshToken.renewing` after a successful refresh. See
+   [section 4.6 of the command guide](../mods/commands/commands-en_us.md#46-bot-login).
+3. Validate the generated FishingBot `conf.json` and the bot connection against a real game server, including the
+   language-specific `/pause` and `/unpause` echoes after changing `[i18n] language`. Template completeness has already
+   been validated with a real JAR; see [section 3.2 of the config guide](../mods/config/config-en_us.md).
 
-Deferred improvements, not release blockers: multi-bot variants of `/start`, `/stop` and `/restart` (the existing `*all`
+### 8.3 Deferred items
+
+The following items do not block release: multi-bot variants of `/start`, `/stop` and `/restart` (the existing `*all`
 commands remain available); automatic rotation of the program log; a command-layer concurrency mutex; and a concurrency
-cap for `/bot login`. Reconsider these when usage demonstrates a need; the login trade-off is recorded in
+cap for `/bot login`. Reassess them when actual usage requires it; the login trade-off is recorded in
 [section 4.6 of the command guide](../mods/commands/commands-en_us.md#46-bot-login).
 
 ## 9. Related documents
 
 * All documents are in the [docs index](../index-en_us.md).
-* By topic: [tutorial/tutorial-en_us.md](../tutorial/tutorial-en_us.md) (deployment),
+* By topic: [tutorial/tutorial-en_us.md](../tutorial/tutorial-en_us.md) (deployment) and
   [architecture-en_us.md](../mods/architecture/architecture-en_us.md) (layering and directory structure).
-* Module technical documents: one per module under [mods](../mods) (see section 3 of the index).
+* Module technical documents: one per module under `mods` (see section 3 of the index).

@@ -45,7 +45,7 @@ screen 会话里的 JVM（FishingBot）
   重建连接。
 * `watchdog`：网关看门狗。判定本进程是否已经跟 Discord 失去联系（判定是纯计时，重建连接的请求由进程入口发出）。
   它是唯一判定掉线的地方，规则见
-  [CONTEXT 第 3 节](../../CONTEXTS/CONTEXT-zh_cn.md#3-网关看门狗唯一判定掉线的地方)。
+  [CONTEXT 第 3 节](../../CONTEXTS/CONTEXT-zh_cn.md#3-网关看门狗唯一判定掉线的位置)。
 
 ## 2. 目录结构
 
