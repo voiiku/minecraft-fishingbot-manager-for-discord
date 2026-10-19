@@ -121,8 +121,6 @@ pub trait Text: Send + Sync {
     fn bot_start_already_running(&self, bot_name: &str) -> String;
     /// 机器人已经在启动队列里排队（`/start`、`/bot login` 用它提前拒绝）。
     fn bot_start_already_queued(&self, bot_name: &str) -> String;
-    /// `/start`：命令已发送（登录要等 JVM 自己跑，所以措辞不夸大）。
-    fn bot_start_command_sent(&self, bot_name: &str) -> String;
     /// `/stop`：本来就没在跑。
     fn bot_stop_not_running(&self, bot_name: &str) -> String;
     /// `/stop`：停止流程当场复核过，可以说"已成功停止"。
@@ -217,8 +215,6 @@ pub trait Text: Send + Sync {
     fn startall_title(&self) -> &'static str;
     /// `/startall` 的跳过明细：已在运行。
     fn startall_skipped_running(&self, bot_name: &str) -> String;
-    /// `/startall` 的跳过明细：缺 Token。
-    fn startall_skipped_missing_token(&self, bot_name: &str) -> String;
     /// `/stopall` 的报告标题。
     fn stopall_title(&self) -> &'static str;
     /// `/restartall`：没有在跑的实例。

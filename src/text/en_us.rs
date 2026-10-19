@@ -269,10 +269,6 @@ impl Text for EnUs {
         format!("Error: bot '{bot_name}' is already in the start queue; no need to start it again.")
     }
 
-    fn bot_start_command_sent(&self, bot_name: &str) -> String {
-        format!("Start command sent for bot '{bot_name}'. Check /show status to confirm its state.")
-    }
-
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
         format!("Error: bot '{bot_name}' is not running.")
     }
@@ -482,10 +478,6 @@ impl Text for EnUs {
 
     fn startall_skipped_running(&self, bot_name: &str) -> String {
         format!("Bot {bot_name}: already running")
-    }
-
-    fn startall_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("Bot {bot_name}: no token file, not started")
     }
 
     fn stopall_title(&self) -> &'static str {

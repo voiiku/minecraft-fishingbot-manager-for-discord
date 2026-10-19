@@ -257,10 +257,6 @@ impl Text for ZhCn {
         format!("错误: 机器人 '{bot_name}' 已在启动队列中，无需重复启动")
     }
 
-    fn bot_start_command_sent(&self, bot_name: &str) -> String {
-        format!("已发送机器人 '{bot_name}' 的启动命令（启动状态请用 /show status 确认）")
-    }
-
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
         format!("错误: 机器人 '{bot_name}' 未在运行，无需停止")
     }
@@ -464,10 +460,6 @@ impl Text for ZhCn {
 
     fn startall_skipped_running(&self, bot_name: &str) -> String {
         format!("机器人 {bot_name}: 已在运行")
-    }
-
-    fn startall_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 缺少 Token 文件，未启动")
     }
 
     fn stopall_title(&self) -> &'static str {

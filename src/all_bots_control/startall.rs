@@ -34,14 +34,14 @@ pub(crate) fn start_all_bots() -> Result<String, String> {
     // 批量启动并复核（建账本 → 入队 → 等齐 → 复核都由队列那一个入口完成）。
     let startup_queue = StartupQueue::get_or_init();
     let results = startup_queue.start_bots(&not_running_bot_entries);
-    // 被"停止全部机器人"撤下来的那几台也进跳过明细，计数时要和"已在运行"分开（先数好，报告会吸收结果）。
+    // 未启动原因只体现在计数行：跳过与取消的数量先数好，逐台明细不输出。
+    let skipped_running_count = results.skipped_running_bot_names().len();
     let cancelled_bot_count = results.cancelled_bot_names().len();
     let mut report = results.into_report();
     report.set_title(i18n_text.startall_title());
 
     // 按回复顺序设置计数。
     let started_bot_count = report.succeeded.len();
-    let skipped_running_count = report.skipped.len().saturating_sub(cancelled_bot_count);
     let start_failure_count = report.failed.len();
     report.set_counts(&[
         (i18n_text.count_valid_accounts(), token_ready_bot_count),
@@ -65,15 +65,9 @@ pub(crate) fn start_all_bots() -> Result<String, String> {
         startup_queue.batch_login_interval_ms(),
     ));
 
-    // 分别列出已运行和缺少 Token 的账号。
-    report.skipped.extend(
-        running_bot_entries
-            .iter()
-            .map(|bot_dir_entry| i18n_text.startall_skipped_running(&bot_dir_entry.bot_name))
-            .chain(missing_token_bot_entries.iter().map(|bot_dir_entry| {
-                i18n_text.startall_skipped_missing_token(&bot_dir_entry.bot_name)
-            })),
-    );
+    // `/startall` 只保留计数：已在运行、缺 Token 与被取消的数量已在计数行，
+    // 不再逐台列出跳过明细，避免账号多时把回复撑满。
+    report.skipped.clear();
 
     Ok(report.render())
 }

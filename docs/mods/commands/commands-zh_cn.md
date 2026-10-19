@@ -230,7 +230,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 ### 3.1 指令一览
 
 * `/start <机器人名>`：`start::start_bot(&bot_dir_entry)`。拉起会话并复核两遍（第二遍还在
-  才算起来，见第 3.2 节），回复"已发送启动命令"。
+  才算起来，见第 3.2 节），按复核结果回复"已确认进服"、"会话已存在但尚未确认状态"或"启动失败"。
 * `/stop <机器人名>`：`stop::stop_bot(&bot_dir_entry)`。停止会话（释放游戏账号）；停止当场
   复核，回复"已成功停止"。
 * `/restart <机器人名>`：`restart::restart_bot(&bot_dir_entry)`。停止加拉起；不在运行的会被
@@ -304,12 +304,12 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
    `outcome.to_failure_text()` 当错误返回；停止明细用的是同形的 `has_failed_lines()`）。明细由
    utils 返回，拼装方法必须在这里显式调用（见 [utils.md](../utils/utils-zh_cn.md)）。文案按能验证到哪一步就只说到
    哪一步的原则选词：
-   * `/start` 回 `已发送机器人 'X' 的启动命令(启动状态请用 /show status 确认)`。能立刻
-     确认的只有命令发出与会话出现，登录与进服还要看日志关键词。
+   * `/start` 按复核结果回复：日志已确认进服时回"已确认进服"；会话活过宽限期但日志未确认时回
+     "会话已存在但尚未确认状态"；会话在宽限期前消失时回"启动失败"。不再固定回"已发送启动命令"。
    * `/stop` 回 `已成功停止机器人 'X'`。停止流程当场复核会话已消失（见 `utils::stop_bot_sessions`），
      所以这里说得起成功。
    * `/restart` 回 `已发送机器人 'X' 的重启命令(已确认成功停止，启动状态请用 /show status 确认)`。停止
-     阶段可确认，拉起阶段与 `/start` 同样只能说已发送。
+     阶段可确认；启动阶段目前仍只回已发送，尚未采用 `/start` 的复核结论。
 
 ### 3.3 `/command` 的细节
 
@@ -487,8 +487,8 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 取哪批目录由各指令自己决定（`all_bot_dir_entries()` 或 `token_ready_bot_dir_entries()`），再用
 `utils::split_bot_entries_by_is_running(&[BotDirEntry])` 分组（一次 `screen -list` 快照）：
 
-* `/startall`：用 `all_bot_dir_entries()`，先按 Token 就绪拆成两组。缺 Token 的账号不是失败，而要
-  看得见（进跳过明细），所以取全部再分组。
+* `/startall`：用 `all_bot_dir_entries()`，先按 Token 就绪拆成两组。缺 Token 的账号不是失败，但要
+  计入跳过计数，所以取全部再分组。
 * `/restartall`：用 `all_bot_dir_entries()`，只取在运行的那组。未运行的目标重启等于启动（那是
   `/startall` 的事）；缺 Token 的由重启流程在停止之前剔掉。
 * `/stopall` 与进程退出收尾：用 `all_bot_dir_entries()`。Token 被删掉之后，之前拉起的进程可能还在跑
@@ -506,9 +506,10 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
   拆开（`split_bot_entries_by_is_running`）。一个有效账号都没有时回 `未配置任何有效账号，未启动。`
   （若还有缺 Token 的账号，会追一句提示）；全部在运行时回 `全部有效机器人均已运行`；否则调
   `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)`，之后用 `Report::set_counts` 覆盖计数行
-  （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、已取消、启动失败）。没被启动的账号
-  都进 `skipped` 明细（已在运行、缺 Token 与被取消三种原因各一条），不算失败：被取消的那些是"停止全部机器人"
-  （`/stopall`、掉线收尾、退出收尾）撤下来的（`BotStartOutcome::Cancelled`）。
+  （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、已取消、启动失败）。未启动原因
+  只体现在这些计数行：`/startall` 会清空 `Report::skipped`，不再逐台列出已在运行、缺 Token 或被取消的账号，
+  避免账号多时把回复撑满；被取消的那些是"停止全部机器人"（`/stopall`、掉线收尾、退出收尾）撤下来的
+  （`BotStartOutcome::Cancelled`）。
 * `/stopall`：`utils::stop_all_bot_sessions()` 拿原始明细（它自己就是"请求启动线程停止拉起 + 清空启动队列 +
   `all_bot_dir_entries()` 加分组加停止 + 再扫一遍晚到的会话"的组合），报告由本模块的 `stopall::stop_all_bots()`
   拼，只报成功与失败（计数行只有"成功停止"与"停止失败"，原本未运行的机器人不进明细；等待列表里被取消的那些进

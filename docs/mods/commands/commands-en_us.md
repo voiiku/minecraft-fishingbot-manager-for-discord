@@ -263,7 +263,8 @@ whether the session is running are decided by the `handle_*` functions as before
 ### 3.1 The command list
 
 * `/start <bot name>`: `start::start_bot(&bot_dir_entry)`. Launches the session and checks it twice (it counts as
-  started only when it is still there on the second check, see section 3.2) and replies "start command sent".
+  started only when it is still there on the second check, see section 3.2), then replies with the verification result:
+  join confirmed, session exists but state unconfirmed, or start failed.
 * `/stop <bot name>`: `stop::stop_bot(&bot_dir_entry)`. Stops the session (releasing the game account); the stop is
   re-checked on the spot and it replies "stopped successfully".
 * `/restart <bot name>`: `restart::restart_bot(&bot_dir_entry)`. Stops and then launches; a target that is not running
@@ -352,13 +353,14 @@ otherwise that echo line cannot be attributed to one of the commands.
    shape). utils returns the details, and the assembly method has to be called explicitly here (see
    [utils-en_us.md](../utils/utils-en_us.md)). The wording follows the principle of saying only as much as can be
    verified:
-   * `/start` replies `Start command sent for bot 'X'. Check /show status to confirm its state.` All that can be
-     confirmed right away is that the command went out and the session appeared; logging in and joining the server
-     still depend on log keywords.
+   * `/start` replies with the verification result: `join confirmed` when the log confirms it joined, `the session
+     exists but its state is unconfirmed` when the session survives the grace period without a confirmed state, and
+     `start failed` when the session disappears before the grace period. It no longer always replies "start command sent".
    * `/stop` replies `Bot 'X' stopped successfully`. The stop flow re-checks on the spot that the session is gone (see
      `utils::stop_bot_sessions`), so this one can claim success.
    * `/restart` replies `Restart command sent for bot 'X'. The stop was confirmed; check /show status to confirm its
-     state.` The stop stage can be confirmed; the launch stage can only say "sent", like `/start`.
+     state.` The stop stage can be confirmed; the launch stage currently still only says "sent" and does not use the
+     `/start` verification result.
 
 ### 3.3 The details of `/command`
 
@@ -572,7 +574,7 @@ Which batch is taken is decided by each command (`all_bot_dir_entries()` or `tok
 grouped with `utils::split_bot_entries_by_is_running(&[BotDirEntry])` (one `screen -list` snapshot):
 
 * `/startall`: `all_bot_dir_entries()`, split into two groups by token readiness first. An account without a token is
-  not a failure but has to be visible (it goes into the skipped details), so everything is taken and then grouped.
+  not a failure but is counted as skipped, so everything is taken and then grouped.
 * `/restartall`: `all_bot_dir_entries()`, taking only the running group. Restarting a target that is not running equals
   starting it (that is `/startall`'s job); targets without a token are dropped by the restart flow before it stops
   anything.
@@ -594,9 +596,10 @@ file missing, left as it is" rather than disappearing silently.
   are running it replies `全部有效机器人均已运行`; otherwise it calls
   `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)` and then overwrites the count rows with `Report::set_counts`
   (valid accounts in total, start commands sent, skipped (already running), skipped (token missing), cancelled, start
-  failures). Every account that was not started goes into the `skipped` details (one entry each for "already running",
-  "token missing" and "cancelled") and does not count as a failure: the cancelled ones are the starts that "stop every
-  bot" (`/stopall`, the disconnect wrap-up, the exit wrap-up) pulled back (`BotStartOutcome::Cancelled`).
+  failures). Those count rows are the only place an unstarted account is reported: `/startall` clears `Report::skipped`
+  and no longer lists each already-running, token-missing or cancelled account, so a large account set cannot fill the
+  reply; the cancelled ones are the starts that "stop every bot" (`/stopall`, the disconnect wrap-up, the exit wrap-up)
+  pulled back (`BotStartOutcome::Cancelled`).
 * `/stopall`: `utils::stop_all_bot_sessions()` returns the raw details (it is itself the combination of "ask the starter
   thread to launch nothing new", "clear the waiting list", `all_bot_dir_entries()`, grouping, stopping, and one more
   sweep for late sessions), and the report is assembled by this module's `stopall::stop_all_bots()`; it reports only

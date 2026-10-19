@@ -159,8 +159,9 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   `show/status.rs`, so the two sides must agree on the column order (the column names live in `text`, one set per
   language). The full pattern is in
   [docs/mods/commands/commands-en_us.md section 6.2](../mods/commands/commands-en_us.md#62-show-status).
-* Replies must not overstate: `/start` and `/restart` can only confirm that the command was sent and that the session
-  appeared, so their reply says "start command sent"; `/stop` re-checks its stop flow on the spot, so it may answer
+* Replies must not overstate: `/start` uses the start verification result and answers "join confirmed", "the session
+  exists but its state is unconfirmed" or "start failed"; the stop stage of `/restart` is confirmed, while its launch
+  stage still only says "restart command sent"; `/stop` re-checks its stop flow on the spot, so it may answer
   "stopped successfully"; `/pause` and `/unpause` wait after sending for the configured `command_echo.wait_ms`
   (default 300 ms, `utils::bot_status::confirm_pause_command`) to find the echo at the end of the log, and only when
   the echo is seen do they answer "pause confirmed" or "resumed" - otherwise they only say "sent". Pick the wording of

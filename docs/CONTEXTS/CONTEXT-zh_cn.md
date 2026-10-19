@@ -120,8 +120,9 @@
 * `/show status` 的表格没有专门的类型：数据行由 `utils::running_bots::all_running_bot_status_rows()` 当场拼
   （四格 + `" | "`），表头由 `show/status.rs` 当场拼，两处列序要对齐（列名在 `text` 里，中英各一份）。
   完整写法见 [docs/mods/commands/commands-zh_cn.md 第 6.2 节](../mods/commands/commands-zh_cn.md#62-show-status)。
-* 回复口径不许夸大：`/start` 与 `/restart` 只能确认命令已发送、会话已出现，因此回复写"已发送启动命令"；
-  `/stop` 的停止流程当场复核，才可以回"已成功停止"；`/pause` 与 `/unpause` 发完等配置里
+* 回复口径不许夸大：`/start` 使用启动复核结果，按"已确认进服"、"会话已存在但尚未确认状态"或"启动失败"回答；
+  `/restart` 的停止阶段可确认，启动阶段仍只回"已发送重启命令"；`/stop` 的停止流程当场复核，才可以回"已成功停止"；
+  `/pause` 与 `/unpause` 发完等配置里
   `command_echo.wait_ms`（默认 300 毫秒，`utils::bot_status::confirm_pause_command`）到日志末尾找回显，
   看到回显才回"已确认暂停"或"已恢复"，没看到只说"已发送"。新增指令时按这条原则选词：能验证到哪一步，
   就只说到哪一步。

@@ -197,9 +197,12 @@ You can also drop the `refreshToken` file into the bot's directory yourself, ren
 If you logged in successfully with `/bot login`, the bot should already be running. Otherwise, after `/token`, send `/start <your bot name>` in your Discord server; the bot sends two replies:
 
 1. An acknowledgement: `Request accepted: /start duck. Any start operation will use the global queue. The complete result will follow in a separate message.`
-2. A confirmation: `Start command sent for bot 'duck'. Check /show status to confirm its state.`
+2. A result reply (one of three):
+   * the log confirms it joined: `Bot duck: start command sent, the session is up and the log confirms it joined`
+   * the session survives the grace period but the log is not confirmed: `Bot duck: start command sent, the session is up but the state is not confirmed yet`
+   * the session disappears before the grace period: `Bot duck: failed to start (usually because Microsoft throttles frequent logins, or because it ran out of memory)`
 
-* The program can only confirm that the command was sent and that the bot process exists. It cannot know whether the process will crash a few seconds later or exit because its token is invalid, so the start reply can only say "sent" and promises nothing more.
+* `/start` waits for `timing.check_grace_ms` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
 
 To check the status, send `/show status`. It returns a table of the running bots:
 
