@@ -8,9 +8,10 @@ use sysinfo::{Disks, System};
 use crate::text;
 use crate::utils::{Report, format_uptime, process_elapsed_seconds};
 
-/// 返回本机 CPU、内存、磁盘、运行时长与系统时间。
-pub(crate) async fn checkserver_report() -> Result<String, String> {
-    let mut sys = System::new_all();
+/// 采集本机 CPU、内存、磁盘、运行时长与系统时间，并返回格式化报告。
+pub(crate) async fn checkserver() -> Result<String, String> {
+    // 仅需要 CPU 与内存数据，避免加载进程列表。
+    let mut sys = System::new();
 
     // 两次采样计算 CPU 使用率。
     sys.refresh_cpu_all();

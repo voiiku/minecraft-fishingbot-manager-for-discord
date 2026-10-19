@@ -426,6 +426,10 @@ impl Text for EnUs {
         )
     }
 
+    fn bot_login_prompt_logged(&self, bot_name: &str) -> String {
+        format!("Bot {bot_name}: sign-in prompt generated (content not written to the program log)")
+    }
+
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
         format!(
             "Bot '{bot_name}': the sign-in credential is saved (any previous token file was removed) and \
@@ -663,6 +667,10 @@ impl Text for EnUs {
         format!(
             "Timed out connecting to server ({host}:{port}) ({timeout_ms} ms without a response)"
         )
+    }
+
+    fn ping_local_target(&self, host: &str, port: u16) -> String {
+        format!("Refusing to probe a local or private address ({host}:{port})")
     }
 
     fn ping_protocol_failed(&self, host: &str, port: u16, reason: &str) -> String {
@@ -1071,8 +1079,7 @@ impl Text for EnUs {
                  restart]"
             ),
             LogText::GuildCommandsCleared { guild_name, count } => format!(
-                "cleared {count} leftover guild command(s) on the server {guild_name} \
-                 (this program only registers global commands)"
+                "cleared {count} leftover guild commands on the server {guild_name} "
             ),
             LogText::GuildCommandsClearFailed { guild_name, reason } => format!(
                 "could not clear the leftover guild commands on the server {guild_name}: {reason} \

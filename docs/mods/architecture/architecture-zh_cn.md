@@ -192,9 +192,8 @@ src/
   `into_`、其余用 `to_`，clippy 也这么认）；需要磁盘查找的构造用 `find_*`；判断用 `is_` 与 `has_`；
   ID 一律叫 `*_id`（`caller_id`、`owner_id`）。
 * 按返回形态添加后缀：列表用 `*_list`（`my_bots_list`）；状态表用 `*_status`
-  （`all_running_bots_status`）；一次性探测或检查用 `*_report`（`ping_report`、
-  `checkserver_report`）；当附件发出去的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。只有
-  整段已经写好的文本用裸名词（`help`、`whoami`）。
+  （`all_running_bots_status`）；作为附件发送的数据用 `*_view`（`fishingbot_config_view`、`bot_log_view`）。
+  一次性探测、检查与整段文本使用裸名词（`ping`、`checkserver`、`help`、`whoami`）。
 * 全局单例的访问器采用相同命名：配置 `config::Config::get()`、文案 `text::get()`，都表示"取进程内那一份"。配置没装就
   `expect` panic（那是内部不变量）；文案没装时生产构建 panic（入口顺序错误），测试构建固定返回英语。
   `Language` 不实现 `Default`，`[i18n] language` 不受支持时启动校验直接报错退出。两者由进程入口

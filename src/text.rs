@@ -1,6 +1,6 @@
 //! 文案按 `[i18n] language` 选择，每个进程使用一种语言。
 //! 回复、日志与状态文案由 [`Text`] 提供；引导期提示固定使用英文。
-//! 看门狗互斥锁的内部不变量文案由 `watchdog` 子模块提供，随 `[i18n] language` 切换。
+//! 看门狗锁中毒的诊断文案由 `watchdog` 子模块提供，随 `[i18n] language` 切换。
 //! JAR 日志中的固定关键词也随语言选择，各部署自定义的关键词仍放在配置中。
 
 pub mod bootstrap;
@@ -77,8 +77,8 @@ pub trait Text: Send + Sync {
     /// 按行截断时的说明，`dropped_line_count` 是被省略的行数。
     fn report_omitted_lines_note(&self, dropped_line_count: usize) -> String;
 
-    // ===================== 看门狗内部不变量（`text/watchdog.rs`） =====================
-    /// 看门狗互斥锁中毒时的内部不变量说明；属于运行期信息，随 `[i18n] language` 切换。
+    // ===================== 看门狗诊断文案（`text/watchdog.rs`） =====================
+    /// 看门狗互斥锁中毒时的诊断信息；随 `[i18n] language` 切换。
     fn watchdog_text(&self, message: WatchdogText) -> &'static str;
 
     // ===================== 机器人状态（`utils/bot_status.rs`） =====================
@@ -178,6 +178,8 @@ pub trait Text: Send + Sync {
     fn bot_token_updated(&self, raw_bot_name: &str) -> String;
     /// `/bot login`：第一条回复——把 JAR 给的登录网址与设备码告诉调用者。
     fn bot_login_prompt(&self, bot_name: &str, verification_url: &str, user_code: &str) -> String;
+    /// `/bot login`：写入程序日志的安全摘要，不包含设备码或验证网址。
+    fn bot_login_prompt_logged(&self, bot_name: &str) -> String;
     /// `/bot login`：第二条回复——凭据已经落盘。
     fn bot_login_succeeded(&self, bot_name: &str) -> String;
     /// `/bot login`：会话已经在跑，而它还没有凭据（多半就是上一次登录还没结束）。
@@ -290,6 +292,8 @@ pub trait Text: Send + Sync {
     fn ping_connect_failed(&self, host: &str, port: u16, reason: &str) -> String;
     /// `/ping`：连接超时。
     fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String;
+    /// `/ping`：用户指定的目标是本地或私网地址。
+    fn ping_local_target(&self, host: &str, port: u16) -> String;
     /// `/ping`：协议解析失败。
     fn ping_protocol_failed(&self, host: &str, port: u16, reason: &str) -> String;
     /// `/checkserver` 的报告标题。

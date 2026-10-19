@@ -44,6 +44,11 @@ pub fn config_parse_failed(path: &str, reason: &str) -> String {
     )
 }
 
+/// 解析 `[paths]` 时的路径取值非法；此时语言尚未安装，固定英文。
+pub fn config_path_value_invalid(field: &str, value: &str, requirement: &str) -> String {
+    format!("Invalid config item {field}: `{value}`; {requirement}.")
+}
+
 /// 生成配置模板失败：所在目录不存在。
 pub fn config_template_no_parent_dir(path: &str) -> String {
     format!(

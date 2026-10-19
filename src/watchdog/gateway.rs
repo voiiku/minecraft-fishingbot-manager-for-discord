@@ -1,5 +1,5 @@
-//! 看门狗的网络状态判定与 REST 探活：`GatewayState` 四态是模块内部细节。
-//! 外部只管喂事件（`record_*`）与等重连信号。
+//! 看门狗的网络状态判定与 REST 探活。`GatewayState` 仅在本模块使用；
+//! 外部通过 `record_*` 方法提交事件，并等待重连信号。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,18 +14,18 @@ use super::{Watchdog, lock_or_panic};
 /// 四种网络状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GatewayState {
-    /// 已握手，且探活未在连续失败。
+    /// 已握手，且探活未连续失败。
     Alive,
-    /// 尚未达到任何判断条件，等待中。
+    /// 尚未满足任何掉线条件，等待后续事件。
     Waiting,
-    /// 掉线：本次尝试开始后一直没收到过 READY / RESUMED。
+    /// 本次连接尝试开始后未收到 READY / RESUMED。
     NeverReady,
-    /// 掉线：REST 探活连续失败达到判定窗口。
+    /// REST 探活连续失败达到判定窗口。
     Unreachable,
 }
 
 impl GatewayState {
-    /// 掉线原因的日志文案（含排查方向）；未掉线时是 `None`。
+    /// 掉线原因对应的日志文案；未掉线时返回 `None`。
     fn lost_log_text(self) -> Option<crate::text::LogText<'static>> {
         match self {
             Self::NeverReady => Some(crate::text::LogText::GatewayLostNeverReady),
@@ -35,9 +35,9 @@ impl GatewayState {
     }
 }
 
-/// 实现判定与探活任务的具体逻辑。
+/// 网络状态判定与探活任务的实现。
 impl Watchdog {
-    /// 开始新一轮尝试连接并清除上一轮状态。
+    /// 开始新的连接尝试，并清除上一次尝试的状态。
     pub fn begin_connection_attempt(&self, now: Instant) {
         *lock_or_panic(self.started.lock(), text::WatchdogText::StartedLockReset) = now;
         *lock_or_panic(
@@ -50,7 +50,7 @@ impl Watchdog {
         ) = None;
     }
 
-    /// 握手成功：记录最新握手时刻，并清掉探活失败计时。
+    /// 记录握手成功时刻，并清除探活失败起始时刻。
     pub fn record_handshake_success(&self, now: Instant) {
         *lock_or_panic(
             self.last_handshake.lock(),
@@ -62,12 +62,12 @@ impl Watchdog {
         ) = None;
     }
 
-    /// 这一次是不是进程内第一次成功握手。
+    /// 判断是否为进程内第一次成功握手。
     pub fn is_first_handshake(&self) -> bool {
         !self.ever_handshaken.swap(true, Ordering::Relaxed)
     }
 
-    /// 探活成功：清掉失败计时，状态随之回到 `Alive`。
+    /// 清除探活失败起始时刻，使状态重新满足 `Alive` 条件。
     pub fn clear_probe_failures(&self) {
         *lock_or_panic(
             self.unhealthy_since.lock(),
@@ -75,7 +75,7 @@ impl Watchdog {
         ) = None;
     }
 
-    /// 记录首次探活失败时刻（因为从第一次失败起才开始算超时）。
+    /// 记录首次探活失败时刻；重复调用不会更新该时刻。
     pub fn record_probe_failure_start(&self, now: Instant) {
         lock_or_panic(
             self.unhealthy_since.lock(),
@@ -84,17 +84,17 @@ impl Watchdog {
         .get_or_insert(now);
     }
 
-    /// 根据当前时刻判定网络状态（时序取自 [`Watchdog`] 的字段）。
+    /// 根据当前时刻与看门狗字段判定网络状态。
     fn state(&self, now: Instant) -> GatewayState {
-        // 先判断本次尝试是否已握手。
+        // 检查本次尝试是否已握手。
         let handshaken = lock_or_panic(
             self.last_handshake.lock(),
             text::WatchdogText::LastHandshakeLockRead,
         )
         .is_some();
-        // 没握手时还要继续判断：超过首次握手超时判 NeverReady，否则还在 Waiting。
+        // 未握手时，根据首次握手超时区分 NeverReady 与 Waiting。
         if !handshaken {
-            // 首次握手超时的截止点：本次尝试开始 + 首次握手超时。
+            // 首次握手截止时刻 = 本次尝试开始时刻 + 首次握手超时。
             let timeout = *lock_or_panic(self.started.lock(), text::WatchdogText::StartedLockRead)
                 + self.first_handshake_timeout;
             return if now >= timeout {
@@ -103,12 +103,12 @@ impl Watchdog {
                 GatewayState::Waiting
             };
         }
-        // 读取探活失败的起始时刻。
+        // 读取探活失败起始时刻。
         let unhealthy_since = *lock_or_panic(
             self.unhealthy_since.lock(),
             text::WatchdogText::UnhealthySinceLockRead,
         );
-        // 失败累计满一个窗口才判掉线；未满只视为网络波动。
+        // 失败持续达到判定窗口时判定为 Unreachable，否则仍为 Alive。
         match unhealthy_since {
             Some(unhealthy_since) if now.duration_since(unhealthy_since) >= self.window => {
                 GatewayState::Unreachable
@@ -117,26 +117,26 @@ impl Watchdog {
         }
     }
 
-    /// 拉起一个 REST 探活任务：每隔 [`Watchdog::probe_interval`] 取一次自身信息，
-    /// 判定掉线就请求重建连接；`stop` 是这一轮专用的停止标志。
+    /// 启动 REST 探活任务：按 [`Watchdog::probe_interval`] 周期请求当前用户信息；
+    /// 判定掉线时请求重建连接。`stop` 用于终止本轮任务。
     pub fn probe(&'static self, http: Arc<serenity::Http>, stop: Arc<AtomicBool>) {
         tokio::spawn(async move {
             let interval = self.probe_interval;
 
             loop {
                 tokio::time::sleep(interval).await;
-                // 为 `true` 即表示本轮已结束。
+                // 收到停止标志时结束任务。
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
 
-                // 读取自身账号信息。
+                // 请求当前用户信息。
                 let probed = http.get_current_user().await;
-                // 期间收到停止标志就丢弃本次结果。
+                // 请求期间收到停止标志时丢弃结果。
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
-                // 取到自身信息即视为网络通畅；失败原因写入日志。
+                // 请求成功视为网络可用；失败时记录原因并开始计时。
                 match probed {
                     Ok(_) => self.clear_probe_failures(),
                     Err(e) => {
@@ -149,7 +149,7 @@ impl Watchdog {
                         self.record_probe_failure_start(Instant::now());
                     }
                 }
-                // 判定掉线就请求重建连接（本任务结束，主循环会再拉一个探活任务）。
+                // 判定掉线时请求重建连接并结束任务；主循环会创建下一轮探活任务。
                 if let Some(reason) = self.state(Instant::now()).lost_log_text() {
                     self.request_reconnect(text::get().log_text(reason));
                     return;
@@ -170,7 +170,7 @@ mod tests {
     const PROBE_INTERVAL: Duration = Duration::from_secs(10);
     const FIRST_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// 创建启动时刻为 0 的看门狗，测试使用相对时刻断言。
+    /// 创建以当前时刻为起始时刻的看门狗，测试使用相对时刻断言。
     fn watchdog_at_start() -> (Watchdog, Instant) {
         let started = Instant::now();
         (
@@ -203,7 +203,7 @@ mod tests {
         assert!(watchdog.is_first_handshake());
         assert!(!watchdog.is_first_handshake());
 
-        // 重连只清除本轮状态；“是否已报告过就绪”是进程级状态，必须保留。
+        // 重连只清除本轮状态；“是否已输出就绪日志”属于进程级状态，必须保留。
         watchdog.begin_connection_attempt(started);
         assert!(!watchdog.is_first_handshake());
     }
@@ -216,12 +216,12 @@ mod tests {
         watchdog.clear_probe_failures();
 
         assert_eq!(watchdog.state(started), GatewayState::Alive);
-        // 时间继续推进不影响状态，只要探活持续成功。
+        // 探活持续成功时，时间推进不影响状态。
         watchdog.clear_probe_failures();
         assert_eq!(watchdog.state(started + WINDOW * 10), GatewayState::Alive);
     }
 
-    /// 连续探活失败时先保持 Alive，满一个判定窗口后转为 Unreachable。
+    /// 探活连续失败时，先保持 Alive，达到判定窗口后转为 Unreachable。
     #[test]
     fn continuous_probe_failure_loses_after_window() {
         let (watchdog, started) = watchdog_at_start();
@@ -243,7 +243,7 @@ mod tests {
         watchdog.record_handshake_success(started);
         watchdog.record_probe_failure_start(started);
 
-        // 模拟持续失败：重复记录不会改变起始时刻。
+        // 模拟连续失败：重复记录不改变起始时刻。
         for _ in 0..5 {
             watchdog.record_probe_failure_start(started);
         }
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Unreachable);
     }
 
-    /// 探活恢复后状态立即回到 Alive。
+    /// 清除探活失败状态后，状态立即恢复为 Alive。
     #[test]
     fn recovered_probe_revives_the_watchdog() {
         let (watchdog, started) = watchdog_at_start();
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(watchdog.state(started + WINDOW), GatewayState::Alive);
     }
 
-    /// 重新握手成功视为健康，并清除探活失败状态。
+    /// 重新握手成功后，状态恢复为健康并清除探活失败状态。
     #[test]
     fn resumed_handshake_revives_the_watchdog() {
         let (watchdog, started) = watchdog_at_start();
@@ -277,8 +277,8 @@ mod tests {
         assert_eq!(watchdog.state(resumed_at + WINDOW), GatewayState::Alive);
     }
 
-    /// 新连接尝试从当前时刻重新计算首次握手超时，并清除上一轮状态。
-    /// 若不重置，重连后会沿用进程启动时刻而立即判为 `NeverReady`。
+    /// 新连接尝试从当前时刻重新计算首次握手超时，并清除上一次尝试的状态。
+    /// 若不重置，重连后会沿用进程启动时刻并立即判定为 `NeverReady`。
     #[test]
     fn beginning_a_new_attempt_restarts_the_timeout() {
         let (watchdog, started) = watchdog_at_start();
@@ -293,15 +293,15 @@ mod tests {
         assert_eq!(
             watchdog.state(reconnected_at),
             GatewayState::Waiting,
-            "刚重连时还在首次握手超时内"
+            "重连后仍处于首次握手超时窗口内"
         );
         assert_eq!(
             watchdog.state(reconnected_at + FIRST_HANDSHAKE_TIMEOUT),
             GatewayState::NeverReady,
-            "超时是重新算的（不是沿用进程启动那一刻）"
+            "超时从重连时刻重新计算，而非沿用进程启动时刻"
         );
 
-        // 上一轮的"探活连续失败"也一起清掉：否则重连后立刻就被算成一个窗口的失败。
+        // 清除上一轮的探活连续失败状态；否则重连后会立即被判定为一个窗口的失败。
         watchdog.record_handshake_success(reconnected_at);
         watchdog.record_probe_failure_start(reconnected_at);
         watchdog.begin_connection_attempt(reconnected_at + WINDOW);

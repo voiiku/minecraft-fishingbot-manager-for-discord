@@ -638,12 +638,11 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 * `/help`：`help::help()`，不发网络请求。
 * `/whoami`：`whoami::whoami(caller_id)`，不发网络请求。
-* `/ping [地址] [端口]`：`ping::ping_report(host, port)`，要发网络请求（MC 服务器握手）。
-* `/checkserver`：`checkserver::checkserver_report()`，不发网络请求（读本机资源）。
+* `/ping [地址] [端口]`：`ping::ping(host, port)`，要发网络请求（MC 服务器握手）。
+* `/checkserver`：`checkserver::checkserver()`，不发网络请求（读本机资源）。
 
-`*_report` 后缀是按返回形态取的：这四个里除 `help` 与 `whoami` 这种整段文本之外，都返回
-`Report::render()` 的结果，与 `my_bots_list`、`all_running_bots_status` 同一套命名规则，见
-[architecture.md 第 5 节](../architecture/architecture-zh_cn.md)。
+`ping` 与 `checkserver` 返回 `Report::render()` 的结果；按命名规则，一次性探测、检查与整段文本使用裸名词，
+见 [architecture.md 第 5 节](../architecture/architecture-zh_cn.md)。
 
 ### 7.2 `/help`
 

@@ -55,4 +55,5 @@ jobs:
             echo "::error::THIRD-PARTY-NOTICES.html is inconsistent with the current Cargo.lock" >&2
             exit 1
           fi
-          "
+
+          echo "THIRD-PARTY-NOTICES.html is consistent with the current Cargo.lock."

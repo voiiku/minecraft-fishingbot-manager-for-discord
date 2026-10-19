@@ -201,7 +201,7 @@ The following text is provided through `Text` and the related enums:
 Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions. The
 sole exception is the watchdog lock-poisoning texts, which are runtime information and follow `[i18n] language`.
 
-`Text` currently has 161 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants, 19
+`Text` currently has 163 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants, 19
 `ConfigRequirement` variants and 14 `WatchdogText` variants, all of them with a call site. You can check that yourself
 (the first command cuts the `pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so
 a signature written across lines cannot be missed - that is how `command_log_attachment_body` is written; that first
@@ -210,7 +210,7 @@ of the three enums, and since the `match` is exhaustive the names that appear in
 variants):
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 161
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 163
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
 grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
@@ -218,7 +218,7 @@ grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 1
 grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
 ```
 
-The English implementation `src/text/en_us.rs` matches the Chinese one completely (161 methods, 27 command
+The English implementation `src/text/en_us.rs` matches the Chinese one completely (163 methods, 27 command
 descriptions, 77 and 19 enum variants, plus 14 watchdog texts, not one missing: a missing method or `match` branch does
 not compile, a missing command description fails a test). To confirm English really comes up, set
 `language = "ENGLISH"` in the config and

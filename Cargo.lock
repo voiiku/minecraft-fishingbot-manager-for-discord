@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "minecraft-fishingbot-manager-for-discord"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "craftping",

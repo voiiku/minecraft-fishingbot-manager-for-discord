@@ -753,13 +753,11 @@ Microsoft refuses frequent logins, or out of memory)". What to do: lower the mem
 
 * `/help`: `help::help()`, no network request.
 * `/whoami`: `whoami::whoami(caller_id)`, no network request.
-* `/ping [host] [port]`: `ping::ping_report(host, port)`, which does make a network request (a Minecraft server
-  handshake).
-* `/checkserver`: `checkserver::checkserver_report()`, no network request (it reads local resources).
+* `/ping [host] [port]`: `ping::ping(host, port)`, which does make a network request (a Minecraft server handshake).
+* `/checkserver`: `checkserver::checkserver()`, no network request (it reads local resources).
 
-The `*_report` suffix follows the return shape: apart from `help` and `whoami`, which return a whole piece of text,
-these return the result of `Report::render()`, following the same naming rule as `my_bots_list` and
-`all_running_bots_status`, see [architecture-en_us.md](../architecture/architecture-en_us.md) section 5.
+`ping` and `checkserver` return the result of `Report::render()`; by the naming rule, one-off probes, checks and whole
+pieces of text use a bare noun, see [architecture-en_us.md](../architecture/architecture-en_us.md) section 5.
 
 ### 7.2 `/help`
 

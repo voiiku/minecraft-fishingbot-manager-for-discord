@@ -168,14 +168,14 @@
 按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言。唯一的例外是看门狗锁中毒文案，
 它属于运行期信息，随 `[i18n] language` 切换。
 
-`Text` 目前有 161 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体、
+`Text` 目前有 163 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体、
 `ConfigRequirement` 的 19 个变体与 `WatchdogText` 的 14 个变体，全部都有调用点。可以这样自查（第一条先用
 `sed` 切出 `pub trait Text` 到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——
 `command_log_attachment_body` 就是这么写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。
 后三条分别数三个枚举的变体数，`match` 是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 161
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 163
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
 grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
@@ -183,7 +183,7 @@ grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 1
 grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
 ```
 
-英文实现 `src/text/en_us.rs` 与中文一一齐备（161 个方法、27 条指令说明、77 与 19 个枚举变体，外加 14 条看门狗
+英文实现 `src/text/en_us.rs` 与中文一一齐备（163 个方法、27 条指令说明、77 与 19 个枚举变体，外加 14 条看门狗
 文案，一个不少：漏方法或漏 `match` 分支都编译不过，漏指令说明测试失败）。要确认英文确实上得来，把配置改成
 `language = "ENGLISH"` 跑一次；单测里有 `text::tests::english_impl_is_english` 直接按英文实现断言（它
 不调 `install`，因为 `OnceLock` 是进程级的，装了会影响并发跑的其它用例）。

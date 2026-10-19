@@ -1,43 +1,43 @@
-//! 看门狗互斥锁中毒时的内部不变量文案。
+//! 看门狗互斥锁中毒时的诊断文案。
 //!
-//! 这些文案只在看门狗代码使用，但属于运行期信息，必须随 `[i18n] language` 切换。
-//! 通过 [`crate::text::Text::watchdog_text`] 读取静态字符串，避免在锁操作附近分配临时 `String`。
+//! 文案随 `[i18n] language` 选择，由 [`crate::text::Text::watchdog_text`] 返回静态字符串。
+//! 该接口不分配内存，适用于锁操作路径。
 
-/// 看门狗内部不变量消息。
+/// 看门狗互斥锁中毒的诊断消息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchdogText {
-    /// 开始新一轮连接尝试时，`started` 的互斥锁中毒。
+    /// 重置连接尝试起始时刻时，`started` 互斥锁中毒。
     StartedLockReset,
-    /// 清除上一次握手状态时，`last_handshake` 的互斥锁中毒。
+    /// 清除上次握手状态时，`last_handshake` 互斥锁中毒。
     LastHandshakeLockClear,
-    /// 记录握手状态时，`last_handshake` 的互斥锁中毒。
+    /// 记录握手时刻时，`last_handshake` 互斥锁中毒。
     LastHandshakeLockRecord,
-    /// 判定网络状态时，`last_handshake` 的互斥锁中毒。
+    /// 读取握手状态时，`last_handshake` 互斥锁中毒。
     LastHandshakeLockRead,
-    /// 清除探活失败状态时，`unhealthy_since` 的互斥锁中毒。
+    /// 清除探活失败起始时刻时，`unhealthy_since` 互斥锁中毒。
     UnhealthySinceLockClear,
-    /// 记录探活失败状态时，`unhealthy_since` 的互斥锁中毒。
+    /// 记录探活失败起始时刻时，`unhealthy_since` 互斥锁中毒。
     UnhealthySinceLockRecord,
-    /// 判定网络状态时，`unhealthy_since` 的互斥锁中毒。
+    /// 读取探活失败起始时刻时，`unhealthy_since` 互斥锁中毒。
     UnhealthySinceLockRead,
-    /// 判定网络状态时，`started` 的互斥锁中毒。
+    /// 读取连接尝试起始时刻时，`started` 互斥锁中毒。
     StartedLockRead,
-    /// 记录掉线状态时，`offline_since` 的互斥锁中毒。
+    /// 记录掉线原因与时刻时，`offline_since` 互斥锁中毒。
     OfflineSinceLockRecord,
-    /// 读取掉线状态时，`offline_since` 的互斥锁中毒。
+    /// 读取掉线记录时，`offline_since` 互斥锁中毒。
     OfflineSinceLockRead,
-    /// 记录掉线原因时，`pending_disconnect_reason` 的互斥锁中毒。
+    /// 记录待处理掉线原因时，`pending_disconnect_reason` 互斥锁中毒。
     PendingDisconnectReasonLockRecord,
-    /// 读取掉线原因时，`pending_disconnect_reason` 的互斥锁中毒。
+    /// 读取待处理掉线原因时，`pending_disconnect_reason` 互斥锁中毒。
     PendingDisconnectReasonLockRead,
-    /// 发送收尾报告时，`notice_ctx` 的互斥锁中毒。
+    /// 读取通知上下文以发送收尾报告时，`notice_ctx` 互斥锁中毒。
     NoticeCtxLockSendReport,
-    /// 记录 Discord 上下文时，`notice_ctx` 的互斥锁中毒。
+    /// 记录 Discord 通知上下文时，`notice_ctx` 互斥锁中毒。
     NoticeCtxLockRecord,
 }
 
 impl WatchdogText {
-    /// 全部文案，供覆盖测试遍历。
+    /// 全部变体，供覆盖测试遍历。
     #[cfg(test)]
     pub(crate) const ALL: [Self; 14] = [
         Self::StartedLockReset,
@@ -62,7 +62,7 @@ mod tests {
     use super::*;
     use crate::text;
 
-    /// 每条看门狗内部不变量文案在两种语言下都必须存在。
+    /// 每种语言都必须为全部 `WatchdogText` 变体提供非空文案。
     #[test]
     fn every_watchdog_text_is_present_in_every_language() {
         for language in text::all_languages() {
@@ -75,7 +75,7 @@ mod tests {
         }
     }
 
-    /// 看门狗文案确实随语言切换，而不是两种语言共用一套字面量。
+    /// 同一 `WatchdogText` 变体在中文与英文实现中的文案必须不同。
     #[test]
     fn watchdog_texts_are_localized() {
         let languages = text::all_languages();

@@ -28,7 +28,7 @@ use crate::bot_control::{
 use crate::bot_manage::{
     add_bot, await_login, begin_login, delete_bot, rename_bot, update_bot_token_file,
 };
-use crate::general::{checkserver_report, help, ping_report, whoami};
+use crate::general::{checkserver, help, ping, whoami};
 use crate::show::{
     admins_list, all_bots_list, all_running_bots_status, fishingbot_config_view, my_bots_list,
 };
@@ -140,7 +140,7 @@ pub async fn handle_ping(caller_id: u64, host: Option<&str>, port: Option<u16>) 
         return permission_refusal(caller_id);
     }
 
-    ping_report(host, port).await.to_reply_text()
+    ping(host, port).await.to_reply_text()
 }
 
 /// 返回钓鱼服务器自身的资源信息（`/checkserver`）。权限：所有人可用。
@@ -149,7 +149,7 @@ pub async fn handle_checkserver(caller_id: u64) -> String {
         return permission_refusal(caller_id);
     }
 
-    checkserver_report().await.to_reply_text()
+    checkserver().await.to_reply_text()
 }
 
 /// 处理只读查询指令（`/show status|mybots|allbots|admins`）。

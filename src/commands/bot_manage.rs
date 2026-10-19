@@ -3,7 +3,7 @@
 use super::Error;
 use super::{Context, single_bot_manage};
 use minecraft_fishingbot_manager_for_discord::{
-    BotManageAction, handle_bot_login, handle_bot_login_await, handle_bot_manage,
+    BotManageAction, handle_bot_login, handle_bot_login_await, handle_bot_manage, text,
 };
 
 /// Manage bot accounts
@@ -69,6 +69,7 @@ pub(crate) async fn login(
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
     let command_path = ctx.command().qualified_name.clone();
+    let log_bot_name = name.clone();
 
     ctx.defer_ephemeral().await?;
 
@@ -88,8 +89,12 @@ pub(crate) async fn login(
             }
         };
 
-    // 发送登录网址与设备码。
-    super::log_reply(caller_id, &command_path, &prompt.message);
+    // 回复包含登录网址与设备码；日志只记录脱敏摘要。
+    super::log_reply(
+        caller_id,
+        &command_path,
+        &text::get().bot_login_prompt_logged(&log_bot_name),
+    );
     ctx.send(
         poise::CreateReply::default()
             .content(prompt.message.clone())

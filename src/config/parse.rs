@@ -30,11 +30,8 @@ impl Config {
 }
 
 impl<'de> Deserialize<'de> for Paths {
-    /// 读文件里的 `[paths]` 表：`base_dir` 必须绝对，另外两个键必须是相对 `base_dir` 的名字；
-    /// 展开成运行时用的绝对路径（`bots_dir` 由代码派生）。
-    ///
-    /// 因为配置文件里只有 `base_dir` 是绝对路径，剩下的都是相对路径，为了避免每次调用时现拼，
-    /// 所以 [`Config`] 里存的是展开后的绝对路径。
+    /// 解析 `[paths]` 表：`base_dir` 必须为绝对路径，其余两个文件名必须为相对路径。
+    /// 解析后展开为运行时绝对路径；`bots_dir` 由代码派生。
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -51,13 +48,13 @@ impl<'de> Deserialize<'de> for Paths {
         let table = Table::deserialize(deserializer)?;
 
         if !table.base_dir.is_absolute() {
-            return Err(serde::de::Error::custom(text::get().log_text(
-                text::LogText::ConfigFieldValueInvalid {
-                    field: "paths.base_dir",
-                    value: &table.base_dir.display().to_string(),
-                    requirement: text::ConfigRequirement::BaseDirAbsolute,
-                },
-            )));
+            return Err(serde::de::Error::custom(
+                text::bootstrap::config_path_value_invalid(
+                    "paths.base_dir",
+                    &table.base_dir.display().to_string(),
+                    "must be an absolute path",
+                ),
+            ));
         }
 
         let base_dir = table.base_dir;
@@ -84,13 +81,11 @@ impl<'de> Deserialize<'de> for Paths {
 /// 确认路径是相对 `base_dir` 的名字（不是绝对路径）。
 fn require_relative(field: &str, path: PathBuf) -> Result<PathBuf, String> {
     if path.is_absolute() {
-        return Err(
-            text::get().log_text(text::LogText::ConfigFieldValueInvalid {
-                field: &format!("paths.{field}"),
-                value: &path.display().to_string(),
-                requirement: text::ConfigRequirement::PathRelative,
-            }),
-        );
+        return Err(text::bootstrap::config_path_value_invalid(
+            &format!("paths.{field}"),
+            &path.display().to_string(),
+            "must be a relative path",
+        ));
     }
 
     Ok(path)

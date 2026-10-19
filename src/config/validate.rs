@@ -12,7 +12,7 @@ use super::schema::{
     StartupQueueConfig, TextConfig, TimingConfig,
 };
 
-/// shell 命令里未加引号的内联取值禁止出现的字符（`runtime.java_opts`）。
+/// 会被拼入 shell 命令的取值禁止出现的字符（`runtime.java_opts`、`token_file`、`bot_logs_dir`）。
 const SHELL_UNSAFE: &[char] = &['\'', '"', '`', '$', ';', '&', '|', '<', '>', '\n', '\r'];
 
 /// 校验语言名并在合法后安装语言；失败信息固定英文，不使用 `text::get()`。
@@ -206,6 +206,19 @@ fn validate_runtime(runtime: &RuntimeConfig) -> Result<(), String> {
         ("bot_logs_dir", &runtime.bot_logs_dir),
     ] {
         require_plain_name(format!("runtime.{field}"), value)?;
+    }
+
+    // 这两个值会作为 `bash -c` 的单引号参数，必须排除 shell 特殊字符。
+    for (field, value) in [
+        ("token_file", &runtime.token_file),
+        ("bot_logs_dir", &runtime.bot_logs_dir),
+    ] {
+        if value.contains(SHELL_UNSAFE) {
+            return Err(invalid(
+                format!("runtime.{field}"),
+                text::ConfigRequirement::ShellSafe,
+            ));
+        }
     }
 
     if runtime.max_reply_log_lines == 0 {
@@ -538,6 +551,26 @@ mod tests {
 
         assert!(err.contains("runtime.java_opts"), "报错应指出字段: {err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 启动命令中使用的文件名不能包含 shell 特殊字符。
+    #[test]
+    fn shell_unsafe_runtime_names_are_reported() {
+        for (field, value) in [
+            ("token_file", "\"refresh';$HOME;'\""),
+            ("bot_logs_dir", "\"logs';$HOME;'\""),
+        ] {
+            let (dir, text) = staged_example(&format!("shell-unsafe-{field}"));
+            let text = set_field(&text, field, value);
+
+            let err = load_text(&text).expect_err("shell 特殊字符应当报错");
+
+            assert!(
+                err.contains(&format!("runtime.{field}")),
+                "报错应指出字段 {field}: {err}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// 两条回显相同（或互相包含）时判不出日志里那行属于哪条指令，要在启动时报出来。

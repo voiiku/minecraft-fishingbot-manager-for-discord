@@ -414,6 +414,10 @@ impl Text for ZhCn {
         )
     }
 
+    fn bot_login_prompt_logged(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 已生成登录提示（内容不写入程序日志）")
+    }
+
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
         format!(
             "机器人 {bot_name} 的登录凭据已保存（若存在旧凭据会被删除），正在启动（可用 /show status 查看状态）"
@@ -637,6 +641,10 @@ impl Text for ZhCn {
 
     fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String {
         format!("连接服务器 ({host}:{port}) 超时({timeout_ms} 毫秒无响应)")
+    }
+
+    fn ping_local_target(&self, host: &str, port: u16) -> String {
+        format!("拒绝探测本地或私网地址 ({host}:{port})")
     }
 
     fn ping_protocol_failed(&self, host: &str, port: u16, reason: &str) -> String {
@@ -1019,7 +1027,7 @@ impl Text for ZhCn {
                 guild_name,
                 count,
             } => format!(
-                "已清除服务器 {guild_name} 上遗留的 {count} 条 guild 指令 (本程序只做全局注册)"
+                "已清除服务器 {guild_name} 上遗留的 {count} 条 guild 指令"
             ),
             LogText::GuildCommandsClearFailed { guild_name, reason } => format!(
                 "清除服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (不影响全局注册，下次启动会重试)"

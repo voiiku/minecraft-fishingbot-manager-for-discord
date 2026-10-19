@@ -213,9 +213,9 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   `into_report`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
   disk use `find_*`; predicates use `is_` and `has_`; an ID is always `*_id` (`caller_id`, `owner_id`).
 * Add a suffix according to the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
-  (`all_running_bots_status`); one-off probes or checks are `*_report` (`ping_report`, `checkserver_report`); data sent
-  as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`). Only text that is already written out in
-  full uses a bare noun (`help`, `whoami`).
+  (`all_running_bots_status`); data sent as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`).
+  One-off probes, checks and text that is already written out in full use a bare noun (`ping`, `checkserver`, `help`,
+  `whoami`).
 * Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both mean "the one
   copy in this process". A missing config `expect`s (that is an internal invariant); a missing language makes
   `text::get()` panic in a production build (an entry-point ordering error) and return English in a test build.

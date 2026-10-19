@@ -1,12 +1,12 @@
-//! 注册斜杠指令，全局注册，并在确认安全之后清理Discord群聊中上遗留的 guild 指令。
+//! 全局注册斜杠指令，并在确认传播完成后清理 Discord 服务器上遗留的 guild 指令。
 //!
-//! 残留：本程序以前可以按配置把指令注册到某一个服务器，那份 guild 指令落在 Discord 上不会自己
-//! 消失；客户端把"全局指令 ∪ 该服务器的 guild 指令"一起列出来，于是同一条指令出现两次。
-//! 注册成功只代表 Discord 的 API 完成了注册，但客户端最慢要 1 小时才能看到指令。
-//! 所以当需要注册指令时，必须等待新指令传播完，旧注册指令超过1小时才能清理旧指令。
+//! 背景：旧版本可按配置将指令注册到单个服务器，这些 guild 指令不会自动消失；
+//! 客户端会同时展示全局指令与该服务器的 guild 指令，导致同名指令重复。
+//! 注册成功仅表示 Discord API 已完成注册，客户端最长需要 1 小时同步。
+//! 因此需要注册新指令时，必须等待传播完成，且旧指令存在满 1 小时后才能清理。
 
 use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use poise::serenity_prelude as serenity;
 
@@ -20,7 +20,7 @@ const GLOBAL_PROPAGATION_MS: u64 = 60 * 60 * 1000;
 /// Discord 时间起点（2015-01-01T00:00:00Z），单位毫秒。
 const DISCORD_EPOCH_MS: u64 = 1_420_070_400_000;
 
-/// 注册指令，并在确认安全时清掉各服务器上遗留的 guild 指令。
+/// 注册全局指令，并在传播完成后清除各服务器上遗留的 guild 指令。
 pub(crate) async fn register_commands(
     ctx: &serenity::Context,
     commands: &[poise::Command<Data, Error>],
@@ -29,6 +29,8 @@ pub(crate) async fn register_commands(
     let registered = serenity::Command::get_global_commands(ctx).await;
     poise::builtins::register_globally(ctx, commands).await?;
 
+    let wanted_names = command_names(commands);
+
     match &registered {
         Ok(registered) => {
             let now = now_ms();
@@ -36,29 +38,38 @@ pub(crate) async fn register_commands(
             if global_commands_settled(registered, commands, now) {
                 clear_guild_scope_leftovers(ctx, guilds).await;
             } else {
-                // 说明此次不清理的原因（等待下次清理）。
+                let wait_minutes = minutes_until_cleanup(registered, commands, now);
+                // 记录本次未立即清理的原因。
                 log::info!(
                     "{}",
                     text::get().log_text(text::LogText::GuildCommandsCleanupWaiting {
-                        minutes: minutes_until_cleanup(registered, commands, now),
+                        minutes: wait_minutes,
                     })
                 );
+                schedule_guild_cleanup(ctx.clone(), guilds.to_vec(), wanted_names, wait_minutes);
             }
         }
-        Err(error) => log::warn!(
-            "{}",
-            text::get().log_text(text::LogText::GlobalCommandsReadFailed {
-                reason: &error.to_string(),
-            })
-        ),
+        Err(error) => {
+            log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::GlobalCommandsReadFailed {
+                    reason: &error.to_string(),
+                })
+            );
+            schedule_guild_cleanup(
+                ctx.clone(),
+                guilds.to_vec(),
+                wanted_names,
+                full_propagation_minutes(),
+            );
+        }
     }
 
     Ok(())
 }
 
-/// 检查目前全局指令是否已经在 Discord 存在：
-/// 标准：名字一一对应，而且最新的一条也满 [`GLOBAL_PROPAGATION_MS`]。
-/// 已存在的指令不会被重建，指令 Id 里的创建时间可得出"此指令已经存在多久"。
+/// 判断全局指令是否已经注册完成：名称与数量一致，且最新一条已满传播窗口。
+/// 已存在的指令不会被重建，指令 ID 中编码的创建时间可用于判断其存在时长。
 fn global_commands_settled(
     registered: &[serenity::Command],
     commands: &[poise::Command<Data, Error>],
@@ -73,14 +84,22 @@ fn minutes_until_cleanup(
     commands: &[poise::Command<Data, Error>],
     now_ms: u64,
 ) -> u64 {
-    if same_command_names(registered, commands) {
+    minutes_until_cleanup_by_names(registered, &command_names(commands), now_ms)
+}
+
+fn minutes_until_cleanup_by_names(
+    registered: &[serenity::Command],
+    wanted_names: &BTreeSet<String>,
+    now_ms: u64,
+) -> u64 {
+    if same_command_names_by_names(registered, wanted_names) {
         propagation_wait_minutes(registered, now_ms)
     } else {
         full_propagation_minutes()
     }
 }
 
-/// 距离现有这套指令注册满 1 小时还差多少分钟，不足 1 分钟算 1 分钟，已经满了就是 0。
+/// 计算当前全局指令距离满足传播窗口还需等待的分钟数；不足 1 分钟按 1 分钟计。
 fn propagation_wait_minutes(registered: &[serenity::Command], now_ms: u64) -> u64 {
     let youngest = registered
         .iter()
@@ -93,29 +112,85 @@ fn propagation_wait_minutes(registered: &[serenity::Command], now_ms: u64) -> u6
         .div_ceil(60 * 1000)
 }
 
-/// 满 1 小时是多少分钟（`GLOBAL_PROPAGATION_MS` 的唯一换算点）。
+/// 将传播窗口换算为分钟（`GLOBAL_PROPAGATION_MS` 的唯一换算点）。
 fn full_propagation_minutes() -> u64 {
     GLOBAL_PROPAGATION_MS.div_ceil(60 * 1000)
 }
 
-/// 检查旧全局指令与本次要注册的指令是不是同一套（数量与名字都必须一致）。
+/// 本次启动尚未满足清理条件时，在后台等待传播完成后重试，避免依赖下一次重启。
+fn schedule_guild_cleanup(
+    ctx: serenity::Context,
+    guilds: Vec<serenity::UnavailableGuild>,
+    wanted_names: BTreeSet<String>,
+    wait_minutes: u64,
+) {
+    tokio::spawn(async move {
+        let mut wait = Duration::from_secs(wait_minutes.saturating_mul(60));
+
+        loop {
+            tokio::time::sleep(wait).await;
+            let now = now_ms();
+
+            match serenity::Command::get_global_commands(&ctx).await {
+                Ok(registered) if same_command_names_by_names(&registered, &wanted_names) => {
+                    let remaining = propagation_wait_minutes(&registered, now);
+                    if remaining == 0 {
+                        clear_guild_scope_leftovers(&ctx, &guilds).await;
+                        return;
+                    }
+                    wait = Duration::from_secs(remaining.saturating_mul(60));
+                }
+                Ok(registered) => {
+                    wait = Duration::from_secs(
+                        minutes_until_cleanup_by_names(&registered, &wanted_names, now)
+                            .saturating_mul(60),
+                    );
+                }
+                Err(error) => {
+                    log::warn!(
+                        "{}",
+                        text::get().log_text(text::LogText::GlobalCommandsReadFailed {
+                            reason: &error.to_string(),
+                        })
+                    );
+                    wait = Duration::from_secs(full_propagation_minutes().saturating_mul(60));
+                }
+            }
+        }
+    });
+}
+
+/// 当前实现期望 Discord 上存在的指令名集合。
+fn command_names(commands: &[poise::Command<Data, Error>]) -> BTreeSet<String> {
+    commands
+        .iter()
+        .map(|command| command.name.to_string())
+        .collect()
+}
+
+/// 判断已注册的全局指令与本次要注册的指令是否一致（数量与名称均需相同）。
 fn same_command_names(
     registered: &[serenity::Command],
     commands: &[poise::Command<Data, Error>],
 ) -> bool {
+    same_command_names_by_names(registered, &command_names(commands))
+}
+
+fn same_command_names_by_names(
+    registered: &[serenity::Command],
+    wanted_names: &BTreeSet<String>,
+) -> bool {
     let only_slash_commands = registered
         .iter()
         .all(|command| command.kind == serenity::CommandType::ChatInput);
-    let registered_names: BTreeSet<&str> = registered
+    let registered_names: BTreeSet<String> = registered
         .iter()
-        .map(|command| command.name.as_str())
-        .collect();
-    let wanted_names: BTreeSet<&str> = commands
-        .iter()
-        .map(|command| command.name.as_ref())
+        .map(|command| command.name.clone())
         .collect();
 
-    only_slash_commands && registered.len() == commands.len() && registered_names == wanted_names
+    only_slash_commands
+        && registered.len() == wanted_names.len()
+        && registered_names == *wanted_names
 }
 
 /// 指令 Id 中编码的创建时间（Unix 毫秒），高 42 位是相对 Discord 纪元的毫秒数。
@@ -131,19 +206,19 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-/// 清掉各服务器上遗留的 guild 指令。
-/// 服务器已经干净就不发写请求。失败记 WARN，下次再试。
+/// 清除各服务器上遗留的 guild 指令。
+/// 已无残留时不发写请求；失败记录 WARN，由后续启动或重试任务处理。
 async fn clear_guild_scope_leftovers(
     ctx: &serenity::Context,
     guilds: &[serenity::UnavailableGuild],
 ) {
-    for guild in guilds.iter().filter(|guild| !guild.unavailable) {
-        let guild_name = guild_name(ctx, guild.id);
+    for guild_id in guild_ids_for_cleanup(guilds) {
+        let guild_name = guild_name(ctx, guild_id);
 
-        match left_commands(ctx, guild.id).await {
+        match left_commands(ctx, guild_id).await {
             // 已经干净：不发写请求。
             Ok(0) => {}
-            Ok(count) => match guild.id.set_commands(ctx, Vec::new()).await {
+            Ok(count) => match guild_id.set_commands(ctx, Vec::new()).await {
                 Ok(_) => log::info!(
                     "{}",
                     text::get().log_text(text::LogText::GuildCommandsCleared {
@@ -158,7 +233,12 @@ async fn clear_guild_scope_leftovers(
     }
 }
 
-/// 查看这个服务器上还剩多少条 guild 指令，读取失败时把原因转成文案交给调用方记录日志。
+/// `Ready` 事件中的 guild 条目通常标记为 unavailable；清理仍应使用其 ID。
+fn guild_ids_for_cleanup(guilds: &[serenity::UnavailableGuild]) -> Vec<serenity::GuildId> {
+    guilds.iter().map(|guild| guild.id).collect()
+}
+
+/// 返回服务器上现有 guild 指令数量；读取失败时返回错误文本，供调用方记录日志。
 async fn left_commands(
     ctx: &serenity::Context,
     guild_id: serenity::GuildId,
@@ -170,7 +250,7 @@ async fn left_commands(
         .map_err(|error| error.to_string())
 }
 
-/// 清理失败时计入日志 WARN。
+/// 记录一次清理失败的 WARN 日志。
 fn log_when_clear_failed(guild_name: &str, reason: &str) {
     log::warn!(
         "{}",
@@ -178,7 +258,7 @@ fn log_when_clear_failed(guild_name: &str, reason: &str) {
     );
 }
 
-/// 获取服务器名，没有就返回服务器 Id。
+/// 返回服务器名称；缓存缺失时返回服务器 ID。
 fn guild_name(ctx: &serenity::Context, guild_id: serenity::GuildId) -> String {
     ctx.cache
         .guild(guild_id)
@@ -266,6 +346,19 @@ mod tests {
         assert_eq!(
             propagation_wait_minutes(&registered(&names, now - hour + 30 * 1000), now),
             1
+        );
+    }
+
+    /// 标记为 unavailable 的 guild 也必须纳入残留指令清理。
+    #[test]
+    fn unavailable_guilds_are_scheduled_for_cleanup() {
+        let json = "{\"id\":\"123456789012345678\",\"unavailable\":true}";
+        let guild: serenity::UnavailableGuild =
+            serde_json::from_str(json).expect("Ready 里的 guild 形状应当能解析");
+
+        assert_eq!(
+            guild_ids_for_cleanup(&[guild]),
+            vec![serenity::GuildId::new(123_456_789_012_345_678)]
         );
     }
 

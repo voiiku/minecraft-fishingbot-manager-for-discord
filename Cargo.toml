@@ -1,6 +1,6 @@
 [package]
 name = "minecraft-fishingbot-manager-for-discord"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Manage Minecraft FishingBot instances through Discord commands"
 license = "MIT"
@@ -41,7 +41,7 @@ codegen-units = 256
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = true
 debug = false
 incremental = false

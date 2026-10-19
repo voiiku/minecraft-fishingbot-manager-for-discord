@@ -1,5 +1,7 @@
 //! 首次启动时生成配置模板，内容来自仓库根目录的示例配置。
 
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use crate::text;
@@ -8,12 +10,8 @@ use crate::text;
 pub(super) const TEMPLATE: &str =
     include_str!("../../minecraft-fishingbot-manager-for-discord.conf.example.toml");
 
-/// 配置不存在时写入模板；已存在时不覆盖。返回是否新建。
+/// 配置不存在时以 0600 权限创建并写入模板；已存在时不覆盖。返回是否新建。
 pub(super) fn create_config_file_when_missing(path: &Path) -> Result<bool, String> {
-    if path.exists() {
-        return Ok(false);
-    }
-
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty() && !parent.is_dir())
@@ -23,7 +21,23 @@ pub(super) fn create_config_file_when_missing(path: &Path) -> Result<bool, Strin
         ));
     }
 
-    std::fs::write(path, TEMPLATE).map_err(|e| {
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) => {
+            return Err(text::bootstrap::config_template_write_failed(
+                &path.display().to_string(),
+                &error.to_string(),
+            ));
+        }
+    };
+
+    file.write_all(TEMPLATE.as_bytes()).map_err(|e| {
         text::bootstrap::config_template_write_failed(&path.display().to_string(), &e.to_string())
     })?;
 
@@ -54,6 +68,22 @@ mod tests {
 
         assert!(created, "文件不存在时应当新建");
         assert_eq!(written, TEMPLATE, "生成的内容应当与示例配置完全一致");
+    }
+
+    /// 新建的模板必须仅所有者可读写。
+    #[test]
+    fn generated_template_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp_config_path("private");
+        assert!(create_config_file_when_missing(&path).expect("生成模板失败"));
+
+        let mode = std::fs::metadata(&path)
+            .expect("读取模板元数据失败")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     /// 不覆盖已有配置。
