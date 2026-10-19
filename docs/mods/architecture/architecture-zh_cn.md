@@ -66,6 +66,7 @@ src/
 ├── text/                       en_us（英语）/ zh_cn（两份一一对应，只换字面量）
 │                               + bootstrap（引导期英文）/ log_text / requirement（两个数据型枚举）
 │                               + setup_failure（装配失败归到哪条文案、算不算永久错）
+│                               + watchdog（看门狗互斥锁中毒的内部不变量文案；随语言切换）
 ├── watchdog.rs                 网关看门狗（子模块见下）
 │   ├── gateway.rs              握手与探活判定 + REST 探活任务（纯计时；每轮尝试前重置计时）
 │   └── lifecycle.rs            掉线记账、重连信号、等一次尝试结束、停机退出与永久失败退出

@@ -69,6 +69,7 @@ src/
 ├── text/                       en_us (English) / zh_cn (one to one, only literals differ)
 │                               + bootstrap (English during bootstrap) / log_text / requirement (two enums with data)
 │                               + setup_failure (which text a setup failure uses, and whether it is permanent)
+│                               + watchdog (internal watchdog mutex-poisoning notes; language-dependent)
 ├── watchdog.rs                 gateway watchdog (submodules below)
 │   ├── gateway.rs              handshake and probe criteria + the REST probe task (pure timing; timers reset per attempt)
 │   └── lifecycle.rs            offline bookkeeping, the reconnect signal, waiting for an attempt to end, shutdown/exit

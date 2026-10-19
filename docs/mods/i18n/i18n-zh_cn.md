@@ -2,9 +2,9 @@
 [English](i18n-en_us.md) | **简体中文**
 
 * 机制：`src/text.rs`（`Language`、`Text` trait、`install`、`get`）与 `src/text/*.rs`（每种语言一个
-  文件：`en_us.rs` 是英语实现，`zh_cn.rs` 是简体中文；另有四个子模块：`bootstrap`（引导期英文）、
-  `log_text`（`LogText`）、`requirement`（`ConfigRequirement`）与 `setup_failure`（装配失败该用哪条
-  文案、算不算永久错））。
+  文件：`en_us.rs` 是英语实现，`zh_cn.rs` 是简体中文；另有五个子模块：`bootstrap`（引导期英文）、
+  `log_text`（`LogText`）、`requirement`（`ConfigRequirement`）、`setup_failure`（装配失败该用哪条
+  文案、算不算永久错）与 `watchdog`（看门狗互斥锁中毒的内部不变量文案，随语言切换））。
 * 配置：`[i18n] language = "ENGLISH"`（示例配置里写的就是它；给中文部署时改成 `CHINESE_SIMPLIFIED`）。
   一个进程一种语言，启动时读一次，改了要重启；取值就是 FishingBot 自己 `i18n.Language` 枚举的常量名
   —— 本项目只实现了 `ENGLISH`（English）与 `CHINESE_SIMPLIFIED`（简体中文）两种，上游还有的
@@ -29,7 +29,8 @@
 
 * 机器人日志的内容本身，那是 FishingBot 打印的，我们改不了。只有它自己打印的固定文案才进来，见下。
 * 内部不变量消息：`expect(...)` 与 `panic!` 这类代码写错了才会出现的提示，以及 `cargo test` 的断言
-  文案。它们不进语言表（不实现 `Text`）；必须固定英文的那句收在 `bootstrap`，见第 4 节。
+  文案。除看门狗锁中毒的 14 条外，它们不进语言表（不实现 `Text`）；必须固定英文的收在 `bootstrap`，见第 4 节。
+  看门狗文案是例外：它发生在配置装载之后，必须跟随 `[i18n] language`。
 * 代码注释、`docs/`、指令名（Discord 只允许 ASCII 小写）。例外：命令 `///` 的第一段与选项的
   `#[description]` 会变成发给 Discord 的说明，那两处写英文（等于 `en_us.rs` 表里那句，见
   [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-宏里那一份算什么英文副本)）。
@@ -115,6 +116,8 @@
      （`bootstrap::CONFIG_NOT_LOADED`），还有语言没安装就取文案时的 `bootstrap::TEXT_NOT_INSTALLED`。那时语言还没确定，提示固定英文。它们统一收在
      `crate::text::bootstrap`（与语言表并列，但不实现 `Text`）。判断标准只有一条：这条提示是不是配置
      还没读成功的产物。
+* 看门狗互斥锁中毒时的文案由 `crate::text::watchdog::WatchdogText` 与
+  `Text::watchdog_text` 提供，随 `[i18n] language` 切换；读取静态字符串可避免在每次锁操作时构造临时 `String`。
 * 指令说明这类注册期文字也读同一个 `get()`：`commands::all_commands()` 在建完指令树后调用一次（那时
   `install()` 已经跑过）。
 
@@ -160,24 +163,28 @@
 * 指令元数据：指令说明、选项说明、`/token` 弹窗标签（注册前改写宏生成的指令树，做法见下）。
 * 程序日志（`log::*`）、启动期控制台提示、配置报错（`config.rs` 与 `config/*`）：走 `LogText` 枚举
   加 `log_text()`，两种语言里穷尽 `match`。
+* 看门狗锁操作：走 `WatchdogText` 枚举加 `watchdog_text()`（14 条，随语言切换）。
 
-按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言。
+按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言。唯一的例外是看门狗锁中毒文案，
+它属于运行期信息，随 `[i18n] language` 切换。
 
-`Text` 目前有 162 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体与
-`ConfigRequirement` 的 19 个变体，全部都有调用点。可以这样自查（第一条先用 `sed` 切出 `pub trait Text`
-到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——`command_log_attachment_body` 就是这么写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。后两条分别数两个枚举的变体数，`match`
-是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
+`Text` 目前有 161 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体、
+`ConfigRequirement` 的 19 个变体与 `WatchdogText` 的 14 个变体，全部都有调用点。可以这样自查（第一条先用
+`sed` 切出 `pub trait Text` 到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——
+`command_log_attachment_body` 就是这么写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。
+后三条分别数三个枚举的变体数，`match` 是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 162
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 161
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
 grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
 grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 19
+grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
 ```
 
-英文实现 `src/text/en_us.rs` 与中文一一齐备（162 个方法、27 条指令说明、77 与 19 个枚举变体，一个不
-少：漏方法或漏 `match` 分支都编译不过，漏指令说明测试失败）。要确认英文确实上得来，把配置改成
+英文实现 `src/text/en_us.rs` 与中文一一齐备（161 个方法、27 条指令说明、77 与 19 个枚举变体，外加 14 条看门狗
+文案，一个不少：漏方法或漏 `match` 分支都编译不过，漏指令说明测试失败）。要确认英文确实上得来，把配置改成
 `language = "ENGLISH"` 跑一次；单测里有 `text::tests::english_impl_is_english` 直接按英文实现断言（它
 不调 `install`，因为 `OnceLock` 是进程级的，装了会影响并发跑的其它用例）。
 

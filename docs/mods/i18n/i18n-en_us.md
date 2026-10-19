@@ -2,9 +2,10 @@
 [简体中文](i18n-zh_cn.md) | **English**
 
 * Mechanism: `src/text.rs` (`Language`, the `Text` trait, `install`, `get`) and `src/text/*.rs` (one file per
-  language: `en_us.rs` is the English implementation, `zh_cn.rs` is Simplified Chinese; plus four submodules: `bootstrap`
-  (English during bootstrap), `log_text` (`LogText`), `requirement` (`ConfigRequirement`) and `setup_failure` (which
-  text a setup failure uses, and whether it counts as permanent)).
+  language: `en_us.rs` is the English implementation, `zh_cn.rs` is Simplified Chinese; plus five submodules: `bootstrap`
+  (English during bootstrap), `log_text` (`LogText`), `requirement` (`ConfigRequirement`), `setup_failure` (which
+  text a setup failure uses, and whether it counts as permanent), and `watchdog` (internal watchdog mutex-poisoning
+  notes, language-dependent)).
 * Config: `[i18n] language = "ENGLISH"` (what the example config ships; change it to `CHINESE_SIMPLIFIED` for a
   Chinese deployment). One language per process, read once at startup, restart to change it; the values are the
   constant names of FishingBot's own `i18n.Language` enum - this project implements only `ENGLISH` (English) and
@@ -32,8 +33,9 @@ Deliberately not included:
 * The contents of the bot logs themselves: FishingBot prints those and we cannot change them. Only the fixed texts it
   prints itself come in, see below.
 * Internal invariant messages: the `expect(...)` and `panic!` texts that only appear when the code itself is wrong,
-  plus `cargo test` assertion texts. They are not in the language tables (they do not implement `Text`); the one that
-  must be fixed English lives in `bootstrap`, see section 4.
+  plus `cargo test` assertion texts. Apart from the 14 watchdog lock-poisoning texts, they are not in the language
+  tables (they do not implement `Text`); the one that must be fixed English lives in `bootstrap`, see section 4. The
+  watchdog texts are the exception: they occur after the config has loaded, so they must follow `[i18n] language`.
 * Code comments, `docs/` and command names (Discord only allows lowercase ASCII). Exceptions: the first paragraph of
   a command's `///` and an option's `#[description]` become the text sent to Discord, and those two are written in
   English (the same sentence as in the `en_us.rs` table, see
@@ -142,6 +144,9 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
      has been chosen then, so those hints are written in English. They all live in `crate::text::bootstrap`
      (alongside the language tables but not implementing `Text`). The single criterion: is this note a product of the
      config not having been read successfully.
+* Watchdog mutex-poisoning texts are provided by `crate::text::watchdog::WatchdogText` and
+  `Text::watchdog_text`, and follow `[i18n] language`; static strings avoid building a temporary `String` on every lock
+  operation.
 * Registration-time texts such as command descriptions read the same `get()`: `commands::all_commands()` calls it
   once after building the command tree (by then `install()` has run).
 
@@ -191,27 +196,32 @@ The following text is provided through `Text` and the related enums:
   command tree is rewritten before registration, see below).
 * The program log (`log::*`), the bootstrap console notes and config errors (`config.rs` and `config/*`): through the
   `LogText` enum and `log_text()`, with an exhaustive `match` in both languages.
+* Watchdog lock operations: through the `WatchdogText` enum and `watchdog_text()` (14 texts, following the language).
 
-Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions.
+Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions. The
+sole exception is the watchdog lock-poisoning texts, which are runtime information and follow `[i18n] language`.
 
-`Text` currently has 162 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants and 19
-`ConfigRequirement` variants, all of them with a call site. You can check that yourself (the first command cuts the
-`pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so a signature written
-across lines cannot be missed - that is how `command_log_attachment_body` is written; that first command also lists
-methods without a call site, and prints nothing when all is well; the last two count the variants of the two enums,
-and since the `match` is exhaustive the names that appear in a language file are exactly the variants):
+`Text` currently has 161 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants, 19
+`ConfigRequirement` variants and 14 `WatchdogText` variants, all of them with a call site. You can check that yourself
+(the first command cuts the `pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so
+a signature written across lines cannot be missed - that is how `command_log_attachment_body` is written; that first
+command also lists methods without a call site, and prints nothing when all is well; the last three count the variants
+of the three enums, and since the `match` is exhaustive the names that appear in a language file are exactly the
+variants):
 
 ```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 162
+sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 161
 sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
 while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
 grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
 grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 19
+grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
 ```
 
-The English implementation `src/text/en_us.rs` matches the Chinese one completely (162 methods, 27 command
-descriptions, 77 and 19 enum variants, not one missing: a missing method or `match` branch does not compile, a missing
-command description fails a test). To confirm English really comes up, set `language = "ENGLISH"` in the config and
+The English implementation `src/text/en_us.rs` matches the Chinese one completely (161 methods, 27 command
+descriptions, 77 and 19 enum variants, plus 14 watchdog texts, not one missing: a missing method or `match` branch does
+not compile, a missing command description fails a test). To confirm English really comes up, set
+`language = "ENGLISH"` in the config and
 run once; the unit test `text::tests::english_impl_is_english` asserts against the English implementation directly
 (it does not call `install`, because `OnceLock` is process-wide and installing would disturb other tests running in
 parallel).

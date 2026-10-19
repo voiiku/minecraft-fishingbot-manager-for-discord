@@ -28,7 +28,7 @@
 * `show`：只读查询（`status`、`botconfig`、`mybots`、`allbots`、`admins`）。见 [commands-zh_cn.md](mods/commands/commands-zh_cn.md) 第 6 节。
 * `general` + `general/`：通用指令（`help`、`ping`、`checkserver`、`whoami`）。见 [commands-zh_cn.md](mods/commands/commands-zh_cn.md) 第 7 节。
 * [`config` + `config/`](mods/config/config-zh_cn.md)：外置配置。`schema`（与 TOML 对应的配置结构体）、`parse`（反序列化与路径展开）、`validate`（启动校验）、`template`（首次启动生成的模板）。
-* [`text`](mods/i18n/i18n-zh_cn.md)：文案与多语言。一个进程一种语言，启动时由 `[i18n] language` 选定；`en_us`（英语）、`zh_cn`（与 `en_us` 一一对应，仅字面量不同）、`bootstrap`（引导期英文）、`log_text`、`requirement`、`setup_failure`。
+* [`text`](mods/i18n/i18n-zh_cn.md)：文案与多语言。一个进程一种语言，启动时由 `[i18n] language` 选定；`en_us`（英语）、`zh_cn`（与 `en_us` 一一对应，仅字面量不同）、`bootstrap`（引导期英文）、`log_text`、`requirement`、`setup_failure`、`watchdog`（看门狗内部不变量文案，随语言切换）。
 * [`watchdog`](mods/watchdog/watchdog-zh_cn.md)：网关看门狗。唯一判定“掉线”的位置：握手与探活两条判据，均为纯计时；重建连接的请求由进程入口发出。
 * [`process_log`](mods/process-log/process-log-zh_cn.md)：程序日志，同时写入终端（stderr）与 `<部署目录>/logs/时间戳.log`。
 * [`utils`](mods/utils/utils-zh_cn.md)：原语层，提供上层可复用的能力：`bot_command`、`bot_dirs`、`bot_name`、`bot_logs`、`bot_status`、`fishingbot_config`、`fs`、`permission`、`reply`、`restart`、`running_bots`、`screen`、`shutdown`、`startup`、`uptime`。

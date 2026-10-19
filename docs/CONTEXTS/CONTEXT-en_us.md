@@ -469,6 +469,7 @@ src/text.rs                 text entry: one language per process (chosen once at
 src/text/                   en_us (English) / zh_cn (the two correspond one to one, only literals differ)
                             + bootstrap (English during bootstrap) / log_text / requirement (data-style enum)
                             + setup_failure (setup failure: pick the text by cause + decide whether it is permanent)
+                            + watchdog (internal watchdog mutex-poisoning notes; language-dependent)
 src/bot_control/            single-bot business (one file per command)
 src/bot_manage/             account management business (one file per command)
 src/all_bots_control/       bulk server-wide business (admins only, one file per command)

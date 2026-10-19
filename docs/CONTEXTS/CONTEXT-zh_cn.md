@@ -351,6 +351,7 @@ src/text.rs                 文案入口：一个进程一种语言（`[i18n] la
 src/text/                   en_us（英语）/ zh_cn（两份一一对应，仅字面量不同）
                             + bootstrap（引导期英文）/ log_text / requirement（数据型枚举）
                             + setup_failure（装配失败：按成因选择文案 + 判定是否为永久错误）
+                            + watchdog（看门狗互斥锁中毒的内部不变量文案；随语言切换）
 src/bot_control/            单机器人业务（一指令一文件）
 src/bot_manage/             账号管理业务（一指令一文件）
 src/all_bots_control/       全服批量业务（仅管理员，一指令一文件）
