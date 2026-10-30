@@ -6,14 +6,16 @@
 >
 > 本项目属于第三方管理工具，与 FishingBot 的原作者并无官方关联。若在使用过程中发现任何问题（Bug），请勿向原作者反馈，而应通过本项目的[“问题”（Issues）](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)板块进行提交。
 >
-> 本项目不包含、不修改，也未分发任何 FishingBot 的源代码或二进制文件。请前往 [FishingBot 官方仓库](https://github.com/MrKinau/FishingBot) 下载官方 JAR 文件。
+> 本项目不包含、不修改，也未分发任何 FishingBot 的源代码或二进制文件。请前往 [FishingBot releases](https://github.com/MrKinau/FishingBot/releases) 下载官方 JAR 。
 
 * **本项目暂时不支持离线模式的服务器或单人游戏**。
 * **本项目暂时只支持运行在 64 位 Linux 系统下**。
 * 无法使用 Discord？可以考虑 [QQ 版本（已停止功能更新）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
-* 由于 [FishingBot](https://github.com/MrKinau/FishingBot) 的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于 26.4 加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），本项目暂时无法正确处理暂停钓鱼功能（相关逻辑已经实现），其余功能不受影响。
+* 由于 FishingBot的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于 26.4 加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），本项目暂时无法正确处理暂停钓鱼功能（相关逻辑已经实现），其余功能不受影响。
 
 ## 1. 项目概要
+
+![demo1](/docs/assets/demo1.gif)
 
 本项目通过 Discord 群聊管理多个 Minecraft 自动钓鱼机器人。机器人本身由独立的 [FishingBot](https://github.com/MrKinau/FishingBot) 项目提供，运行 `FishingBot.jar` 需要 Java JRE。
 
@@ -61,8 +63,7 @@
 ## 4. 项目现状
 
 * 单人维护，目前仍处于测试阶段，配置项与指令回复随更新而调整，更新会在 Release 中声明不兼容变更。
-* 原版 `FishingBot.jar` 尚未加入游戏内 `/pause`、`/unpause` 指令，上游已计划支持。在所用 JAR 包含这两条指令之前，`/pause` 与 `/unpause` 只会回复“命令已发送”，暂停状态不会更新；其他功能不受影响。
-* 语言目前仅支持 `ENGLISH` 与 `CHINESE_SIMPLIFIED` 两种（取值就是 FishingBot 项目对语言的命名）。全部的英语文本和英语文档均为 AI 翻译。
+* 语言目前仅支持 `ENGLISH` 与 `CHINESE_SIMPLIFIED` 两种（取值就是 FishingBot 项目对语言的命名）。
 * 非目标：Web 面板、内置代理服务。
 * 未来目标：适配 Windows。内建钓鱼机器人，允许用户选择使用 `FishingBot.jar` 或内置的机器人。
 
@@ -77,10 +78,6 @@
 ## 6. 参与贡献
 
 欢迎参与贡献。发现问题或有功能建议，请[提交 Issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)。也欢迎提交 Pull Request；对于较大的改动，建议先开 Issue 讨论方案。
-
-### 翻译
-
-面向用户的文本目前定义在 `src/text/` 模块中，并在启动时加载。修改或新增翻译时，请参考现有语言模块，例如 `src/text/zh_cn.rs`。语言加载前显示的消息会使用英语。
 
 **计划未来重构多语言功能。**
 
