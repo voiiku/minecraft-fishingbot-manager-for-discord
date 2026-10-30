@@ -7,7 +7,6 @@ use minecraft_fishingbot_manager_for_discord::{
     handle_checkserver, handle_help, handle_ping, handle_whoami,
 };
 
-/// Show the help menu
 #[poise::command(slash_command)]
 pub(crate) async fn help(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -16,7 +15,6 @@ pub(crate) async fn help(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Show the caller's Discord user ID
 #[poise::command(slash_command)]
 pub(crate) async fn whoami(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -26,22 +24,18 @@ pub(crate) async fn whoami(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Show this fishing host's performance
 #[poise::command(slash_command)]
 pub(crate) async fn checkserver(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
-    super::server_probe(ctx, handle_checkserver(caller_id)).await
+    super::run_async_and_reply(ctx, handle_checkserver(caller_id)).await
 }
 
-/// Check the latency from this fishing host to the game server, plus the player count
 #[poise::command(slash_command)]
 pub(crate) async fn ping(
     ctx: Context<'_>,
-    #[description = "server address (domain or IP), empty uses the default target"] host: Option<
-        String,
-    >,
-    #[description = "server port 1-65535, empty uses the default port"] port: Option<i64>,
+    host: Option<String>,
+    port: Option<i64>,
 ) -> Result<(), Error> {
     let port = match port {
         Some(port) => match u16::try_from(port) {
@@ -56,5 +50,5 @@ pub(crate) async fn ping(
 
     let caller_id = ctx.author().id.get();
 
-    super::server_probe(ctx, handle_ping(caller_id, host.as_deref(), port)).await
+    super::run_async_and_reply(ctx, handle_ping(caller_id, host.as_deref(), port)).await
 }

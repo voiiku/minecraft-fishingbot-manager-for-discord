@@ -35,13 +35,8 @@ pub struct ProcessLog {
 }
 
 impl ProcessLog {
-    /// 获取进程的 logger
-    /// 当首次调用时就创建本次的日志文件，安装到 `log` 框架上，设置级别，记录启动信息。
-    ///
-    /// 必须在配置文件加载之后调用（需要读debug字段）
-    /// 失败（磁盘写满、文件被删）时不该演变成游戏账号上不了线。
+    /// 在配置加载后安装进程 logger；日志文件不可用时继续使用终端。
     pub fn get_or_init() -> &'static Self {
-        // 如果已经存在就获取。
         if let Some(logger) = PROCESS_LOGGER.get() {
             println!(
                 "{}",
@@ -49,8 +44,7 @@ impl ProcessLog {
             );
             return logger;
         }
-        // 否则就创建文件
-        // 创建失败不影响程序运行，告警等 logger 装好后输出。
+        // 文件创建失败不影响运行，待 logger 安装后报告。
         let first_line = text::get().log_text(text::LogText::ProcessLogFirstLine);
         let mut file_warning: Option<String> = None;
         let (log_path, log_file) = match config::Config::install_dir().and_then(|dir| {
@@ -63,18 +57,14 @@ impl ProcessLog {
             }
         };
 
-        // 安装到 `log` 框架，设置全局级别：级别只由配置里的 `[log] debug` 决定。
         let levels = LogLevels::from_config();
-        // 初始化全局的PROCESS_LOGGER
         let logger = PROCESS_LOGGER.get_or_init(|| Self {
             levels,
             file: log_file.map(Mutex::new),
         });
 
         match log::set_logger(logger) {
-            // 设置日志等级上限，取两者（本程序自身日志和框架日志）最宽的。
             Ok(()) => log::set_max_level(levels.own.max(levels.dependencies)),
-            // 走到这里说明 `log` 的全局位置已经存在了，是代码逻辑错误。
             Err(e) => println!(
                 "{}",
                 text::get().log_text(text::LogText::ProcessLogInstallFailed {
@@ -83,7 +73,6 @@ impl ProcessLog {
             ),
         }
 
-        // 输出结果：警告、日志位置，配置已加载文本和进程ID。
         if let Some(warning) = file_warning {
             log::warn!("{warning}");
         }
@@ -118,7 +107,6 @@ impl Log for ProcessLog {
     }
 
     fn log(&self, record: &Record) {
-        // 如果自身没启用就直接返回
         if !self.enabled(record.metadata()) {
             return;
         }
@@ -132,11 +120,9 @@ impl Log for ProcessLog {
         let mut stderr = std::io::stderr();
         let _ = stderr.write_all(line.as_bytes());
         let _ = stderr.flush();
-        // 如果已经持有句柄，且能够持有日志文件的锁，就写入
         if let Some(file) = &self.file
             && let Ok(mut file) = file.lock()
         {
-            // 每行写入后立即刷新。
             let _ = file.write_all(line.as_bytes());
             let _ = file.flush();
         }

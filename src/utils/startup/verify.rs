@@ -1,7 +1,7 @@
 //! 启动后的复核：会话存活满宽限期即算拉起成功，日志只用于说明是否已确认进服。
 //!
 //! 判定分两次（见 [`verify_batch`]）：拉起后立即判定一次（会话消失或残壳即失败），
-//! 等满 `timing.check_grace_ms` 后再判定一次（仍存活即成功）。
+//! 等满 `timing.check_grace` 后再判定一次（仍存活即成功）。
 //! 日志不参与成败判定，只决定成功明细附注哪一种说法（见 [`BotStartResults::mark_online_confirmed`]）。
 
 use std::collections::{HashMap, HashSet};
@@ -12,7 +12,7 @@ use crate::text;
 use crate::utils::bot_dirs::BotDirEntry;
 use crate::utils::bot_status::ConnectionStatus;
 use crate::utils::reply::{BotStartOutcome, BotStartResults};
-use crate::utils::screen::{ScreenSession, active_screen_sessions, session_name};
+use crate::utils::screen::{ScreenSession, screen_session_snapshot, session_name};
 
 /// 复核这一批：两次判定后把结果写回对应条目（判定依据见模块文档）。
 pub(super) fn verify_batch(results: &mut BotStartResults, check_grace: Duration) {
@@ -22,7 +22,14 @@ pub(super) fn verify_batch(results: &mut BotStartResults, check_grace: Duration)
     }
 
     // 第一次判定：会话不在或残壳的当场失败，不必等满宽限期。
-    let (gone_bot_entries, surviving_bot_entries) = split_by_session_state(&launched_bot_entries);
+    let (gone_bot_entries, surviving_bot_entries) =
+        match split_by_session_state(&launched_bot_entries) {
+            Ok(entries) => entries,
+            Err(error) => {
+                record_lookup_failure(results, &launched_bot_entries, &error);
+                return;
+            }
+        };
     for bot_dir_entry in &gone_bot_entries {
         record_failure(results, bot_dir_entry);
     }
@@ -32,7 +39,13 @@ pub(super) fn verify_batch(results: &mut BotStartResults, check_grace: Duration)
 
     // 第二次判定：等满宽限期，仍存活的算拉起成功；日志只决定成功明细的附注。
     thread::sleep(check_grace);
-    let active_session_names: HashSet<String> = active_screen_sessions().into_keys().collect();
+    let active_session_names: HashSet<String> = match screen_session_snapshot() {
+        Ok(sessions) => sessions.into_keys().collect(),
+        Err(error) => {
+            record_lookup_failure(results, &surviving_bot_entries, &error);
+            return;
+        }
+    };
     for bot_dir_entry in surviving_bot_entries {
         let session_exists = session_name(&bot_dir_entry.bot_name)
             .is_ok_and(|target_session_name| active_session_names.contains(&target_session_name));
@@ -49,6 +62,21 @@ pub(super) fn verify_batch(results: &mut BotStartResults, check_grace: Duration)
             results.mark_online_confirmed(&bot_dir_entry.bot_name);
         }
         results.set_outcome(&bot_dir_entry.bot_name, BotStartOutcome::Succeeded);
+    }
+}
+
+fn record_lookup_failure(results: &mut BotStartResults, entries: &[BotDirEntry], error: &str) {
+    let i18n_text = text::get();
+    for entry in entries {
+        let failure = i18n_text.bot_line(&entry.bot_name, error);
+        log::warn!(
+            "{}",
+            i18n_text.log_text(text::LogText::StartVerificationFailed {
+                bot_name: &entry.bot_name,
+                reason: &failure,
+            })
+        );
+        results.set_outcome(&entry.bot_name, BotStartOutcome::Failure(failure));
     }
 }
 
@@ -78,15 +106,17 @@ fn launched_bot_entries(results: &BotStartResults) -> Vec<BotDirEntry> {
 }
 
 /// 按会话状态分组：返回（会话不在或残壳的，仍存活的）；拼不出会话名的按"不在"算。
-fn split_by_session_state(bot_entries: &[BotDirEntry]) -> (Vec<BotDirEntry>, Vec<BotDirEntry>) {
-    let active_sessions: HashMap<String, ScreenSession> = active_screen_sessions();
+fn split_by_session_state(
+    bot_entries: &[BotDirEntry],
+) -> Result<(Vec<BotDirEntry>, Vec<BotDirEntry>), String> {
+    let active_sessions: HashMap<String, ScreenSession> = screen_session_snapshot()?;
 
-    bot_entries.iter().cloned().partition(|bot_dir_entry| {
+    Ok(bot_entries.iter().cloned().partition(|bot_dir_entry| {
         !session_name(&bot_dir_entry.bot_name)
             .ok()
             .and_then(|target_session_name| active_sessions.get(&target_session_name))
             .is_some_and(|session| !session.is_dead)
-    })
+    }))
 }
 
 #[cfg(test)]

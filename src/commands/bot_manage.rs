@@ -6,18 +6,13 @@ use minecraft_fishingbot_manager_for_discord::{
     BotManageAction, handle_bot_login, handle_bot_login_await, handle_bot_manage, text,
 };
 
-/// Manage bot accounts
 #[poise::command(slash_command, subcommands("add", "del", "rename", "login"))]
 pub(crate) async fn bot(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Add a bot (its token is added afterwards)
 #[poise::command(slash_command)]
-pub(crate) async fn add(
-    ctx: Context<'_>,
-    #[description = "bot name"] name: String,
-) -> Result<(), Error> {
+pub(crate) async fn add(ctx: Context<'_>, name: String) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
     single_bot_manage(ctx, move || {
@@ -26,13 +21,10 @@ pub(crate) async fn add(
     .await
 }
 
-/// Delete a bot and all of its data (stop it first)
 #[poise::command(slash_command)]
 pub(crate) async fn del(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_stopped_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_stopped_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -42,14 +34,11 @@ pub(crate) async fn del(
     .await
 }
 
-/// Rename a bot (stop it first)
 #[poise::command(slash_command)]
 pub(crate) async fn rename(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_stopped_bot_names"]
-    #[description = "current bot name"]
-    old_name: String,
-    #[description = "new bot name"] new_name: String,
+    #[autocomplete = "super::autocomplete_stopped_bot_names"] old_name: String,
+    new_name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -59,13 +48,10 @@ pub(crate) async fn rename(
     .await
 }
 
-/// Log a bot in with Microsoft (returns a link and a code)
 #[poise::command(slash_command)]
 pub(crate) async fn login(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_stopped_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_stopped_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
     let command_path = ctx.command().qualified_name.clone();

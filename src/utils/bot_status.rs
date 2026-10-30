@@ -1,14 +1,4 @@
-//! 从日志文本推断机器人状态（连接状态与暂停状态）。
-//! 两类状态的维护方式不同（见 [`BotPauseStatus`]）：
-//! *连接状态只能由日志确认，获取的时候实时读日志，不存储；
-//! *暂停状态是相关指令触发时 `/pause`、`/unpause` ，立即读取日志并根据返回结果修改为最新状态。
-//!
-//! 要匹配的关键词分两处来源：只能自己确定的（进服提示）来自配置 `[keywords]`；
-//! 断线重连提示的前后缀**由 JAR 按自己的语言资源打印，所以按当前语言取自 [`crate::text`]
-//! （`jar_reconnect_*` 方法）。`/pause`、`/unpause` 的回显也是关键词，但归配置 `[command_echo]`，
-//! 只由 [`PauseCommand`] 使用，不参与这里的状态判定。
-//!
-//! "进程结束"不在这里判断：它看会话状态（见 [`ConnectionStatus::Stopped`]），与日志无关。
+//! 从日志实时判断连接状态；暂停状态根据指令回显保存在内存中。
 
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
@@ -77,21 +67,15 @@ impl ConnectionStatus {
 }
 
 impl BotDirEntry {
-    /// 获取某个机器人最新的连接状态：读它最新日志。
-    /// 实现在本模块而不是 `bot_dirs`，因为这是对机器人状态判定的逻辑，`bot_dirs` 只负责文件夹与文件名。
-    /// 只会得出"在线 / 重连 / 初始中"（或三种读不到日志的报错）；"进程已结束"看会话状态，
-    /// 由 `utils::running_bots` 直接给出（见 `ConnectionStatus::Stopped`）。
+    /// 根据最新日志判断连接状态；进程结束由 screen 会话状态判断。
     pub fn connection_status(&self) -> Result<ConnectionStatus, String> {
-        // 挑最新那份日志
         let log_path = latest_log_path(&self.bot_dir_path);
 
         connection_status_of_log(&self.bot_name, log_path.as_deref())
     }
 }
 
-/// [`BotDirEntry::connection_status`] 的实现：从最新日志末尾往回读，读到第一个能下结论的关键词就停。
-/// `log_path` 是那一份日志（`None` = 这个机器人还没有日志文件）；
-/// 拆出来是为了能不吃配置地单测（拼路径那一步在它上面）。
+/// 从日志末尾读取最新的状态关键词。
 fn connection_status_of_log(
     bot_name: &str,
     log_path: Option<&Path>,
@@ -101,19 +85,16 @@ fn connection_status_of_log(
     };
 
     let online_keyword = &config::Config::get().keywords.online;
-    // 记下最新的结论，初始为无结论。
     let mut connection: Option<ConnectionStatus> = None;
 
     match read_lines_backwards_until(log_path, |line| {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            // 空行不给出任何结论。
             return false;
         }
 
         connection = ConnectionStatus::from_line(trimmed, online_keyword);
 
-        // 当连接状态有结论了就立刻停止。
         connection.is_some()
     }) {
         // 一行都没扫到代表日志是空文件（正常运行时不会出现：建日志文件时就写了首行）。
@@ -122,7 +103,6 @@ fn connection_status_of_log(
         }
         // 没有能判断状态的关键词代表机器人刚启动。
         Ok(_) => Ok(connection.unwrap_or(ConnectionStatus::Initializing)),
-        // 读取出现问题（打不开、读取失败）。
         Err(_) => Err(text::get().bot_status_unreadable_log(bot_name)),
     }
 }
@@ -182,7 +162,6 @@ impl BotPauseStatus {
 }
 
 /// 进程内保存的"所有在跑的机器人的状态"，按机器人名存，惰性存储，只在调用时更新。
-/// 这是本项目唯一的进程级可变状态
 /// 约定：只有能确认到命令成功执行的函数会改它（`/pause`、`/unpause` 里的 [`BotPauseStatusMemory::update_bot_pause_status`]），别处只读。
 /// 手动操作（如/command bot /pause）不会更新它，因为自由指令是不可预测的。
 /// 同一台机器人的 `/pause` 与 `/unpause` 同时到达时，状态按最新回显记录。
@@ -307,7 +286,7 @@ impl PauseCommand {
 /// 只有 `/pause`、`/unpause` 用它：它们的成功回显写在配置 `[command_echo]` 里
 /// （`PauseCommand::echo_keyword`）；其他指令无法预测回显。
 /// 1. 先 `inject()`：失败直接返回；
-/// 2. 等配置里 `command_echo.wait_ms`（JAR 收到指令会同步打一行回显，等它写入日志）；
+/// 2. 等配置里 `command_echo.wait`（JAR 收到指令会同步打一行回显，等它写入日志）；
 /// 3. 看最新日志最后 `command_echo.scan_lines` 行里最新的一条 pause/unpause 回显是谁的
 ///    （`PauseCommand::last_confirmed_pause_command`）；
 /// 4. 是本次执行预期的回显 → 记下状态、返回 `Ok(true)`；是另一条指令的回显 → 状态按它记（它才是真的），

@@ -33,10 +33,11 @@ pub use fs::{read_last_lines, remove_dir_all_if_exists};
 pub use permission::{RequiredPermission, has_permission};
 pub use reply::{IntoReplyText, Report};
 pub(crate) use restart::restart_bot_sessions;
+pub(crate) use running_bots::status_row;
 pub use running_bots::{
-    all_running_bot_names, all_running_bot_status_rows, refusal_if_not_stopped,
-    split_bot_entries_by_is_running,
+    all_running_bot_names, refusal_if_not_stopped, split_bot_entries_by_is_running,
 };
+pub(crate) use screen::screen_session_snapshot;
 pub use screen::{is_bot_screen_running, send_command_to_single_bot};
 pub(crate) use shutdown::{stop_all_bot_sessions, stop_single_bot_session};
 pub use startup::StartupQueue;

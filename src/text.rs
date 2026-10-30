@@ -235,6 +235,29 @@ pub trait Text: Send + Sync {
     /// `/commandall`：把"发的是什么"插进计数行里。
     fn commandall_sending(&self, bot_command: &str) -> String;
 
+    /// 反 AFK 已启动（不代表输入已送达）。
+    fn anti_afk_started(&self) -> &'static str;
+    /// 反 AFK 已在运行，未重复启动。
+    fn anti_afk_already_running(&self) -> &'static str;
+    /// 反 AFK 已停止。
+    fn anti_afk_stopped(&self) -> &'static str;
+    /// `/show status` 中的反 AFK 线程状态。
+    fn anti_afk_status(&self, running: bool) -> &'static str;
+    /// 反 AFK 未运行，无需停止。
+    fn anti_afk_stop_not_running(&self) -> &'static str;
+    /// 反 AFK 状态锁访问失败。
+    fn anti_afk_lock_failed(&self, reason: &str) -> String;
+    /// 反 AFK 配置构造失败。
+    fn anti_afk_config_failed(&self, reason: &str) -> String;
+    /// 反 AFK 线程运行失败。
+    fn anti_afk_worker_failed(&self, reason: &str) -> String;
+    /// 反 AFK 启动失败。
+    fn anti_afk_start_failed(&self, reason: &str) -> String;
+    /// 反 AFK 停止操作失败。
+    fn anti_afk_stop_failed(&self, reason: &str) -> String;
+    /// 反 AFK 状态查询失败。
+    fn anti_afk_status_failed(&self, reason: &str) -> String;
+
     // ==================== 只读查询（`show/*`） ====================
     /// `/show status` 的报告标题。
     fn status_title(&self) -> &'static str;
@@ -290,6 +313,10 @@ pub trait Text: Send + Sync {
     fn ping_latency(&self, latency_ms: u128) -> String;
     /// `/ping`：连接失败。
     fn ping_connect_failed(&self, host: &str, port: u16, reason: &str) -> String;
+    /// 域名解析没有返回地址。
+    fn ping_no_address_reason(&self) -> &'static str;
+    /// 建连失败时没有具体错误的原因。
+    fn ping_connection_failed_reason(&self) -> &'static str;
     /// `/ping`：连接超时。
     fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String;
     /// `/ping`：用户指定的目标是本地或私网地址。
@@ -330,6 +357,8 @@ pub trait Text: Send + Sync {
     ) -> String;
     /// 拉起单台时发生内部错误（panic），作为失败原因传给 [`Text::start_launch_failed`]。
     fn start_internal_error_reason(&self) -> &'static str;
+    /// 启动队列已满时的失败原因。
+    fn start_queue_full_reason(&self) -> &'static str;
     /// `/startall` 报告中的启动队列设置：每批最多几台、批内相邻两台的间隔、批与批之间的间隔。
     fn command_start_queue_summary(
         &self,
@@ -374,6 +403,10 @@ pub trait Text: Send + Sync {
     fn read_bot_list_failed(&self, reason: &str) -> String;
     /// 读机器人根目录失败。
     fn read_bots_root_failed(&self, reason: &str) -> String;
+    /// 无法查询 screen 会话。
+    fn screen_list_failed(&self, reason: &str) -> String;
+    /// screen 输出无法识别。
+    fn screen_unrecognized_output(&self, output: &str) -> String;
     /// "运行中不许动"的拒绝文案。
     fn refusal_bot_running(&self, bot_name: &str) -> String;
     /// 拒绝：机器人正在启动队列中排队（"运行中拒绝操作"的第二种情形）。
@@ -429,9 +462,10 @@ pub trait Text: Send + Sync {
     // ======== 指令元数据（注册到 Discord 的说明文字，跟随 `[i18n] language`） ========
     /// 全部指令与子指令的说明（表结构见 [`CommandText`]）。
     ///
-    /// 注册指令时用它覆盖 poise 宏里写死的说明，所以它跟的是配置里的语言，与 Discord 客户端语言无关。
-    /// 齐备性由覆盖测试保证：漏一条指令或选项，测试就失败。
+    /// 注册前按配置语言填充并校验。
     fn command_texts(&self) -> &'static [CommandText];
+    /// 指令说明表不完整或无效时的诊断。
+    fn command_text_invalid(&self, path: &str, problem: CommandTextProblem) -> String;
 
     /// `/token` 弹窗的标题。
     fn token_modal_title(&self) -> &'static str;
@@ -464,6 +498,15 @@ pub struct CommandText {
     pub description: &'static str,
     /// 选项说明：`(选项名, 说明)`；没有选项就写空表。
     pub options: &'static [(&'static str, &'static str)],
+}
+
+/// 指令说明表与指令定义不一致，或说明长度不合法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTextProblem {
+    Missing,
+    Duplicate,
+    Unknown,
+    InvalidLength { length: usize },
 }
 
 /// 全部语言的实现。

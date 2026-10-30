@@ -39,7 +39,7 @@ Available to everyone:
 * `/whoami`: show the caller's Discord user ID.
 * `/ping [host] [port]`: probe a game server; without arguments it uses the defaults in `[ping]`.
 * `/checkserver`: show the fishing server's own performance (CPU, memory, disk, uptime).
-* `/show status`: check the status of every running bot.
+* `/show status`: check running bots and anti-AFK thread status.
 * `/show botconfig`: view the config file shared by all fishing bots, sent as an attachment.
 * `/show mybots`, `/show allbots`, `/show admins`: view your own bots, all bots, or the administrator list.
 * `/bot add <name>`: add a bot (a token is still required before it can be used).
@@ -57,6 +57,7 @@ Available to a bot's creator or an administrator:
 Available only to administrators:
 
 * `/startall`, `/stopall`, `/restartall`, `/commandall <command>`: batch operations on all bots.
+* `/anti-afk <on|off>`: start or stop anti-AFK for matching screen sessions; check its status with `/show status`.
 
 ## 4. Project status
 

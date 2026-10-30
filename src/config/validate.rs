@@ -3,12 +3,14 @@
 //! [`validate`] 的第一个调用是语言校验：此时还没有文案实现，语言错误固定英文；语言合法后立刻安装，
 //! 其余校验的错误才能按配置语言格式化。
 
+use std::time::Duration;
+
 use crate::text;
 
 use super::Config;
 use super::schema::{
-    Admins, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig, KeywordsConfig,
-    MAX_AUTOCOMPLETE_CHOICES, Paths, PingConfig, RawGameLogsConfig, RuntimeConfig,
+    Admins, AntiAfkConfig, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig,
+    KeywordsConfig, MAX_AUTOCOMPLETE_CHOICES, Paths, PingConfig, RawGameLogsConfig, RuntimeConfig,
     StartupQueueConfig, TextConfig, TimingConfig,
 };
 
@@ -34,11 +36,35 @@ pub(super) fn validate(config: &Config) -> Result<(), String> {
     validate_keywords(&config.keywords)?;
     validate_command_echo(&config.command_echo)?;
     validate_runtime(&config.runtime)?;
+    validate_anti_afk(&config.anti_afk, &config.runtime.screen_prefix)?;
     validate_startup_queue(&config.startup_queue)?;
     validate_timing(&config.timing)?;
     validate_raw_game_logs(&config.raw_game_logs)?;
     validate_ping(&config.ping)?;
     validate_text(&config.text)
+}
+
+fn validate_anti_afk(config: &AntiAfkConfig, screen_prefix: &str) -> Result<(), String> {
+    require_non_empty("anti_afk.command", &config.command)?;
+    if config.execution_interval_seconds == 0 {
+        return Err(invalid(
+            "anti_afk.execution_interval",
+            text::ConfigRequirement::GreaterThanZero,
+        ));
+    }
+    if Duration::try_from_secs_f64(config.input_delay_seconds).is_err() {
+        return Err(invalid(
+            "anti_afk.input_delay",
+            text::ConfigRequirement::NonNegativeDuration,
+        ));
+    }
+    config.input_pulse_config(screen_prefix).map_err(|error| {
+        invalid(
+            "anti_afk.command",
+            text::ConfigRequirement::InputPulseCommand { reason: &error },
+        )
+    })?;
+    Ok(())
 }
 
 /// 生成字段级错误信息。
@@ -96,7 +122,7 @@ fn validate_ping(ping: &PingConfig) -> Result<(), String> {
     }
     if ping.timeout_ms == 0 {
         return Err(invalid(
-            "ping.timeout_ms",
+            "ping.timeout",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -256,13 +282,13 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
     }
     if startup_queue.bot_login_interval_ms == 0 {
         return Err(invalid(
-            "startup_queue.bot_login_interval_ms",
+            "startup_queue.bot_login_interval",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
     if startup_queue.batch_login_interval_ms == 0 {
         return Err(invalid(
-            "startup_queue.batch_login_interval_ms",
+            "startup_queue.batch_login_interval",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -281,7 +307,7 @@ fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
     // 复核等待不能为 0，否则"拉起完立刻判定"，等于没复核。
     if timing.check_grace_ms == 0 {
         return Err(invalid(
-            "timing.check_grace_ms",
+            "timing.check_grace",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -291,7 +317,7 @@ fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
     // 所以"探活比窗口还慢"这种组合已经不可能配出来。
     if timing.watchdog_window_ms == 0 {
         return Err(invalid(
-            "timing.watchdog_window_ms",
+            "timing.watchdog_window",
             text::ConfigRequirement::WatchdogTimingPositive,
         ));
     }
@@ -320,7 +346,7 @@ fn validate_command_echo(command_echo: &CommandEchoConfig) -> Result<(), String>
     }
     if command_echo.wait_ms == 0 {
         return Err(invalid(
-            "command_echo.wait_ms",
+            "command_echo.wait",
             text::ConfigRequirement::GreaterThanZero,
         ));
     }
@@ -505,6 +531,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn anti_afk_parameters_are_validated_at_startup() {
+        let (dir, text) = staged_example("anti-afk");
+        for (field, value) in [
+            ("command", "\"\""),
+            ("command", "\"   \""),
+            ("command", "\"!UNKNOWN!\""),
+            ("command", "\"!SHIFT+A!\""),
+            ("execution_interval", "0"),
+            ("input_delay", "-0.1"),
+            ("input_delay", "inf"),
+            ("input_delay", "nan"),
+            ("input_delay", "1e100"),
+        ] {
+            let modified = set_field(&text, field, value);
+            let error = load_text(&modified).expect_err("invalid anti-AFK value must fail");
+            assert!(error.contains(&format!("anti_afk.{field}")), "{error}");
+        }
+
+        for value in ["0.0", "0.03", "1.5"] {
+            let modified = set_field(&text, "input_delay", value);
+            load_text(&modified).expect("valid input delay must be accepted");
+        }
+
+        let modified = set_field(&text, "command", "\"status!ENTER!\"");
+        let config = load_text(&modified).expect("valid screen input must be accepted");
+        let pulse = config
+            .anti_afk
+            .input_pulse_config(&config.runtime.screen_prefix)
+            .expect("validated config must construct the runtime input");
+        assert_eq!(pulse.target_mode, input_pulse::TargetMode::ScreenSession);
+        assert_eq!(pulse.target_match, config.runtime.screen_prefix);
+        assert_eq!(pulse.command, "status!ENTER!");
+        assert_eq!(pulse.execution_interval_seconds, 180);
+        assert_eq!(pulse.input_delay_seconds, 0.05);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 自动候选上限必须落在 1..=25：0 与 26 都要被打回来（Discord 的硬上限是 25）。
     #[test]
     fn autocomplete_choices_must_be_within_the_platform_limit() {
@@ -628,11 +692,11 @@ mod tests {
     #[test]
     fn zero_ping_timeout_is_reported() {
         let (dir, text) = staged_example("ping-timeout");
-        let text = set_field(&text, "timeout_ms", "0");
+        let text = set_field(&text, "timeout", "0");
 
         let err = load_text(&text).expect_err("0 应当报错");
 
-        assert!(err.contains("ping.timeout_ms"), "报错应指出字段: {err}");
+        assert!(err.contains("ping.timeout"), "报错应指出字段: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -658,12 +722,12 @@ mod tests {
     #[test]
     fn zero_watchdog_timing_is_reported() {
         let (dir, text) = staged_example("zero-watchdog-window");
-        let text = set_field(&text, "watchdog_window_ms", "0");
+        let text = set_field(&text, "watchdog_window", "0");
 
         let err = load_text(&text).expect_err("0 应当报错");
 
         assert!(
-            err.contains("timing.watchdog_window_ms"),
+            err.contains("timing.watchdog_window"),
             "报错应指出字段: {err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -673,14 +737,11 @@ mod tests {
     #[test]
     fn zero_check_grace_ms_is_reported() {
         let (dir, text) = staged_example("zero-settle-per-bot");
-        let text = set_field(&text, "check_grace_ms", "0");
+        let text = set_field(&text, "check_grace", "0");
 
         let err = load_text(&text).expect_err("0 应当报错");
 
-        assert!(
-            err.contains("timing.check_grace_ms"),
-            "报错应指出字段: {err}"
-        );
+        assert!(err.contains("timing.check_grace"), "报错应指出字段: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -689,7 +750,7 @@ mod tests {
     fn zero_start_batch_timing_is_reported() {
         for (field, tag) in [
             ("max_batch_size", "zero-start-batch-size"),
-            ("bot_login_interval_ms", "zero-start-interval"),
+            ("bot_login_interval", "zero-start-interval"),
             ("max_pending_requests", "zero-start-queue-capacity"),
         ] {
             let (dir, text) = staged_example(tag);

@@ -72,11 +72,9 @@
    存疑或存在更优实现时就地标注，`?` 表示待定或存疑，`!` 表示需要修改。不得写成大段设计说明。示例配置
    `minecraft-fishingbot-manager-for-discord.conf.example.toml` 是唯一例外：其注释使用英文（面向按模板修改
    配置的部署者），仅"取值随语言变化、中文部署必须修改"的项额外增加一行 `# CHINESE_SIMPLIFIED:` 提示，见
-   [docs/mods/i18n/i18n-zh_cn.md 第 1 节](../mods/i18n/i18n-zh_cn.md)。会生成可见文案的行同样使用英文，即命令
-   `///` 第一段与选项的 `#[description]`；poise 宏将其作为发送给 Discord 的说明（宏仅接受字面量，无法在运行期
-   替换），因此这两处必须与 `en_us.rs` 表逐字一致（缺项时的英文副本，不是语言回落，见
-   [docs/mods/commands/commands-zh_cn.md 第 8.1 节](../mods/commands/commands-zh_cn.md)）；第一段之后的段落仍使用
-   中文，仅供维护者阅读，不发送给用户。涉及校验责任或职责归属时，必须明确到具体层级（命令层、指令入口层、
+   [docs/mods/i18n/i18n-zh_cn.md 第 1 节](../mods/i18n/i18n-zh_cn.md)。指令及选项说明只写在语言表中，
+   在注册前校验并填入，见 [命令文档](../mods/commands/commands-zh_cn.md#171-文案表校验)。
+   涉及校验责任或职责归属时，必须明确到具体层级（命令层、指令入口层、
    业务层、utils 原语），例如"权限由业务层校验：本函数由 [`crate::handle_all_bots_control`] 调用，后者先判定
    `has_permission(caller_id, RequiredPermission::MustBeAdmin)`"；仅写"由 X 统一校验"无法体现分层。
 7. 参数清洗的归属：Discord 提供结构化 option，但其值仍是用户输入的原始文本。命令层仅负责取值、数字校验与分发，
@@ -118,12 +116,12 @@
   （`forget_bot_pause_status`）。因此 `/show status` 不必为查找从未出现的 pause 关键词而扫描到文件开头。暂停状态仅由
   `/pause` 与 `/unpause` 的确认路径写入，其他位置只读。例外为"进程已结束"：该状态不读取日志，当会话仅剩
   `(Dead ...)` 残壳时由 `running_bots` 直接给出（JVM 已不存在，日志最后一行可能仍为旧的"在线"）。
-* `/show status` 的表格没有专门类型：数据行由 `utils::running_bots::all_running_bot_status_rows()` 即时拼接
+* `/show status` 的表格没有专门类型：数据行由 `utils::running_bots::status_row()` 即时拼接
   （四格 + `" | "`），表头由 `show/status.rs` 即时拼接；两处列顺序必须一致（列名位于 `text`，中英文各一份）。
   完整实现见 [docs/mods/commands/commands-zh_cn.md 第 6.2 节](../mods/commands/commands-zh_cn.md#62-show-status)。
 * 回复内容不得超出可验证范围：`/start` 使用启动复核结果，按"已确认进服"、"会话已存在但尚未确认状态"或"启动失败"
   回答；`/restart` 的停止阶段可确认，启动阶段仍仅回复"已发送重启命令"；`/stop` 的停止流程当场复核，因此可以回复
-  "已成功停止"；`/pause` 与 `/unpause` 发送后等待配置中的 `command_echo.wait_ms`（默认 300 毫秒，
+  "已成功停止"；`/pause` 与 `/unpause` 发送后等待配置中的 `command_echo.wait`（默认 300 毫秒，
   `utils::bot_status::confirm_pause_command`）在日志末尾查找回显，确认回显后回复"已确认暂停"或"已恢复"，未确认时
   仅回复"已发送"。新增指令的措辞必须遵循同一原则：只陈述已验证的状态。
 * 交互必须在 3 秒内应答，否则用户会看到"交互失败"。本项目的操作（启动 JVM、等待批次冷却、执行 `screen -list`、
@@ -138,7 +136,7 @@
     请求已加入全局启动队列；其他长指令先报告已开始执行；任务完成后发送 `Report::render()` 的完整结果。第二条
     消息按 Discord defer 规则作为新消息发送；修改该行为后必须在真实部署中回归验证。
   * 交互令牌有效期为 15 分钟：所有 defer 后的回复必须在该窗口内发出。批量启动耗时超过该窗口时（台数多或
-    `[startup_queue] bot_login_interval_ms` 大），followup 必定失败，因此长指令的最终报告经
+    `[startup_queue] bot_login_interval` 大），followup 必定失败，因此长指令的最终报告经
     `commands::say_final_report` 处理：无法发送时改发普通频道消息（普通消息不受交互令牌约束），并记录一条
     `LogText::ReportPostedToChannel` 日志说明回退原因与失败原因。批量操作回复方式的评估见第 8.1 节；当前行为
     未改变。
@@ -268,7 +266,7 @@
 
 细节：
 
-* 时序来自配置中的判定窗口 `timing.watchdog_window_ms`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
+* 时序来自配置中的判定窗口 `timing.watchdog_window`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
   由该值派生（`TimingConfig::probe_interval` / `first_handshake_timeout`），不再作为配置项，因为仅按窗口比例取值
   才有意义。入口将三项写入 `Watchdog`，判定与探活共用同一份；派生规则同时排除了"探活间隔大于窗口、单次失败即判定
   掉线"的配置。
@@ -294,13 +292,13 @@
 
 1. `StartupQueue::start_bots(bots)`：命令侧入口，创建账本 → `add_bots_to_queue` 入队 → `wait_until_done()` 等待这些
    条目均被拉起一次，取回结果并交给 `verify_batch`。
-2. 启动线程 `run_starter`：等待队列非空 → 等待 `[startup_queue] batch_login_interval_ms`（从上一批出队时刻计算）→
+2. 启动线程 `run_starter`：等待队列非空 → 等待 `[startup_queue] batch_login_interval`（从上一批出队时刻计算）→
    `pop_bots_from_head(max_batch_size)` 取出一批。
 3. `start_single_batch` 逐台调用 `launch_one_bot` → `add_bot_for_login`：创建本次日志文件（失败则不拉起会话）→ 准备
    FishingBot 的原始日志目录（`<bot_dir>/<bot_logs_dir>/raw`，`raw/log0.log` 指向 `/dev/null`）→ 使用 `screen -dmS`
    拉起会话，命令形如 `java … | grep -v -E '<filter_regex>' | tee -a '<log_path>'`；相邻两台之间等待
-   `bot_login_interval_ms`。
-4. `verify_batch`：拉起后立即使用 `screen -list` 快照判定一次，等待 `timing.check_grace_ms` 后再次判定；仅第二次仍
+   `bot_login_interval`。
+4. `verify_batch`：拉起后立即使用 `screen -list` 快照判定一次，等待 `timing.check_grace` 后再次判定；仅第二次仍
    存在时才算拉起成功，日志仅用于说明是否已确认进服。
 
 新增流程必须沿用该风格：每一步对应一个函数，且每一步均可独立理解。

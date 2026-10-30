@@ -24,7 +24,7 @@ pub(crate) fn rename_bot(
     refusal_if_not_stopped(bot_dir_entry)?;
 
     // 全服重名校验。
-    if is_bot_name_taken(&clean_new_bot_name) {
+    if is_bot_name_taken(&clean_new_bot_name)? {
         return Err(text::get().bot_rename_name_taken(&clean_new_bot_name));
     }
 

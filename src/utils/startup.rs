@@ -38,18 +38,18 @@ const RESULT_TIMEOUT_MARGIN_FACTOR: u64 = 2;
 pub struct StartupQueue {
     /// `[startup_queue] max_batch_size`：一批最多拉起几台。
     max_batch_size: usize,
-    /// `[startup_queue] bot_login_interval_ms`：一批之内相邻两台的间隔。
+    /// `[startup_queue] bot_login_interval`：一批之内相邻两台的间隔（内部毫秒）。
     bot_login_interval_ms: u64,
-    /// `[startup_queue] batch_login_interval_ms`：批与批之间的间隔。
+    /// `[startup_queue] batch_login_interval`：批与批之间的间隔（内部毫秒）。
     batch_login_interval_ms: u64,
     /// `[startup_queue] max_pending_requests`：队列最多暂存几台。
     max_pending_requests: usize,
-    /// `timing.check_grace_ms`：每次启动请求拉起后的会话存活宽限期（复核据此判定拉起成败）。
+    /// `timing.check_grace`：每次启动请求拉起后的会话存活宽限期（内部毫秒）。
     check_grace_ms: u64,
     /// 待启动列表（先进先出；每台带着自己属于哪个账本，见 `queue.rs`）。
     waiting_bots: Mutex<VecDeque<QueuedBot>>,
     /// 最近一次取出一批的时刻（批间间隔从它算起，见 `queue.rs`）。
-    latest_poped_timestamp: Mutex<Instant>,
+    last_batch_dequeued_at: Mutex<Instant>,
     /// 队列被写入时唤醒启动线程（见 `queue.rs`）。
     added: Condvar,
     /// 已收到停止拉起请求（"停止全部机器人"的第一步，见 `starter.rs`）。
@@ -119,9 +119,9 @@ impl StartupQueue {
                 batch_login_interval_ms: startup_queue.batch_login_interval_ms,
                 max_pending_requests: startup_queue.max_pending_requests,
                 check_grace_ms: settings.timing.check_grace_ms,
-                // 运行状态初值：等待列表为空、无待唤醒、线程未启动；取批时刻从当前时间起算，首条命令无需等待。
+                // 首批的批间等待从队列初始化时刻开始计算。
                 waiting_bots: Mutex::new(VecDeque::new()),
-                latest_poped_timestamp: Mutex::new(Instant::now()),
+                last_batch_dequeued_at: Mutex::new(Instant::now()),
                 added: Condvar::new(),
                 stop_requested: AtomicBool::new(false),
                 starter: OnceLock::new(),
@@ -192,8 +192,10 @@ impl StartupQueue {
             // 队列满了：没收下的那部分当场记成失败（回复里能看到），其余照常排队。
             let i18n_text = text::get();
             for mut queued_bot in rejected {
-                let failure_line = i18n_text
-                    .start_launch_failed(&queued_bot.bot().bot_name, starter::QUEUE_FULL_REASON);
+                let failure_line = i18n_text.start_launch_failed(
+                    &queued_bot.bot().bot_name,
+                    i18n_text.start_queue_full_reason(),
+                );
                 queued_bot.record(BotStartOutcome::Failure(failure_line));
             }
         }
@@ -362,7 +364,7 @@ impl StartupQueue {
             max_pending_requests,
             check_grace_ms,
             waiting_bots: Mutex::new(VecDeque::new()),
-            latest_poped_timestamp: Mutex::new(Instant::now()),
+            last_batch_dequeued_at: Mutex::new(Instant::now()),
             added: Condvar::new(),
             stop_requested: AtomicBool::new(false),
             starter: OnceLock::new(),
@@ -411,6 +413,19 @@ mod tests {
             bot_dir_path: PathBuf::from("/nonexistent"),
             bot_token_status: crate::utils::bot_dirs::BotTokenStatus::Missing,
         }
+    }
+
+    #[test]
+    fn queue_full_uses_localized_failure_reason() {
+        let queue = StartupQueue::new_for_test(1, 1000, 1000, 100, 1);
+        let ledger = StartLedger::new(&[bot("duck"), bot("goose")]);
+        queue.add_bots_to_queue(&ledger);
+
+        let i18n_text = text::get();
+        assert_eq!(
+            ledger.take_results().failure_lines(),
+            [i18n_text.start_launch_failed("goose", i18n_text.start_queue_full_reason())]
+        );
     }
 
     /// 条目离开作用域时收齐账本：已写回的结果保持不变，未写回的补记为取消。

@@ -187,7 +187,7 @@ src/
   `bot_manage`、`show`、`all_bots_control`）与 utils 原语层。
 * 框架只出现在命令层与进程入口：业务层与 `lib.rs` 不引用 serenity 与 poise，只吃普通参数、返回
   `Result<String, String>`，这样业务逻辑能单测。
-* 命名自解释：动作函数用动词短语（`start_bot`）；取返回值用名词（`all_running_bot_status_rows`，没有
+* 命名自解释：动作函数用动词短语（`start_bot`）；取返回值用名词（`all_running_bot_names`，没有
   `get_` 前缀）；转换用 `to_` 与 `into_` 前缀（`to_clean_bot_name`、`into_report`，消费 `self` 的用
   `into_`、其余用 `to_`，clippy 也这么认）；需要磁盘查找的构造用 `find_*`；判断用 `is_` 与 `has_`；
   ID 一律叫 `*_id`（`caller_id`、`owner_id`）。
@@ -202,9 +202,8 @@ src/
   捕获不了闭包，因此也从同一入口取同一份，其余方法都吃 `&self`。
 * 文件内的顺序固定：模块文档（`//!`）、`mod` 声明、`use`、对外转出（`pub use`）、常量与类型与函数；
   进程入口（`lib.rs`、`main.rs`）也照此，于是"这个文件里有哪些子模块"在文件最上面就能看到。
-* 会变成可见文案的那一行写英文：命令的 `///` 第一段与选项的 `#[description]` 是 poise 宏烘进二进制的
-  兜底（语言表缺项时才会露出来），所以写英文，且与 `en_us.rs` 表里那句逐字相同（英文表是其中一份实现，有
-  测试逐字比对）；第一段之后的段落仍是中文，细节见 [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-宏里那一份算什么英文副本)。
+* 指令及选项说明只保留在语言表，注册前校验并填入，细节见
+  [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-文案表校验)。
 * 同一份文本全链路只清洗一次：命令层只取值（参数名以 `raw_` 起），谁真正要用谁清洗（`clean_*`）。
 * 注释里的记号一眼可辨：`?` 开头是待实跑确认的开放问题（确认后删记号、留结论）；`!` 开头是待填但有
   回落路径；`⚠️` 用在语言表里提醒硬约定。

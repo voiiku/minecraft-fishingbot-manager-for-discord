@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use crate::text;
 use crate::utils::{
-    BotDirEntry, StartupQueue, is_bot_screen_running, read_last_lines, refusal_if_not_stopped,
-    stop_single_bot_session, token_file_path,
+    BotDirEntry, StartupQueue, is_bot_screen_running, read_last_lines, stop_single_bot_session,
+    token_file_path,
 };
 
 /// JAR 设备码提示关键字。
@@ -70,9 +70,9 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
     let bot_name = &bot_dir_entry.bot_name;
 
     // 避免打断登录中的会话或运行中的机器人。
-    if is_bot_screen_running(bot_name) {
+    if is_bot_screen_running(bot_name)? {
         let refusal = if bot_dir_entry.bot_token_status.is_ready() {
-            refusal_if_not_stopped(bot_dir_entry).expect_err("会话在跑时必然被拒")
+            text::get().refusal_bot_running(bot_name)
         } else {
             text::get().bot_login_already_running(bot_name)
         };
@@ -103,16 +103,26 @@ pub(crate) fn begin_login(bot_dir_entry: &BotDirEntry) -> Result<BotLoginPrompt,
         replaced_token_path,
     };
 
-    let Some((verification_url, user_code)) = wait_for_device_code(&session) else {
+    let prompt = match wait_for_device_code(&session) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            if stop_login_session(&session) {
+                restore_replaced_token(session.replaced_token_path);
+            }
+            return Err(error);
+        }
+    };
+    let Some((verification_url, user_code)) = prompt else {
         // 等不到提示：JAR 可能没起来、参数不对，或这份构建没有设备码登录。
         // 会话已经拉起来了，这里停掉它再把结论回给用户。
-        let message = if is_bot_screen_running(session.bot_name()) {
-            text::get().bot_login_prompt_missing(session.bot_name())
-        } else {
-            text::get().start_failed(session.bot_name())
+        let message = match is_bot_screen_running(session.bot_name()) {
+            Ok(true) => text::get().bot_login_prompt_missing(session.bot_name()),
+            Ok(false) => text::get().start_failed(session.bot_name()),
+            Err(error) => error,
         };
-        stop_login_session(&session);
-        restore_replaced_token(session.replaced_token_path);
+        if stop_login_session(&session) {
+            restore_replaced_token(session.replaced_token_path);
+        }
         return Err(message);
     };
 
@@ -148,15 +158,24 @@ pub(crate) fn await_login(prompt: BotLoginPrompt) -> String {
                     bot_name: &bot_name
                 })
             );
-            stop_login_session(&session);
-            restore_replaced_token(session.replaced_token_path);
+            if stop_login_session(&session) {
+                restore_replaced_token(session.replaced_token_path);
+            }
             return text::get().bot_login_rejected(&bot_name);
         }
 
-        if !is_bot_screen_running(&bot_name) {
-            // JAR 已退出，恢复旧凭据。
-            restore_replaced_token(session.replaced_token_path);
-            return text::get().start_failed(&bot_name);
+        match is_bot_screen_running(&bot_name) {
+            Ok(true) => {}
+            Ok(false) => {
+                restore_replaced_token(session.replaced_token_path);
+                return text::get().start_failed(&bot_name);
+            }
+            Err(error) => {
+                if stop_login_session(&session) {
+                    restore_replaced_token(session.replaced_token_path);
+                }
+                return error;
+            }
         }
 
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -167,14 +186,16 @@ pub(crate) fn await_login(prompt: BotLoginPrompt) -> String {
         return finish_login(&session);
     }
 
-    stop_login_session(&session);
+    let stopped = stop_login_session(&session);
 
     // 停止会话后再次检查凭据。
     if token_path.exists() {
         return finish_login(&session);
     }
 
-    restore_replaced_token(session.replaced_token_path);
+    if stopped {
+        restore_replaced_token(session.replaced_token_path);
+    }
     text::get().bot_login_timed_out(&bot_name, AUTHORIZE_WAIT_SECS / 60)
 }
 
@@ -312,37 +333,44 @@ fn restored_token_path(replaced_token_path: &Path) -> Option<PathBuf> {
 }
 
 /// 停止登录会话，给 JAR 留出写入凭据的机会。
-fn stop_login_session(session: &LoginSession) {
-    let outcome = stop_single_bot_session(session.bot_dir_entry.clone());
-
-    if outcome.has_failed_lines() {
+fn stop_login_session(session: &LoginSession) -> bool {
+    let result = stop_single_bot_session(session.bot_dir_entry.clone()).and_then(|outcome| {
+        if outcome.has_failed_lines() {
+            Err(outcome.to_failure_text())
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(reason) = result {
         log::warn!(
             "{}",
             text::get().log_text(text::LogText::BotLoginStopFailed {
                 bot_name: session.bot_name(),
-                reason: &outcome.to_failure_text(),
+                reason: &reason,
             })
         );
+        return false;
     }
+    true
 }
 
 /// 等待 JAR 输出设备码，返回验证网址与用户代码。
-fn wait_for_device_code(session: &LoginSession) -> Option<(String, String)> {
+fn wait_for_device_code(session: &LoginSession) -> Result<Option<(String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(CODE_WAIT_SECS);
 
     while Instant::now() < deadline {
         if let Some(prompt) = parse_device_code_prompt(&read_log_tail(&session.log_path)) {
-            return Some(prompt);
+            return Ok(Some(prompt));
         }
 
-        if !is_bot_screen_running(session.bot_name()) {
-            return parse_device_code_prompt(&read_log_tail(&session.log_path));
+        if !is_bot_screen_running(session.bot_name())? {
+            return Ok(parse_device_code_prompt(&read_log_tail(&session.log_path)));
         }
 
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
 
-    parse_device_code_prompt(&read_log_tail(&session.log_path))
+    Ok(parse_device_code_prompt(&read_log_tail(&session.log_path)))
 }
 
 /// 从日志里解析出设备码提示：返回 `(验证网址, 用户代码)`。

@@ -1,6 +1,7 @@
 //! 解析 TOML 配置为内存中的结构体，去掉首尾空格并展开路径，取值校验由 [`super::validate`] 负责。
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer};
 
@@ -9,15 +10,46 @@ use crate::text;
 use super::schema::Paths;
 use super::{CONFIG_FILE_NAME, Config};
 
+/// 将配置中的秒数转换成内部毫秒值，不接受小于一毫秒的精度。
+pub(super) fn seconds_to_millis<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Seconds {
+        Whole(u64),
+        Fraction(f64),
+    }
+
+    match Seconds::deserialize(deserializer)? {
+        Seconds::Whole(seconds) => seconds
+            .checked_mul(1000)
+            .ok_or_else(|| serde::de::Error::custom("seconds exceed the supported range")),
+        Seconds::Fraction(seconds) => {
+            let duration = Duration::try_from_secs_f64(seconds).map_err(|_| {
+                serde::de::Error::custom("seconds must be finite, non-negative and in range")
+            })?;
+            let milliseconds =
+                duration.as_millis() + u128::from(duration.subsec_nanos() % 1_000_000 >= 500_000);
+            if seconds != milliseconds as f64 / 1000.0 {
+                return Err(serde::de::Error::custom(
+                    "seconds must be an exact multiple of 0.001",
+                ));
+            }
+            u64::try_from(milliseconds)
+                .map_err(|_| serde::de::Error::custom("seconds exceed the supported range"))
+        }
+    }
+}
+
 impl Config {
-    /// 解析配置文本并转换为运行时配置。
-    /// 先解析成值树、递归去掉两头的空白，再按目标类型自动映射到 `Config`，这样加字段不必补注解。
+    /// 解析配置并递归去除字符串首尾空白。
     pub(super) fn from_toml_text(text: &str) -> Result<Self, String> {
         let mut value: toml::Value =
             toml::from_str(text).map_err(|error| Self::parse_failed(&error.to_string()))?;
         trim_string_values(&mut value);
 
-        // 把值树按目标类型自动映射到 `Config`结构体，失败文本直接返回给用户。
         value
             .try_into()
             .map_err(|error| Self::parse_failed(&error.to_string()))
@@ -91,9 +123,7 @@ fn require_relative(field: &str, path: PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// 递归去掉值树里所有字符串两头的空白（表、数组、数组里的表都算）。
-///
-/// 真要保留两头的空白就写转义（TOML 里 `"\u0020"`）：正常写法都是手滑多敲的空格或换行缩进。
+/// 递归去除所有字符串的首尾空白；TOML 转义也会在此之前被解析。
 fn trim_string_values(value: &mut toml::Value) {
     match value {
         toml::Value::String(raw) => *raw = raw.trim().to_string(),
@@ -108,6 +138,60 @@ fn trim_string_values(value: &mut toml::Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seconds_to_millis_preserves_every_millisecond_in_ten_seconds() {
+        #[derive(Deserialize)]
+        struct TestTime {
+            #[serde(deserialize_with = "seconds_to_millis")]
+            value: u64,
+        }
+
+        for milliseconds in 0..10_000 {
+            let seconds = format!("{}.{:03}", milliseconds / 1000, milliseconds % 1000);
+            let input = format!("value = {seconds}");
+            let config: TestTime = toml::from_str(&input).expect("exact milliseconds must parse");
+            assert_eq!(config.value, milliseconds, "{input}");
+        }
+    }
+
+    #[test]
+    fn seconds_to_millis_checks_range_and_precision() {
+        #[derive(Deserialize)]
+        struct TestTime {
+            #[serde(deserialize_with = "seconds_to_millis")]
+            value: u64,
+        }
+
+        for (seconds, expected) in [
+            ("0", 0),
+            ("20", 20_000),
+            ("0.001", 1),
+            ("0.3", 300),
+            ("8388608.001", 8_388_608_001),
+            ("123456789012.001", 123_456_789_012_001),
+            ("18446744073709551", 18_446_744_073_709_551_000),
+        ] {
+            let config: TestTime =
+                toml::from_str(&format!("value = {seconds}")).expect("valid seconds");
+            assert_eq!(config.value, expected, "{seconds}");
+        }
+        for seconds in [
+            "-1",
+            "-0.001",
+            "inf",
+            "nan",
+            "0.0005",
+            "0.0000000001",
+            "1e100",
+            "18446744073709552",
+        ] {
+            assert!(
+                toml::from_str::<TestTime>(&format!("value = {seconds}")).is_err(),
+                "{seconds} must be rejected"
+            );
+        }
+    }
 
     /// 示例配置可解析，路径字段按配置规则展开。
     #[test]
@@ -157,13 +241,14 @@ mod tests {
     #[test]
     fn string_values_are_trimmed() {
         let mut value: toml::Value = toml::from_str(
-            "top = \"  a  \"\nlist = [\" b \", { deep = \"  c  \" }]\n[table]\nnested = \" d \"\n",
+            "top = \"  a  \"\nescaped = \"\\u0020e\\u0020\"\nlist = [\" b \", { deep = \"  c  \" }]\n[table]\nnested = \" d \"\n",
         )
         .expect("裸 TOML 值树应当能解析");
 
         trim_string_values(&mut value);
 
         assert_eq!(value["top"].as_str(), Some("a"));
+        assert_eq!(value["escaped"].as_str(), Some("e"));
         assert_eq!(value["list"][0].as_str(), Some("b"));
         assert_eq!(value["list"][1]["deep"].as_str(), Some("c"));
         assert_eq!(value["table"]["nested"].as_str(), Some("d"));

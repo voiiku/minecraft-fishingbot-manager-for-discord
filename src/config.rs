@@ -1,9 +1,4 @@
-//! 加载、校验并访问配置文件。配置文件位于可执行文件同级目录，只在启动时读取一次。
-//! 运行时结构 [`Config`] 与它的取值接口都在本文件（它同时是 TOML 文件的映射目标）
-//! 配置文件中各个表对应的结构体在 `config/schema.rs`中定义
-//! 解析逻辑全部在parse.rs中各自实现在表结构体上
-//! 校验逻辑全部在validate.rs中各自实现在表结构体上
-//! 生成模板的逻辑定义在template.rs中。
+//! 加载、校验并访问可执行文件同级的配置文件，配置只在启动时读取一次。
 
 mod parse;
 mod schema;
@@ -18,15 +13,15 @@ use serde::Deserialize;
 use crate::text;
 
 pub use schema::{
-    Admins, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig, KeywordsConfig, Paths,
-    PingConfig, RuntimeConfig, StartupQueueConfig, TextConfig, TimingConfig,
+    Admins, AntiAfkConfig, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig,
+    KeywordsConfig, Paths, PingConfig, RuntimeConfig, StartupQueueConfig, TextConfig, TimingConfig,
 };
 use schema::{LogConfig, RawGameLogsConfig};
 
 /// 配置文件名，位于可执行文件的同级目录。
 pub const CONFIG_FILE_NAME: &str = "minecraft-fishingbot-manager-for-discord.conf.toml";
 
-/// 解析并校验后的配置，字段顺序与示例配置一致（`config_file_path` 除外，他由初始化时计算）。
+/// 解析并校验后的运行时配置。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -35,7 +30,7 @@ pub struct Config {
     pub config_file_path: PathBuf,
     /// Discord bot 信息。
     pub discord: DiscordConfig,
-    /// 磁盘路径，相对路径已按配置文件所在目录展开。
+    /// 磁盘路径，文件名相对于 `base_dir` 展开。
     pub paths: Paths,
     /// 游戏侧配置中由本项目管理的键，启动时据此生成配置。
     pub fishingbot: FishingBotConfig,
@@ -49,6 +44,8 @@ pub struct Config {
     pub i18n: I18nConfig,
     /// 机器人运行时参数。
     pub runtime: RuntimeConfig,
+    /// 反 AFK 的输入和间隔参数。
+    pub anti_afk: AntiAfkConfig,
     /// 启动队列的批次与冷却策略。
     pub startup_queue: StartupQueueConfig,
     /// 单批内启动错峰、会话复核、停止与看门狗时序参数。
@@ -72,9 +69,7 @@ fn default_config_file_path() -> PathBuf {
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
 impl Config {
-    /// 获取配置
-    /// 没有配置文件就初始化，首次启动会生成模板并打印提示、然后正常退出（退出码 0）
-    /// 发送错误返回提示并以退出码 1 结束进程。
+    /// 加载配置；不存在时生成模板并退出，加载失败时以退出码 1 结束进程。
     pub fn get_or_init() -> &'static Self {
         if let Some(config) = CONFIG.get() {
             return config;
@@ -85,9 +80,7 @@ impl Config {
             Err(message) => Self::exit_on_error(message),
         };
 
-        // 首次启动生成模板。
         match template::create_config_file_when_missing(&path) {
-            // 配置文件不存在，按模板生成以0退出
             Ok(true) => {
                 println!(
                     "{}",
@@ -95,14 +88,12 @@ impl Config {
                 );
                 std::process::exit(0);
             }
-            // 配置文件已存在，就在终端输出路径，然后进入校验流程。
             Ok(false) => println!(
                 "{}",
                 text::bootstrap::config_file_found(&path.display().to_string())
             ),
             Err(message) => Self::exit_on_error(message),
         }
-        // 获取配置文件的文本内容
         let config_text = match std::fs::read_to_string(&path) {
             Ok(config_text) => config_text,
             Err(e) => Self::exit_on_error(text::bootstrap::config_read_failed(
@@ -110,14 +101,12 @@ impl Config {
                 &e.to_string(),
             )),
         };
-        // 尝试把文本内容解析为配置结构体
         let config = match Self::from_toml_text(&config_text) {
             Ok(config) => config,
             Err(message) => Self::exit_on_error(message),
         };
 
-        // 解析成功后在 validate 里先校验语言（不使用 text::get），语言合法后由它安装，
-        // 再校验其余字段；非法语言在这里以报错文案返回，随后打印到终端并以 1 退出。
+        // 校验先安装语言，后续错误文案才能使用所选语言。
         if let Err(message) = validate::validate(&config) {
             Self::exit_on_error(message);
         }
@@ -133,8 +122,6 @@ impl Config {
         std::process::exit(1);
     }
 }
-
-// 取值方法
 
 impl Config {
     /// 取已装载的配置。

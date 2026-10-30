@@ -57,15 +57,15 @@ impl StartupQueue {
 
         // 空取不算"取出一批"，不动时刻。
         if !popped.is_empty() {
-            *self.latest_poped_timestamp_mut() = Instant::now();
+            *self.last_batch_dequeued_at_mut() = Instant::now();
         }
 
         popped
     }
 
     /// 最近一次取出的时刻（即上一批开始启动的时刻）。
-    pub(super) fn latest_poped_timestamp(&self) -> Instant {
-        *self.latest_poped_timestamp_mut()
+    pub(super) fn last_batch_dequeued_at(&self) -> Instant {
+        *self.last_batch_dequeued_at_mut()
     }
 
     /// 取待启动列表的锁（中毒的锁也要能用：这里只放数据，不存"必须一致"的不变量）。
@@ -76,8 +76,8 @@ impl StartupQueue {
     }
 
     /// 取"最近一次取批时刻"的锁（同上）。
-    fn latest_poped_timestamp_mut(&self) -> MutexGuard<'_, Instant> {
-        self.latest_poped_timestamp
+    fn last_batch_dequeued_at_mut(&self) -> MutexGuard<'_, Instant> {
+        self.last_batch_dequeued_at
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -214,23 +214,23 @@ mod tests {
     #[test]
     fn only_a_real_pop_updates_the_timestamp() {
         let queue = queue();
-        let loaded_at = queue.latest_poped_timestamp();
+        let loaded_at = queue.last_batch_dequeued_at();
 
         queue.pop_bots_from_head(1);
         assert_eq!(
-            queue.latest_poped_timestamp(),
+            queue.last_batch_dequeued_at(),
             loaded_at,
             "空队列不应更新时间戳"
         );
 
         set_waiting_bots(&queue, &["duck"]);
         queue.pop_bots_from_head(1);
-        let first_pop = queue.latest_poped_timestamp();
+        let first_pop = queue.last_batch_dequeued_at();
         assert!(first_pop >= loaded_at);
 
         set_waiting_bots(&queue, &["goose"]);
         queue.pop_bots_from_head(1);
-        let second_pop = queue.latest_poped_timestamp();
+        let second_pop = queue.last_batch_dequeued_at();
         assert!(second_pop >= first_pop, "成功取出后应更新时间戳");
     }
 

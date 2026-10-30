@@ -27,15 +27,19 @@
   `token_ready_bot_dir_entries`, `bot_dir_entries_of_owner`, `is_bot_name_taken`,
   `split_bot_entries_by_token_status`, `create_bot_dir` (returns the entry it created), `BotTokenStatus` (decided by
   `BotTokenStatus::from_dir`) and `token_file_path` (the token file path convention).
+  Duplicate-name checks return "available" for a missing bot directory, but return an error on lookup failure.
 * `screen`: the `screen` session snapshot, probing and command injection (injection does not validate anything; the
-  waits and the force-kill decision live in `shutdown`). Entry points `active_screen_sessions` (session name ->
+  waits and the force-kill decision live in `shutdown`). Entry points `screen_session_snapshot` (session name ->
   `ScreenSession`, with the PID and whether it is a `(Dead ...)` shell, which still counts as running so that `/stop`
   can clean it up), `is_bot_screen_running`, `session_name`, `send_command_to_single_bot`,
   `send_stop_signal_to_session` and `force_quit_session`.
+  Session queries return `Result`: an explicit GNU screen "no sessions" response produces an empty snapshot;
+  execution failures and unrecognized output produce errors.
 * `running_bots`: the single source of the bot state (whether it is started comes from the session, whether it is
   queued comes from the queue). Grouping by run state, the names of the running ones, the `/show status` rows and the
   refusal text for running or queued bots. Entry points `split_bot_entries_by_is_running`, `all_running_bot_names`,
-  `all_running_bot_status_rows` and `refusal_if_not_stopped`.
+  `status_row` and `refusal_if_not_stopped`.
+  Starting, stopping, restarting and verification propagate lookup errors rather than treating unknown state as stopped.
 * `startup`: starting. Launching one bot is "check the token -> create the log -> prepare the raw log
   directory -> `screen -dmS`"; targets without a token are not launched. Batch starting is orchestrated by
   `StartupQueue::start_bots()` (create the ledger -> `add_bots_to_queue` hands it over -> wait for its own entries -> take
@@ -121,25 +125,24 @@
 snapshot. The join between a directory and a session happens only in this module, so nothing else walks directories to
 match session names:
 
-* The rows of the `/show status` table: `all_running_bot_status_rows()` lives in this module and joins the four cells of
-  each bot into one line on the spot (`status_row`, a `String` discarded right after rendering, with no snapshot type);
-  the header is built by `show/status.rs` itself, so the two sides must agree on the column order (see
+* `/show status` reads the bot directories and screen snapshot once, then reuses them for status rows and the queue list.
+  `status_row` joins each bot's four cells; the header is built by `show/status.rs`, so their column order must match (see
   [commands-en_us.md](../commands/commands-en_us.md) section 6.2).
 * `split_bot_entries_by_is_running(&[BotDirEntry])` returns the running and the non-running group; which batch of
   directories is taken is decided by the caller (`all_bot_dir_entries()` or `token_ready_bot_dir_entries()`), see
   [commands-en_us.md](../commands/commands-en_us.md) section 5.2.
 * `all_running_bot_names()` returns the names of every running bot (used by `/commandall`): the scope matches
-  `all_running_bot_status_rows()` (every bot with a configured token), it calls `screen -list` once and reads no logs.
+  `/show status` (every bot with a configured token), it calls `screen -list` once and reads no logs.
 
 One snapshot reused in many places is deliberate: if a batch flow probed again every time, a session started a moment
 ago would immediately count as already running and the results would become inconsistent.
 
 ## 4. Waits during startup and shutdown
 
-* All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most `[startup_queue] max_batch_size`; the next FIFO request is not processed until every entry of the current request has been popped. Adjacent bots in a batch are separated by at least `[startup_queue] bot_login_interval_ms`. Batches are separated by at least `[startup_queue] batch_login_interval_ms`, counted from when the previous batch was popped (the verification runs in parallel on the command side and does not count as this wait). A partial batch is closed when the queue becomes idle, but the "last pop" timestamp is kept across commands, so consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process restarts. `/bot login` does not use this queue.
-* `StartupQueue::start_bots()` is the only command-side entry (create the ledger → enqueue → wait until every entry has been launched → take the results and verify); the starter thread handles per-batch staggering and launches, and the verification observes session survival with one wait per start request (check immediately after launch, then once more after the grace period). The sign-in rate is the limited resource, controlled by `bot_login_interval_ms` inside a batch and `batch_login_interval_ms` between batches; the batch size only affects the JVM memory peak during launch. See [commands-en_us.md](../commands/commands-en_us.md) section 5.5.
+* All launch-capable commands (`/start`, `/startall`, `/restart` and `/restartall`) share one process-wide FIFO start queue. Its dispatcher remains alive and blocks while idle. Each command request is split into batches of at most `[startup_queue] max_batch_size`; the next FIFO request is not processed until every entry of the current request has been popped. Adjacent bots in a batch are separated by at least `[startup_queue] bot_login_interval`. Batches are separated by at least `[startup_queue] batch_login_interval`, counted from when the previous batch was popped (the verification runs in parallel on the command side and does not count as this wait). A partial batch is closed when the queue becomes idle, but the "last pop" timestamp is kept across commands, so consecutive commands cannot bypass the rate limit. Queued requests are not persisted and are lost if the process restarts. `/bot login` does not use this queue.
+* `StartupQueue::start_bots()` is the only command-side entry (create the ledger → enqueue → wait until every entry has been launched → take the results and verify); the starter thread handles per-batch staggering and launches, and the verification observes session survival with one wait per start request (check immediately after launch, then once more after the grace period). The sign-in rate is the limited resource, controlled by `bot_login_interval` inside a batch and `batch_login_interval` between batches; the batch size only affects the JVM memory peak during launch. See [commands-en_us.md](../commands/commands-en_us.md) section 5.5.
 * Neither stop wait takes a parameter; the flow reads the config and performs both waits itself: send the exit signal,
-  wait `stop_grace_ms`, force kill if the session is still there, then wait `stop_settle_ms` so the old session can
+  wait `stop_grace`, force kill if the session is still there, then wait `stop_settle` so the old session can
   deregister completely before the final check (checking immediately would still see it).
 * Every re-check goes through `startup::verify_batch`, so "launched successfully" means the session is still there after the second check (a `screen -list` snapshot), not that the command was sent; and a session being there does not mean the bot is online either (logging in and joining the server are up to the JVM), which is why the report and the reply only say "the start command was sent and the session has appeared".
 
@@ -155,10 +158,10 @@ ago would immediately count as already running and the results would become inco
 * The success/failure decision and the one-line error text are not here: they are methods on the details utils
   returns (`has_failed_lines()` and `to_failure_text()` of `LaunchOutcome`, `RestartOutcome` and `StopOutcome`).
 * `render()` truncates by `runtime.max_reply_chars`: when the text is too long, lines are removed from the end and the
-  number of omitted lines is noted at the end. Discord has a hard limit per message (2000 characters) and an overlong
-  message simply fails to send, which looks to the user as if nothing happened; truncating by line guarantees that the
-  title and the count rows survive. The length is measured with `str::utf16_len()` (UTF-16 code units; `.len()` is
-  bytes and `chars()` is code points, and neither is correct).
+  number of omitted lines is noted at the end. Discord has a hard limit of 2000 UTF-16 code units per message, so set
+  the configured limit no higher than 2000. Truncation favors the beginning but cannot guarantee the title or counts
+  survive a very small limit; the omission note itself can also exceed it. Length uses `str::utf16_len()` (`.len()`
+  counts bytes and `chars()` counts code points).
 
 For a command whose counts are only known once the flow has run, the flow runs first and `set_counts` then overwrites
 the rows as a whole, rather than letting the flow append, which would leave both the placeholder figures and the real
@@ -175,8 +178,8 @@ the one or two fields it actually uses, in two styles:
 * Functions that read only the fields they need (`config::Config::get().table.field`): used for convenience functions
   with a line or two of logic. `session_name` reads `runtime.screen_prefix`; `create_bot_log_file` and
   `latest_log_path` read `runtime.bot_logs_dir`; `BotTokenStatus::from_dir` reads `runtime.token_file`;
-  `BotDirEntry::find_by_name` reads `paths.bots_dir`; `stop_bot_sessions` reads `timing.stop_grace_ms` and
-  `timing.stop_settle_ms`; `Report::render` reads `runtime.max_reply_chars`.
+  `BotDirEntry::find_by_name` reads `paths.bots_dir`; `stop_bot_sessions` reads `timing.stop_grace` and
+  `timing.stop_settle`; `Report::render` reads `runtime.max_reply_chars`.
 
 The config is read once at startup and then lives in memory (see [config-en_us.md](../config/config-en_us.md) section
 1), so a convenience function reading one field costs nothing extra; functions that take parameters, in turn, gain

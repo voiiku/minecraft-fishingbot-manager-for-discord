@@ -1,6 +1,6 @@
 //! English 文案，与 `zh_cn.rs` 的接口和占位符一一对应。
 
-use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
+use super::{CommandText, CommandTextProblem, ConfigRequirement, LogText, Text, WatchdogText};
 
 /// 英文实现（不需要实例状态）。
 pub(super) struct EnUs;
@@ -22,7 +22,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     },
     CommandText {
         name_path: "show status",
-        description: "Show every running bot and its status",
+        description: "Show running bots and anti-AFK status",
         options: &[],
     },
     CommandText {
@@ -168,6 +168,11 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             "command",
             "in-game command (leading slash = command, otherwise chat; write it as is, no quotes)",
         )],
+    },
+    CommandText {
+        name_path: "anti-afk",
+        description: "Start or stop anti-AFK (admins only)",
+        options: &[("command", "select on to start or off to stop")],
     },
 ];
 
@@ -535,6 +540,54 @@ impl Text for EnUs {
         "Stop result for all bots"
     }
 
+    fn anti_afk_started(&self) -> &'static str {
+        "Anti-AFK started (matching sessions and input delivery are not guaranteed)"
+    }
+
+    fn anti_afk_already_running(&self) -> &'static str {
+        "Anti-AFK is already running; no need to start it again"
+    }
+
+    fn anti_afk_stopped(&self) -> &'static str {
+        "Anti-AFK stopped"
+    }
+
+    fn anti_afk_status(&self, running: bool) -> &'static str {
+        if running {
+            "Anti-AFK: running"
+        } else {
+            "Anti-AFK: not running"
+        }
+    }
+
+    fn anti_afk_stop_not_running(&self) -> &'static str {
+        "Error: Anti-AFK is not running; no need to stop"
+    }
+
+    fn anti_afk_lock_failed(&self, reason: &str) -> String {
+        format!("Failed to lock anti-AFK state: {reason}")
+    }
+
+    fn anti_afk_config_failed(&self, reason: &str) -> String {
+        format!("Failed to build anti-AFK config: {reason}")
+    }
+
+    fn anti_afk_worker_failed(&self, reason: &str) -> String {
+        format!("Anti-AFK worker failed: {reason}")
+    }
+
+    fn anti_afk_start_failed(&self, reason: &str) -> String {
+        format!("Failed to start anti-AFK: {reason}")
+    }
+
+    fn anti_afk_stop_failed(&self, reason: &str) -> String {
+        format!("Failed to stop anti-AFK: {reason}")
+    }
+
+    fn anti_afk_status_failed(&self, reason: &str) -> String {
+        format!("Failed to query anti-AFK status: {reason}")
+    }
+
     fn restartall_nothing_running(&self) -> &'static str {
         "Restart-all result: no bots are running."
     }
@@ -663,6 +716,14 @@ impl Text for EnUs {
         format!("Cannot connect to server ({host}:{port}):\n{reason}")
     }
 
+    fn ping_no_address_reason(&self) -> &'static str {
+        "no address returned"
+    }
+
+    fn ping_connection_failed_reason(&self) -> &'static str {
+        "connection failed"
+    }
+
     fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String {
         format!(
             "Timed out connecting to server ({host}:{port}) ({timeout_ms} ms without a response)"
@@ -751,6 +812,10 @@ impl Text for EnUs {
         "internal error (see the program log)"
     }
 
+    fn start_queue_full_reason(&self) -> &'static str {
+        "start queue is full (max_pending_requests)"
+    }
+
     fn command_start_queue_summary(
         &self,
         batch_size: usize,
@@ -834,6 +899,14 @@ impl Text for EnUs {
 
     fn read_bots_root_failed(&self, reason: &str) -> String {
         format!("Error: failed to read the bots root directory: {reason}")
+    }
+
+    fn screen_list_failed(&self, reason: &str) -> String {
+        format!("Failed to list screen sessions: {reason}")
+    }
+
+    fn screen_unrecognized_output(&self, output: &str) -> String {
+        format!("unrecognized output: {output}")
     }
 
     fn refusal_bot_running(&self, bot_name: &str) -> String {
@@ -955,6 +1028,18 @@ impl Text for EnUs {
         COMMAND_TEXTS
     }
 
+    fn command_text_invalid(&self, path: &str, problem: CommandTextProblem) -> String {
+        let reason = match problem {
+            CommandTextProblem::Missing => "description is missing".to_string(),
+            CommandTextProblem::Duplicate => "description is duplicated".to_string(),
+            CommandTextProblem::Unknown => "command or option does not exist".to_string(),
+            CommandTextProblem::InvalidLength { length } => format!(
+                "description must be 1-100 UTF-16 units and not whitespace-only; length is {length}"
+            ),
+        };
+        format!("Invalid command text {path}: {reason}")
+    }
+
     fn token_modal_title(&self) -> &'static str {
         "Write a bot's refreshToken"
     }
@@ -1011,6 +1096,19 @@ impl Text for EnUs {
                  first handshake timeout {first_handshake_timeout_secs} s"
             ),
             LogText::CommandRunFailed { error } => format!("command failed: {error}"),
+            LogText::CommandFallbackReplyFailed {
+                caller_id,
+                command_path,
+                reason,
+            } => format!(
+                "Failed to send the fallback response for /{command_path} to Discord user {caller_id}: {reason}"
+            ),
+            LogText::AutocompleteLookupFailed { reason } => {
+                format!("Autocomplete candidate lookup failed: {reason}")
+            }
+            LogText::AutocompleteTaskFailed { reason } => {
+                format!("Autocomplete candidate lookup task failed: {reason}")
+            }
             LogText::CommandReplied {
                 caller_id,
                 command_path,
@@ -1086,13 +1184,12 @@ impl Text for EnUs {
                  (the global registration is unaffected; the next startup tries again)"
             ),
             LogText::GlobalCommandsReadFailed { reason } => format!(
-                "could not read the current global commands, so the leftover guild command \
-                 cleanup is skipped this run: {reason}"
+                "Failed to retrieve global commands: {reason}; a recheck is scheduled, and legacy guild \
+                 commands will be removed once the conditions are met"
             ),
             LogText::GuildCommandsCleanupWaiting { minutes } => format!(
-                "this global command set has not been in place for a full hour on Discord's side \
-                 yet (about {minutes} more minutes), so the leftover guild commands are left \
-                 alone this run; a later startup after that clears them automatically"
+                "Global commands have not yet met the propagation stability criteria. A recheck is scheduled \
+                 in approximately {minutes} minutes; legacy guild commands will be removed once the criteria are met"
             ),
             LogText::DiscordClientEnded => {
                 "the Discord connection ended (the client returned normally)".to_string()
@@ -1261,6 +1358,12 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
         }
         ConfigRequirement::PortRange => "must be a port number between 1 and 65535".to_string(),
         ConfigRequirement::GreaterThanZero => "must be greater than 0".to_string(),
+        ConfigRequirement::NonNegativeDuration => {
+            "must be a finite, non-negative number of seconds within the supported range".to_string()
+        }
+        ConfigRequirement::InputPulseCommand { reason } => {
+            format!("must be input-pulse input supported in screen mode: {reason}")
+        }
         ConfigRequirement::DiscordTokenEmpty => {
             "must not be empty (Developer Portal -> your app -> Bot -> Reset Token)".to_string()
         }

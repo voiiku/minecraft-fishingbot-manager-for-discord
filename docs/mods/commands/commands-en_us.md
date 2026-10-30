@@ -54,8 +54,8 @@ troubleshooting "what did it actually answer" the log is the reference, see
 * `all_bots_manage`: covers `/startall`, `/stopall`, `/restartall` and `/commandall`. The user gets a progress
   acknowledgement first and the full result once it is done.
 * `read_only_query`: covers `/show status` and `/show *`. The user only gets the final result.
-* `server_probe`: covers `/ping` and `/checkserver`. The user only gets the final result (an asynchronous probe, so it
-  never enters the blocking thread pool).
+* `run_async_and_reply`: covers `/ping`, `/checkserver` and `/anti-afk`. The user only gets the final result; the anti-AFK
+  implementation puts blocking thread operations on the blocking pool.
 
 Three cases are outside these five, each for its own reason: `/help` and `/whoami` are purely local text (no `defer`);
 `/log` and `/show botconfig` have to send an attachment themselves; and `/token`'s modal has to be the first response
@@ -105,10 +105,8 @@ the closure has to be `Send + 'static` (it must not borrow `ctx`), so every comm
   hard precondition: it first makes sure this same global set was already in place for a full hour before this run
   started (same names, and the youngest command Id old enough), because otherwise there would be a window with
   neither set visible. The decision reads the creation time out of the command Ids, so no state file is involved.
-* A command description comes from the first paragraph of the function's doc comment (poise's rule: the macro does not
-  accept `description = "..."`, only `description_localized`). That first paragraph is written in English (the same
-  sentence as in the `en_us.rs` table) and the details go into the paragraphs after it. Why, how the length is
-  counted and why the English copy is needed: section 1.7.
+* Command and option descriptions come only from the language `COMMAND_TEXTS` tables; `all_commands()` validates and
+  fills them before registration (section 1.7).
 * Context aliases: `Context<'a>` (ordinary commands) and `ApplicationContext<'a>` (commands that need a Modal, since a
   Modal only exists in the context of slash commands).
 * Only `slash_command` is used; there is no `!prefix` command, because that needs the `MESSAGE_CONTENT` privileged
@@ -132,20 +130,18 @@ the closure has to be `Send + 'static` (it must not borrow `ctx`), so every comm
 
 The texts in the command layer come in two groups, with different origins and different timing:
 
-* Command descriptions and option descriptions: from the table `text::get().command_texts()` (which overwrites the one
-  the macros generated, before registration), in effect at startup and registration time.
+* Command descriptions and option descriptions: from `text::get().command_texts()`, validated and filled before
+  registration.
 * Progress acknowledgements, usage hints, attachment bodies and the reply log entry: the same `text::get()`
   (`command_started_notice`, `command_ping_port_usage`, `command_log_attachment_body`, ...), read on every call.
 * Modal titles, field labels and placeholders: read on the spot in `TokenModal`'s `create()` (a hand-written
   `impl poise::Modal`), on every modal.
 
-Why the description texts cannot be written directly in `src/commands/*.rs`: poise's `#[poise::command]` and
-`#[derive(Modal)]` macros only accept literals, so the descriptions are baked into the binary at compile time and
-cannot be replaced by reading a config at run time. The way round it is to rewrite the texts once before registration
-(and once only):
+Poise macro literals cannot follow the configured language, so command definitions omit descriptions and the language
+table supplies them:
 
 * Command and option descriptions: after `commands::all_commands()` has built the command tree, the
-  `command_texts()` table of [`minecraft_fishingbot_manager_for_discord::text`] overwrites `Command.description` and
+  `command_texts()` table of [`minecraft_fishingbot_manager_for_discord::text`] fills `Command.description` and
   `CommandParameter.description` one by one (both fields are public in poise and can be written directly).
 * The `/token` modal's title, field labels and placeholders: instead of `#[derive(Modal)]`, a hand-written
   `impl poise::Modal` (the texts come from `create()`, the values from `parse()` by `custom_id`; the shape is exactly
@@ -153,38 +149,15 @@ cannot be replaced by reading a config at run time. The way round it is to rewri
 
 The texts themselves live in the language files (`COMMAND_TEXTS` in `src/text/zh_cn.rs` and `src/text/en_us.rs`), where
 `name_path` must match the command name here word for word (a subcommand is written as `"bot add"`). Adding or changing
-a command means updating both languages, and the overwrite test below lists whatever is missing.
+a command means updating both languages.
 
-#### 1.7.1 What the copy inside the macro is: the English copy
+#### 1.7.1 Command text validation
 
-The first paragraph of the `///` and an option's `#[description = "..."]` are the copy that only shows when the
-table is missing an entry (the macro only accepts literals and they cannot be replaced). The rule is to always write
-them in English, word for word identical to the sentence in the `en_us.rs` table, so a missing entry can never be in
-the other language and no second copy has to be maintained (that English sentence is the one in the `en_us.rs` table).
-
-* Why English: the macro copy must match the `en_us.rs` table; a test process that installs no language also gets
-  the English implementation from `text::get()` (see [i18n-en_us.md section 4](../i18n/i18n-en_us.md)), so a missing
-  entry cannot mix languages.
-* The paragraphs after the first stay Chinese: they are notes for the maintainer and are not sent to users (poise only
-  treats the first paragraph as the `description`; the rest become the local `Command::help_text`).
-* Three tests pin this down (all in `src/commands.rs`):
-  * `every_command_and_option_has_text_in_every_language`: the table is complete (anything missing is listed).
-  * `macro_texts_match_the_english_table`: the macro copy equals the sentence in the `en_us.rs` table (word for
-    word).
-  * `every_description_fits_discords_100_character_limit`: a description is no longer than 100 characters (Discord's
-    limit; option descriptions have no compile-time check).
-
-poise's exact rules (read from `src/command/mod.rs` of `poise_macros` 0.7, not guessed):
-
-* A doc comment is split into paragraphs on blank lines; the first paragraph becomes the `description` (line breaks
-  inside it are joined into one space) and the rest become the `help_text`.
-* A command description longer than 100 characters is a compile error (`slash command description too long`); option
-  descriptions have no compile-time check, and the comment on that line in poise's source says it is left for a
-  translation framework like fluent to fill in at run time, which is exactly how this project uses it, so the length
-  has to be counted by hand (`/command` and `/commandall` once grew to 103 characters and were pushed back under 100 by
-  that third test).
-* Writing an aside such as `[...]` inside a description is fine (both languages use `[]` uniformly), as long as it does
-  not get too long.
+The command tree and selected language table must match exactly. Missing, duplicate or unknown commands or options,
+whitespace-only descriptions and descriptions outside 1–100 UTF-16 code units produce an error while building the
+framework, before registration. Tests also check completeness, the actual registration structure and lengths for both
+languages. Command macros no longer hold English descriptions; `autocomplete`, `rename` and option choices remain in
+the command definitions.
 
 Discord's `description_localized` is not used: it lets Discord pick which copy to show by client language, which is a
 different mechanism from this project's "one language per process", and mixing them would produce an English
@@ -207,6 +180,7 @@ description with a Chinese reply.
 * `/command`: options `name` and the free text `command`, `defer`, two replies.
 * `/commandall`: option `command`, `defer`, two replies.
 * `/startall`, `/stopall`, `/restartall`: no options, `defer`, two replies.
+* `/anti-afk`: required `command` choice (`on` or `off`), `defer`, one reply; admins only.
 
 Numbers are the command layer's only conversion: Discord's integer options are signed 64-bit only, so the `/log` line
 count and the `/ping` port are both declared as `i64` and checked in this layer (greater than 0, or 1 to 65535) before
@@ -270,7 +244,7 @@ whether the session is running are decided by the `handle_*` functions as before
 * `/restart <bot name>`: `restart::restart_bot(&bot_dir_entry)`. Stops and then launches; a target that is not running
   is refused (use `/start` to start one) and it replies "restart command sent".
 * `/pause <bot name>`: `pause::pause_fishing(&bot_dir_entry)`. An in-game `/pause` without logging out; after sending
-  it waits `command_echo.wait_ms` (300 ms by default) to confirm the log echo and replies "pause confirmed" or
+  it waits `command_echo.wait` (300 ms by default) to confirm the log echo and replies "pause confirmed" or
   "command sent".
 * `/unpause <bot name>`: `unpause::unpause_fishing(&bot_dir_entry)`. An in-game `/unpause`; the confirmation and the
   wording are as above.
@@ -291,7 +265,7 @@ decided by the user, so a successful echo cannot be predicted and therefore cann
 
 The steps that confirm the effect:
 
-1. Wait `command_echo.wait_ms` from the config (300 ms by default). The JAR prints the echo line synchronously when it
+1. Wait `command_echo.wait` from the config (300 ms by default). The JAR prints the echo line synchronously when it
    receives the command, and that line has to reach the log first.
 2. Look for the echo keyword in the last `command_echo.scan_lines` lines (50 by default) of the newest log. Only the
    tail is scanned rather than the whole file backwards, because scanning a long-running log from the start is
@@ -344,8 +318,8 @@ otherwise that echo line cannot be attributed to one of the commands.
    takes a single entry. The slice shape is why "support several bots at once later" will not need the start and restart
    flows rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 8).
 
-   Adjacent launches are separated by `[startup_queue] bot_login_interval_ms`. After all bots in the request are
-   launched it checks once immediately and once after `timing.check_grace_ms` (one wait per start request), because the
+   Adjacent launches are separated by `[startup_queue] bot_login_interval`. After all bots in the request are
+   launched it checks once immediately and once after `timing.check_grace` (one wait per start request), because the
    JVM may exit by itself one or two seconds after starting and a single check would report "started and gone" as a
    success; see [utils-en_us.md](../utils/utils-en_us.md) section 4.
 4. Failure is always decided by the methods on the details utils returns (when `outcome.has_failed_lines()` is true,
@@ -525,6 +499,10 @@ there, stop the session - the device code has expired and that JVM would only ke
 after stopping, check the credential once more (the JAR may have finished writing it exactly when it got the Ctrl+C),
 and only when it is still missing reply with the timeout and put the old credential back.
 
+If screen lookup fails during login, the error is returned and the session is stopped if possible. When stopping cannot
+be confirmed, the old `.renewing` credential backup is retained to avoid overwriting a potentially running session;
+stop failures are logged.
+
 #### 4.6.2 A few deliberate choices
 
 * Two replies: the first (a link and a code) has to reach the user **immediately**, while the credential only lands on
@@ -558,6 +536,8 @@ and only when it is still missing reply with the timeout and put the old credent
   longer valid).
 * `/restartall`: `restartall::restart_all_bots()`, covering every bot with a configured token that is running.
 * `/commandall <command>`: `commandall::send_command_to_all_bots(raw_bot_command_args)`, covering every running bot.
+
+`/anti-afk <on|off>` uses the separate `lib::handle_anti_afk` entry and is also admin-only. `on` starts the worker or reports that it is already running; `off` stops and joins it or reports that it is not running. It uses `[anti_afk]` input and intervals, matching every screen session whose name contains `runtime.screen_prefix` (including sessions outside this project). Starting confirms thread creation only, not a matching session or input delivery; `/show status` reports thread liveness. It does not start automatically after a process restart.
 
 None of these functions takes a `caller_id`: the routing layer `handle_all_bots_control` already stopped everyone else,
 so whoever reaches them is an admin. They also pick their own titles (`/stopall` uses the command title; when the
@@ -644,7 +624,7 @@ file missing, left as it is" rather than disappearing silently.
 The transient memory peak of a batch start is often higher than a cloud server's available memory, and a process killed
 by the OOM killer never shows up in `screen -list`, so the result says "Bot X: failed to start (usually because
 Microsoft refuses frequent logins, or out of memory)". What to do: lower the memory allowance in `runtime.java_opts`, raise
-`timing.check_grace_ms` or `[startup_queue] bot_login_interval_ms` (watching longer or signing in slower), or repeat the command later
+`timing.check_grace` or `[startup_queue] bot_login_interval` (watching longer or signing in slower), or repeat the command later
 (JVM memory usage improves over time).
 
 ## 6. Queries: `/show status` and `/show botconfig|mybots|allbots|admins`
@@ -656,7 +636,7 @@ Microsoft refuses frequent logins, or out of memory)". What to do: lower the mem
 
 ### 6.1 The command list
 
-* `/show status`: `status::all_running_bots_status()` (through `utils::running_bots::all_running_bot_status_rows()` internally).
+* `/show status`: `status::all_running_bots_status()` (using `utils::running_bots::status_row()`).
   The data comes from `screen -list`, each bot's newest filtered log, and one start-queue lookup (the queued bots get a
   `[Queued]` section below the report), and the reply is text (a table).
 * `/show botconfig`: `botconfig::fishingbot_config_view()`. The data comes from `paths.fishingbot_config_file_name`
@@ -668,8 +648,9 @@ Microsoft refuses frequent logins, or out of memory)". What to do: lower the mem
 
 ### 6.2 `/show status`
 
-* The list is the intersection of "has a token" and "the session exists": `utils::token_ready_bot_dir_entries()` first
-  (the same scope as `/commandall`), then `utils::running_bots::all_running_bot_status_rows()` drops the ones that are not
+* The report first shows whether the anti-AFK thread is running, even if no bots are running or queued; this does not confirm input delivery.
+* The list is the intersection of "has a token" and "the session exists": read the bot directories once and split by token
+  (the same scope as `/commandall`), then `utils::running_bots::status_row()` drops the ones that are not
   running using one `screen -list` snapshot. So everything in the table has a configured token and an existing session;
   a bot whose token file was deleted while the process is still running is not in the table (`/stopall` can still clean
   it up).
@@ -780,15 +761,16 @@ pieces of text use a bare noun, see [architecture-en_us.md](../architecture/arch
 ### 7.4 `/ping`
 
 * Without arguments it uses the default target of the `[ping]` table (`default_ping_host` and `default_ping_port`); with
-  arguments what was typed in the chat wins (a port that fails to parse falls back to the default logic).
+  arguments what was typed in the chat wins (an invalid port produces a usage error).
+* Explicit hosts must resolve only to public addresses; the configured default host is trusted. Proxy Fake-IP DNS can
+  cause a rejection; see [troubleshooting](../../troubleshooting/troubleshooting-en_us.md#ping-refuses-a-local-or-private-address).
 * It does a Minecraft server list handshake (`craftping`), so what comes back is the game layer's answer: the player
   count and the maximum, and the latency of the "fishing host to game server" hop, rather than plain TCP
   reachability.
 * The output is always three lines: `status: online`, `players: current/max` and
   `latency: N ms (from this fishing host to the game server)`; a failure to connect, a timeout and a protocol parse
   failure each get a readable message.
-* The connection timeout comes from `ping.timeout_ms` (config validation guarantees it is not 0, otherwise a response
-  could never arrive).
+* DNS resolution, connection and handshake share `ping.timeout` (config validation guarantees it is not 0).
 * An illegal address or port, a failure to connect and a timeout each get a readable message, and none of them panics.
 
 ### 7.5 `/checkserver`

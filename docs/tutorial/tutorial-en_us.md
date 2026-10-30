@@ -202,11 +202,12 @@ If you logged in successfully with `/bot login`, the bot should already be runni
    * the session survives the grace period but the log is not confirmed: `Bot duck: start command sent, the session is up but the state is not confirmed yet`
    * the session disappears before the grace period: `Bot duck: failed to start (usually because Microsoft throttles frequent logins, or because it ran out of memory)`
 
-* `/start` waits for `timing.check_grace_ms` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
+* `/start` waits for `timing.check_grace` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
 
 To check the status, send `/show status`. It returns a table of the running bots:
 
 ```
+Anti-AFK: not running
 bot | server status | pause status | uptime
 Your bot name | server online | fishing | 3 minutes
 ```

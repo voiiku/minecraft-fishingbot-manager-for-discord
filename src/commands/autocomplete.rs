@@ -49,26 +49,35 @@ async fn bot_name_choices(
 ) -> serenity::CreateAutocompleteResponse {
     let caller_id = ctx.author().id.get();
     let partial = partial.to_string();
-    let choices =
-        match tokio::task::spawn_blocking(move || bot_name_candidate_states(caller_id)).await {
-            Ok(Ok(candidates)) => {
-                let max_choices = config::Config::get().runtime.max_autocomplete_choices;
-                select_candidates(&candidates, &partial, scope, max_choices)
-                    .into_iter()
-                    .map(|(display_name, bot_name)| {
-                        serenity::AutocompleteChoice::new(display_name, bot_name)
-                    })
-                    .collect()
-            }
-            Ok(Err(error)) => {
-                ::log::warn!("Autocomplete candidate lookup failed: {error}");
-                Vec::new()
-            }
-            Err(error) => {
-                ::log::warn!("Autocomplete candidate lookup task failed: {error}");
-                Vec::new()
-            }
-        };
+    let choices = match tokio::task::spawn_blocking(move || bot_name_candidate_states(caller_id))
+        .await
+    {
+        Ok(Ok(candidates)) => {
+            let max_choices = config::Config::get().runtime.max_autocomplete_choices;
+            select_candidates(&candidates, &partial, scope, max_choices)
+                .into_iter()
+                .map(|(display_name, bot_name)| {
+                    serenity::AutocompleteChoice::new(display_name, bot_name)
+                })
+                .collect()
+        }
+        Ok(Err(error)) => {
+            ::log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::AutocompleteLookupFailed { reason: &error })
+            );
+            Vec::new()
+        }
+        Err(error) => {
+            ::log::warn!(
+                "{}",
+                text::get().log_text(text::LogText::AutocompleteTaskFailed {
+                    reason: &error.to_string()
+                })
+            );
+            Vec::new()
+        }
+    };
 
     serenity::CreateAutocompleteResponse::new().set_choices(choices)
 }
@@ -82,7 +91,7 @@ fn bot_name_candidate_states(caller_id: u64) -> Result<Vec<(String, bool, bool)>
     } else {
         bot_dir_entries_of_owner(caller_id)?
     };
-    let (running_entries, not_running_entries) = split_bot_entries_by_is_running(&bot_dir_entries);
+    let (running_entries, not_running_entries) = split_bot_entries_by_is_running(&bot_dir_entries)?;
     // 运行中的已离开队列，因此只查询未运行的：命中的即为排队待启动的。
     let mut queued_entries: Vec<BotDirEntry> = Vec::new();
     let mut stopped_entries: Vec<BotDirEntry> = Vec::new();

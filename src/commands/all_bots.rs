@@ -1,13 +1,13 @@
 //! 全服批量指令；权限由路由层检查。
 
 use super::Error;
-use super::{Context, all_bots_manage};
+use super::{Context, all_bots_manage, run_async_and_reply};
 use minecraft_fishingbot_manager_for_discord::text;
 use minecraft_fishingbot_manager_for_discord::{
-    AllBotsControlAction, handle_all_bots_control, handle_startall_notice,
+    AllBotsControlAction, AntiAfkAction, handle_all_bots_control, handle_anti_afk,
+    handle_startall_notice,
 };
 
-/// Start every bot that has a token (admins only)
 #[poise::command(slash_command)]
 pub(crate) async fn startall(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -18,7 +18,6 @@ pub(crate) async fn startall(ctx: Context<'_>) -> Result<(), Error> {
     .await
 }
 
-/// Stop every bot (admins only)
 #[poise::command(slash_command)]
 pub(crate) async fn stopall(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -31,7 +30,6 @@ pub(crate) async fn stopall(ctx: Context<'_>) -> Result<(), Error> {
     .await
 }
 
-/// Restart every running bot (admins only)
 #[poise::command(slash_command)]
 pub(crate) async fn restartall(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -44,13 +42,8 @@ pub(crate) async fn restartall(ctx: Context<'_>) -> Result<(), Error> {
     .await
 }
 
-/// Send the same in-game command to every running bot (admins only)
 #[poise::command(slash_command)]
-pub(crate) async fn commandall(
-    ctx: Context<'_>,
-    #[description = "in-game command (leading slash = command, otherwise chat; write it as is, no quotes)"]
-    command: String,
-) -> Result<(), Error> {
+pub(crate) async fn commandall(ctx: Context<'_>, command: String) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
     all_bots_manage(
@@ -65,4 +58,22 @@ pub(crate) async fn commandall(
         },
     )
     .await
+}
+
+#[derive(Debug, poise::ChoiceParameter)]
+pub(crate) enum AntiAfkOption {
+    #[name = "on"]
+    On,
+    #[name = "off"]
+    Off,
+}
+
+#[poise::command(slash_command, rename = "anti-afk")]
+pub(crate) async fn anti_afk(ctx: Context<'_>, command: AntiAfkOption) -> Result<(), Error> {
+    let caller_id = ctx.author().id.get();
+    let action = match command {
+        AntiAfkOption::On => AntiAfkAction::On,
+        AntiAfkOption::Off => AntiAfkAction::Off,
+    };
+    run_async_and_reply(ctx, handle_anti_afk(action, caller_id)).await
 }

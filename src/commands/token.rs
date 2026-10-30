@@ -64,7 +64,6 @@ impl poise::Modal for TokenModal {
     }
 }
 
-/// Configure the bot's token
 #[poise::command(slash_command)]
 pub(crate) async fn token(ctx: ApplicationContext<'_>) -> Result<(), Error> {
     // Modal 必须是首次响应，用户关闭或未提交时直接结束。

@@ -23,13 +23,16 @@
   权限）、`all_bot_dir_entries`、`token_ready_bot_dir_entries`、`bot_dir_entries_of_owner`、
   `is_bot_name_taken`、`split_bot_entries_by_token_status`、`create_bot_dir`（成功返回条目）、
   `BotTokenStatus`（判据 `BotTokenStatus::from_dir`）、`token_file_path`（Token 文件路径口径）。
+  重名检查在目录不存在时返回未占用，读取失败时返回错误，不把查询失败当作未重名。
 * `screen`：`screen` 会话的快照、探测与指令注入（注入是不做校验的原语，等待与强杀判定在 `shutdown`）。
-  入口 `active_screen_sessions`（会话名 → `ScreenSession`，含 PID 与"是不是 `(Dead ...)` 残壳"，残壳也
+  入口 `screen_session_snapshot`（会话名 → `ScreenSession`，含 PID 与"是不是 `(Dead ...)` 残壳"，残壳也
   算在跑，以便 `/stop` 能够结束它）、`is_bot_screen_running`、`session_name`、
   `send_command_to_single_bot`、`send_stop_signal_to_session`、`force_quit_session`。
+  会话查询返回 `Result`：GNU screen 明确报告无会话时返回空快照，执行失败或输出异常时返回错误。
 * `running_bots`：机器人的状态口径（是否启动看会话、是否排队看队列）。按运行状态分组、运行中的名字、
   `/show status` 的数据行、运行中与排队中拒绝文案。入口 `split_bot_entries_by_is_running`、
-  `all_running_bot_names`、`all_running_bot_status_rows`、`refusal_if_not_stopped`。
+  `all_running_bot_names`、`status_row`、`refusal_if_not_stopped`。
+  启动、停止、重启及复核会传播查询错误，不将未知状态当作未运行或已停止。
 * `startup`：启动。逐台拉起步骤为“查 Token → 建日志 → 准备原始日志目录 → `screen -dmS`”，缺 Token 的目标不拉起；
   命令方入口是 `StartupQueue::start_bots()`（建账本 → `add_bots_to_queue` 入队 → 等自己的条目都被拉起 → 取结果并
   复核 → `BotStartResults`，它自带 `into_report()` 与 `to_reply_text()`），`/start`、`/startall`、`/restart`
@@ -99,24 +102,24 @@
 `screen -list` 只调用一次并缓存成快照，之后所有在不在运行的判断都基于同一份快照。目录与会话的连接
 （join）只在本模块做，别处不要再遍历目录去匹配会话名：
 
-* `/show status` 那张表的数据行：`all_running_bot_status_rows()` 在本模块，逐台算完四格就直接拼成一行文本
-  （`status_row`，渲完即弃的 `String`，没有快照类型）；表头由 `show/status.rs` 自己拼，两处列序要对齐（见
+* `/show status` 先读取一次机器人目录和 screen 快照，再复用它们生成状态行与排队名单。`status_row` 在本模块逐台
+  算完四格并拼成一行文本；表头由 `show/status.rs` 自己拼，两处列序要对齐（见
   [commands-zh_cn.md 第 6.2 节](../commands/commands-zh_cn.md#62-show-status)）。
 * `split_bot_entries_by_is_running(&[BotDirEntry])` 返回在运行与未运行两组；取哪批目录由调用方决定
   （`all_bot_dir_entries()` 或 `token_ready_bot_dir_entries()`），见
   [commands-zh_cn.md 第 5.2 节](../commands/commands-zh_cn.md#52-名单口径)。
-* `all_running_bot_names()` 返回所有在跑的机器人的名字（`/commandall` 用）：范围与
-  `all_running_bot_status_rows()` 一致（所有配好 Token 的），只查一次 `screen -list`，不读日志。
+* `all_running_bot_names()` 返回所有在跑的机器人的名字（`/commandall` 用）：范围与 `/show status`
+  一致（所有配好 Token 的），只查一次 `screen -list`，不读日志。
 
 一次快照、多处复用是有意设计：批量流程中若每次都重新探测，前面刚启动的会话会立刻被后面算成已在运行，
 统计结果就会前后不一致。
 
 ## 4. 启动与停止中的等待
 
-* 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动 `[startup_queue] max_batch_size` 台；该请求的条目全部出队后才处理下一个 FIFO 请求。批内相邻两台至少隔 `[startup_queue] bot_login_interval_ms`；批与批之间至少隔 `[startup_queue] batch_login_interval_ms`，从上一批出队的时刻算起（复核在命令侧并行进行，不计入这段等待）。队列空闲时未满批次会关闭，但"上一次出队时刻"跨命令保留，连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
-* `StartupQueue::start_bots()` 是命令侧唯一入口（建账本 → 入队 → 等这些条目都被拉起 → 取结果并复核）；启动线程负责批内错峰与逐台拉起，复核按每次启动请求的 `check_grace_ms` 观察会话存活（拉起后判定一次，等满宽限期再判定一次）。登录频率是受限项，批内与批间分别由 `bot_login_interval_ms` 与 `batch_login_interval_ms` 控制；批内台数只影响 JVM 启动时的内存峰值，每次启动请求复核只等一次。见 [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
-* 停止流程的两种等待不接收参数，由流程自己读取配置并执行：先发送退出信号，等待 `stop_grace_ms`，超时后强杀；再等待
-  `stop_settle_ms`，让旧会话彻底注销，最后复核（立即复核仍会读到尚未消失的旧会话）。
+* 所有涉及启动的入口（`/start`、`/startall`、`/restart`、`/restartall`）共用进程级 FIFO 启动队列；调度器长期驻留，空闲时阻塞等待任务。每个命令请求按机器人列表切成批次，每批最多启动 `[startup_queue] max_batch_size` 台；该请求的条目全部出队后才处理下一个 FIFO 请求。批内相邻两台至少隔 `[startup_queue] bot_login_interval`；批与批之间至少隔 `[startup_queue] batch_login_interval`，从上一批出队的时刻算起（复核在命令侧并行进行，不计入这段等待）。队列空闲时未满批次会关闭，但"上一次出队时刻"跨命令保留，连续命令也绕不过限流；进程重启时未执行的任务不持久化，会丢失。`/bot login` 不走这个队列。
+* `StartupQueue::start_bots()` 是命令侧唯一入口（建账本 → 入队 → 等这些条目都被拉起 → 取结果并复核）；启动线程负责批内错峰与逐台拉起，复核按每次启动请求的 `check_grace` 观察会话存活（拉起后判定一次，等满宽限期再判定一次）。登录频率是受限项，批内与批间分别由 `bot_login_interval` 与 `batch_login_interval` 控制；批内台数只影响 JVM 启动时的内存峰值，每次启动请求复核只等一次。见 [commands-zh_cn.md 第 5.5 节](../commands/commands-zh_cn.md#55-失败排查)。
+* 停止流程的两种等待不接收参数，由流程自己读取配置并执行：先发送退出信号，等待 `stop_grace`，超时后强杀；再等待
+  `stop_settle`，让旧会话彻底注销，最后复核（立即复核仍会读到尚未消失的旧会话）。
 * 复核统一走 `startup::verify_batch`，所以"拉起成功"的定义是第二遍复核后会话仍在（`screen -list` 快照），而不是命令已发出；但会话出现也不等于已经上线（登录、进服由 JVM 自己跑），报告与回复因此只写"启动命令已发送，会话已出现"。
 
 ## 5. `reply`：回执格式只写一处
@@ -130,9 +133,9 @@
 * 成败判定与一行错误提示不在这里，那是 utils 返回的明细自己的方法（`LaunchOutcome`、
   `RestartOutcome`、`StopOutcome` 的 `has_failed_lines()` 与 `to_failure_text()`）。
 * `render()` 会按 `runtime.max_reply_chars` 截断长度：超长时从末尾按行删除，并在结尾注明省略了多少行。
-  Discord 对单条消息有硬上限（2000 字符），超长会直接发送失败，用户侧看起来像什么都没发生；按行截断
-  则保证标题与计数行一定保留。长度口径是 `str::utf16_len()`（UTF-16 码元数；`.len()` 是字节、
-  `chars()` 是码点，都不正确）。
+  Discord 对单条消息有 2000 个 UTF-16 码元的硬上限，超长会直接发送失败；应将配置上限设为不超过 2000。
+  按行截断优先保留开头，但上限太小时无法保证保留标题或计数，省略说明本身也可能超出配置上限。
+  长度口径是 `str::utf16_len()`（UTF-16 码元数；`.len()` 是字节、`chars()` 是码点）。
 
 计数要等流程跑完才知道的指令，先跑流程、再用 `set_counts` 整体覆盖，而不是让流程往里追加，否则会同时
 出现占位信息与真实结果两套数字。
@@ -146,7 +149,7 @@
 * 只读取所需字段（`config::Config::get().表.字段`）：用于只有一两行逻辑的便利函数。例如 `session_name` 读取
   `runtime.screen_prefix`；`create_bot_log_file` 与 `latest_log_path` 读取 `runtime.bot_logs_dir`；
   `BotTokenStatus::from_dir` 读取 `runtime.token_file`；`BotDirEntry::find_by_name` 读取 `paths.bots_dir`；
-  `stop_bot_sessions` 读取 `timing.stop_grace_ms` 与 `timing.stop_settle_ms`；`Report::render`
+  `stop_bot_sessions` 读取 `timing.stop_grace` 与 `timing.stop_settle`；`Report::render`
   读取 `runtime.max_reply_chars`。
 
 配置在启动时读取一次，之后常驻内存（见 [config-zh_cn.md 第 1 节](../config/config-zh_cn.md)），因此便利函数读取单个

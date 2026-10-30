@@ -62,7 +62,7 @@ impl Watchdog {
         ) = None;
     }
 
-    /// 判断是否为进程内第一次成功握手。
+    /// 标记已经握手，并返回这是否是进程内第一次调用。
     pub fn is_first_handshake(&self) -> bool {
         !self.ever_handshaken.swap(true, Ordering::Relaxed)
     }
@@ -86,15 +86,12 @@ impl Watchdog {
 
     /// 根据当前时刻与看门狗字段判定网络状态。
     fn state(&self, now: Instant) -> GatewayState {
-        // 检查本次尝试是否已握手。
         let handshaken = lock_or_panic(
             self.last_handshake.lock(),
             text::WatchdogText::LastHandshakeLockRead,
         )
         .is_some();
-        // 未握手时，根据首次握手超时区分 NeverReady 与 Waiting。
         if !handshaken {
-            // 首次握手截止时刻 = 本次尝试开始时刻 + 首次握手超时。
             let timeout = *lock_or_panic(self.started.lock(), text::WatchdogText::StartedLockRead)
                 + self.first_handshake_timeout;
             return if now >= timeout {
@@ -103,12 +100,10 @@ impl Watchdog {
                 GatewayState::Waiting
             };
         }
-        // 读取探活失败起始时刻。
         let unhealthy_since = *lock_or_panic(
             self.unhealthy_since.lock(),
             text::WatchdogText::UnhealthySinceLockRead,
         );
-        // 失败持续达到判定窗口时判定为 Unreachable，否则仍为 Alive。
         match unhealthy_since {
             Some(unhealthy_since) if now.duration_since(unhealthy_since) >= self.window => {
                 GatewayState::Unreachable
@@ -125,12 +120,10 @@ impl Watchdog {
 
             loop {
                 tokio::time::sleep(interval).await;
-                // 收到停止标志时结束任务。
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
 
-                // 请求当前用户信息。
                 let probed = http.get_current_user().await;
                 // 请求期间收到停止标志时丢弃结果。
                 if stop.load(Ordering::Relaxed) {

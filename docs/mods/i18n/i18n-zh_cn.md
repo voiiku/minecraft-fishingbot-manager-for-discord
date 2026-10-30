@@ -31,9 +31,8 @@
 * 内部不变量消息：`expect(...)` 与 `panic!` 这类代码写错了才会出现的提示，以及 `cargo test` 的断言
   文案。除看门狗锁中毒的 14 条外，它们不进语言表（不实现 `Text`）；必须固定英文的收在 `bootstrap`，见第 4 节。
   看门狗文案是例外：它发生在配置装载之后，必须跟随 `[i18n] language`。
-* 代码注释、`docs/`、指令名（Discord 只允许 ASCII 小写）。例外：命令 `///` 的第一段与选项的
-  `#[description]` 会变成发给 Discord 的说明，那两处写英文（等于 `en_us.rs` 表里那句，见
-  [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-宏里那一份算什么英文副本)）。
+* 代码注释、`docs/`、指令名（Discord 只允许 ASCII 小写）。命令与选项说明只写在文案表中，
+  注册前严格校验（见 [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-文案表校验)）。
 * 示例配置的注释固定写英文：它是给"照着模板改配置"的人看的，与中文的代码注释分开。只有"取值随语言变、
   中文部署必须改成另一个值"的那几项，额外带一行 `# CHINESE_SIMPLIFIED:` 提示（`command_echo` 的两条
   回显与 `[i18n] language`）—— 那不是第二份说明，而是取值提示，改值的人会同时看到它，因此不会漂移。
@@ -188,28 +187,22 @@ grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 1
 `language = "ENGLISH"` 跑一次；单测里有 `text::tests::english_impl_is_english` 直接按英文实现断言（它
 不调 `install`，因为 `OnceLock` 是进程级的，装了会影响并发跑的其它用例）。
 
-措辞以中文为准：改文案先改 `zh_cn.rs`（内容与排版的原稿），再把 `en_us.rs` 逐条对齐，最后同步
-`commands/*.rs` 里那份与英文表逐字相同的文案副本。测试进程未安装语言时 `get()` 返回英语实现，措辞类断言
-因此以英语为基准；这不影响中文原稿的地位。
+措辞以中文为准：改文案先改 `zh_cn.rs`，再把 `en_us.rs` 逐条对齐。测试进程未安装语言时 `get()` 返回英语实现，
+措辞类断言因此以英语为基准；这不影响中文原稿的地位。
 
 ### 指令元数据（指令说明、选项说明、`/token` 弹窗）
 
-这些文字由 `#[poise::command]` 与 `#[derive(Modal)]` 宏在编译期写进二进制，宏只认字面量，运行期改
-不了。所以做法是注册之前把文字改一遍（也只做一次）：
+这些文字跟随配置语言，不写在命令宏中：
 
 * 指令说明与选项说明：`commands::all_commands()` 建完指令树后，用 `Text::command_texts()`（表）逐条
-  覆盖 poise 的 `Command.description` 与 `CommandParameter.description`（poise 这两个字段是公开的，
-  能直接改写）。
+  校验并填入 poise 的 `Command.description` 与 `CommandParameter.description`。
 * `/token` 弹窗的标题、字段标签与占位提示：不用 `#[derive(Modal)]`，改成手写 `impl poise::Modal`，
   在 `create()` 里现取文案、`parse()` 按 `custom_id` 取值（形状与 derive 生成的完全一致）。
 
 于是这些文字跟的也是配置里的语言（不是 Discord 客户端语言），与回复文案同一个开关。
 
-齐备性怎么保证：指令说明用"表加覆盖测试"而不是几十个 trait 方法，因为元数据与 `src/commands/*.rs`
-里的名字一一对应，表更好对照。`commands` 里的两条测试把这事钉死：
-`every_command_and_option_has_text_in_every_language` 逐语言检查每一条指令与每一个选项（漏一条就列出
-缺哪条），`command_descriptions_come_from_the_language_table` 证明注册时真的改写生效（而不是只把表放
-在那儿）。效果等同漏翻编译不过，只是发生在测试期。
+指令说明表与指令树必须一一对应；框架创建时会检查缺项、重复项、未知项与说明长度，不合法时明确报错，
+不会注册占位文案。测试会对两种语言检查完整性和实际注册结构。
 
 与 Discord 自带 `description_localized` 的区别：那是让 Discord 按客户端语言挑显示哪一份，与"一个进程
 一种语言"是两套机制。本项目不用它，否则会出现说明是英文、回复是中文的混搭。

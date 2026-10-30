@@ -4,6 +4,8 @@
 # Do not rename the file.
 # Every field is required, and the file is read once at startup.
 # Restart the process to apply changes.
+# Time values are in seconds. Former millisecond fields accept multiples of 0.001 seconds.
+# Old time keys with unit suffixes are no longer accepted.
 # ============================================================================
 # ------------------------------ Language ------------------------------
 # Language of the Discord replies, this process's log and its error messages.
@@ -53,7 +55,7 @@ announce_type_chat = "NONE"
 
 # ------------------------------ Admins ------------------------------
 # Format: Discord user ID = "display name" (the name is only shown by `/show admins`).
-# Admins can operate any bot and use `/startall`, `/stopall`, `/restartall` and `/commandall`.
+# Admins can operate any bot and use `/startall`, `/stopall`, `/restartall`, `/commandall` and `/anti-afk`.
 [admins]
 "123456789012345678" = "your name"
 
@@ -67,7 +69,7 @@ online = "Welcome to the xxx server"
 filter_regex = "([+][0-9.]+XP|is now AFK.|is no longer AFK.|is now away from keyboard.)"
 
 # ------------------------------ Command echo confirmation ------------------------------
-# After `/pause` or `/unpause` is sent, wait `wait_ms` and scan the newest log's last `scan_lines` lines for the two echoes below: they decide whether the command really took effect.
+# After `/pause` or `/unpause` is sent, wait `wait` seconds and scan the newest log's last `scan_lines` lines for the two echoes below: they decide whether the command really took effect.
 [command_echo]
 # The line the JAR prints when it receives `/pause` or `/unpause`.
 # The defaults match the English build.
@@ -75,9 +77,9 @@ filter_regex = "([+][0-9.]+XP|is now AFK.|is no longer AFK.|is now away from key
 pause_echo = "Fishing paused"
 # Will be deprecated (once a pause command is added to the original Fishingbot)
 unpause_echo = "Fishing resumed"
-# How long to wait before reading the log for that echo, in milliseconds.
+# How long to wait before reading the log for that echo, in seconds.
 # Affects: the reply delay of `/pause` and `/unpause`.
-wait_ms = 300
+wait = 0.3
 # How many trailing log lines to scan for the echo.
 # Affects: the reply delay of `/pause` and `/unpause`.
 scan_lines = 50
@@ -91,7 +93,7 @@ java_opts = "-Xms32m -Xmx128m -XX:+UseSerialGC"
 # Screen session prefix; the session name looks like `fb_<bot name>`.
 # You do not need to change it unless it collides with sessions of another program.
 # Affects: the session name (`utils/screen.rs`, session_name), which is used both to send a command to a bot and to check whether it runs.
-screen_prefix = "fb_"
+screen_prefix = "fb1_"
 # File name holding the `refreshToken` inside the bot directory (`/token` writes exactly this file).
 # You normally do not need to change it.
 token_file = "refreshToken"
@@ -110,37 +112,49 @@ max_reply_chars = 2000
 # Discord hard-limits an autocomplete response to 25 choices, so the accepted range is 1 - 25.
 max_autocomplete_choices = 25
 
+# ------------------------------ Anti-AFK input ------------------------------
+# All keys in this table are required. The target is every GNU screen session whose
+# name contains runtime.screen_prefix; this feature is not started automatically.
+[anti_afk]
+# Input-pulse action syntax: !/! is slash, !! is a literal !, and !ENTER! submits.
+# Check https://crates.io/crates/input-pulse for more details on the syntax and usage.
+command = "!/!!/!!ENTER!"
+# Seconds between completed input cycles; must be greater than 0.
+execution_interval = 180
+# Seconds after each character or key; must be finite and non-negative (0 is allowed).
+input_delay = 0.05
+
 # ------------------------------ FishingBot Startup queue ------------------------------
 # One global FIFO queue is shared by `/start`, `/startall`, `/restart` and `/restartall`.
 # `/bot login` does not use this queue.
 [startup_queue]
 # Maximum number of bots to launch in one batch.
 max_batch_size = 1
-# Minimum gap between two sign-ins inside the same batch, in milliseconds.
+# Minimum gap between two sign-ins inside the same batch, in seconds.
 # Microsoft rate-limits sign-ins per egress IP: about one every 20 seconds is stable, one every 12 seconds loses the last bot, and several sign-ins within a few seconds trip a penalty window that rejects every sign-in for the next few tens of seconds (see docs/troubleshooting section 12).
 # Affects: the stagger inside one batch of the start queue (`utils/startup`).
-bot_login_interval_ms = 1000
-# Wait between two batches, in milliseconds.
+bot_login_interval = 1
+# Wait between two batches, in seconds.
 # Counted from the moment the previous batch was popped; verification runs in parallel and does not delay the next batch, and this wait applies even when the batch held one bot.
 # Affects: the gap between batches of the start queue (`utils/startup`).
-batch_login_interval_ms = 20000
+batch_login_interval = 20
 # Maximum number of queued requests waiting for the dispatcher. Does not include the active request.
 # Its value also sets how long a start waits for its results: the queue derives that timeout from this table (a full queue at the pacing above, times two), so a bigger queue means a longer wait before results are called unconfirmed.
 max_pending_requests = 32
 
 # ------------------------------ Timing ------------------------------
-# All values are milliseconds.
+# All values are seconds; decimal values use 0.001-second precision.
 [timing]
-# Session-survival grace period per start request, in milliseconds: a bot is considered started when its session is still there after this long (a failed launch dies within seconds).
+# Session-survival grace period per start request, in seconds: a bot is considered started when its session is still there after this long (a failed launch dies within seconds).
 # Whether it joined the game is reported from the log, but does not decide the outcome.
-check_grace_ms = 5000
+check_grace = 5
 # Grace period for a JVM to exit before it is force-killed.
-stop_grace_ms = 3000
+stop_grace = 3
 # Wait after force-killing sessions before checking that they have exited.
-stop_settle_ms = 500
+stop_settle = 0.5
 # Continuous probe-failure window before reconnecting; also the delay before reconnect.
 # The REST probe interval (a third of this window) and the first-handshake timeout (twice this window) are derived from this value; they are not separate keys.
-watchdog_window_ms = 30000
+watchdog_window = 30
 
 # ------------------------------ FishingBot's own raw logs ------------------------------
 # The raw log of `FishingBot.jar` itself.
@@ -160,9 +174,13 @@ discard_path = "/dev/null"
 # ------------------------------ /ping default target ------------------------------
 [ping]
 # Target of `/ping` when it is called without arguments.
+# Explicit hosts must resolve only to public addresses; the configured default is trusted.
+# Proxy Fake-IP DNS (for example 198.18.0.0/15) can cause a public domain to be rejected.
+# Configure the proxy/DNS to return real public addresses for that domain; see
+# Read docs/troubleshooting/troubleshooting-en_us.md for more detail.
 default_ping_host = "your.gameserver.address"
 default_ping_port = 25565
-timeout_ms = 3000
+timeout = 3
 
 # ------------------------------ Process log level ------------------------------
 # `false`: this project's logs, plus the framework's (serenity / poise) WARN/ERROR.
@@ -174,36 +192,37 @@ debug = false
 # ------------------------------ Help menu ------------------------------
 [text]
 # Full output of `/help`; edit the wording freely, no rebuild needed.
-help = """Tip 1: <bot name> is case-insensitive and works as a nickname: it is not checked against an actual in-game character name, only stored in lowercase in files.
-Tip 2: Before first use, find a dedicated fishing spot and run /sethome fishing to save a teleport point. Make sure the bot has a fishing rod enchanted with Mending in its inventory.
-Tip 3: This project saves your Minecraft account login credentials; do not log in unless you trust the provider of this bot.
+help = """Bot names are case-insensitive nicknames; use letters, numbers, underscores or hyphens.
+Before fishing, save a spot with /sethome fishing and equip a Mending fishing rod.
+This project stores Minecraft login credentials; only log in if you trust the operator.
 
-/help Show this help menu
-/whoami Show your Discord user ID (needed for the admins table in the config)
-/ping [host] [port] Check the game server; both arguments are optional and omitted values use the configured defaults
-/checkserver Show fishing server information
+/help Show this menu
+/whoami Show your Discord user ID for the admins table
+/ping [host] [port] Probe a game server; omitted options use configured defaults
+/checkserver Show fishing host performance
 
-/bot add <bot name> Add a bot and create its directory (letters, numbers, underscores and hyphens only; invalid names are rejected)
-/bot del <bot name> Delete a bot's directory
-/bot rename <old bot name> <new bot name> Rename a bot
-/bot login <bot name> Sign in to the bot with a Microsoft account and save its token on the server (returns a sign-in link and code; credentials are saved automatically; reply is visible only to you)
-/token <bot name> Open a modal to paste the token manually. Use this only if /bot login fails (reply is visible only to you)
-/log <bot name> <lines> Get the bot's latest log as an attachment (up to 100 lines; reply is visible only to you)
+/bot add <name> Add a bot (a token is still required)
+/bot del <name> Delete a bot's directory
+/bot rename <old name> <new name> Rename a bot
+/bot login <name> Sign in with Microsoft; the private reply gives a link and code
+/token <name> Enter a token privately if /bot login fails
+/log <name> [lines] Get a private log attachment (up to the configured limit)
 
-/start <bot name> Start a bot
-/stop <bot name> Stop a bot
-/restart <bot name> Restart a bot
-/command <bot name> <command> Send a command to a bot to run on the game server. Include the leading slash; without it, the text is sent as chat.
-/pause <bot name> Pause fishing without disconnecting
-/unpause <bot name> Resume fishing
+/start <name> Start a bot
+/stop <name> Stop a bot
+/restart <name> Restart a bot
+/command <name> <command> Send a game command; without a leading slash it is chat
+/pause <name> Pause fishing without disconnecting
+/unpause <name> Resume fishing
 
-/show status Check the status of all running bots
-/show botconfig Show the current configuration of all fishing bots
-/show mybots Show the bots you added and whether each has a token (the token is not validated)
-/show allbots Show all bots and whether each has a token (the token is not validated)
-/show admins Show the administrator list and their Discord user IDs
+/show status Show running bots and anti-AFK status
+/show botconfig Show the shared fishing bot configuration
+/show mybots Show your bots and their token presence
+/show allbots Show all bots and their token presence
+/show admins Show the administrator list
 
-/startall (admins only) Start all bots that have tokens (Microsoft rate limits may prevent some from starting successfully)
+/startall (admins only) Start bots with tokens; sign-in limits may cause failures
 /stopall (admins only) Stop all bots
-/restartall (admins only) Restart all running bots (some may fail to restart)
-/commandall <command> (admins only) Send a command to all running bots"""
+/restartall (admins only) Restart running bots; some may fail
+/commandall <command> (admins only) Send a command to running bots
+/anti-afk <on|off> (admins only) Start or stop anti-AFK for matching screen sessions"""

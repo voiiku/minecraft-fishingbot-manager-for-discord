@@ -24,6 +24,26 @@ FishingBot.jar's own raw log is written to `/dev/null` and discarded by default,
 2. The bot lacks the Send Messages permission in that channel.
 3. A network interruption prevented Discord from receiving the acknowledgement within three seconds, so the interaction timed out (rare).
 
+### `/ping` refuses a local or private address
+
+For an explicitly supplied host, the program uses the system resolver on the machine where it runs and requires every resolved address to be public; local, private and reserved ranges are rejected to prevent `/ping` from probing internal services. The configured default host is trusted because it is supplied by the administrator and is not subject to this check.
+
+If a public domain is rejected, check the resolver on the machine (or container) running the program. Replace the example domain with the actual target:
+
+```bash
+getent ahosts play.example.com
+getent hosts play.example.com
+```
+
+A proxy's Fake-IP DNS may return a virtual address in `198.18.0.0/15` instead of the game server's real address; the program rejects that reserved range. For proxies such as Clash/Mihomo, exclude the domain in the proxy DNS `fake-ip-filter` so that it returns real addresses. For example, when `fake-ip-filter-mode` is `blacklist`, **append** this entry to the existing list without replacing other rules:
+
+```yaml
+fake-ip-filter:
+  - play.example.com
+```
+
+This is proxy YAML, not an option in this program's `[ping]` TOML table. Save and reload the proxy configuration as directed by the proxy tool, clear or wait for DNS caches to expire, then check the resolution and retry `/ping`. If the proxy's TUN mode intercepts DNS, changing the system DNS server alone may not help. If the real results still include local, private or reserved addresses, rejection is the intended protection; do not trust an unknown target merely to bypass it.
+
 ## 4. The program log contains no framework (serenity, poise) logs
 
 By default, framework logs are limited to `WARN` and `ERROR`: serenity and poise emit large amounts of repetitive `INFO` output on every heartbeat. Set `[log] debug` to `true` and restart the program to record them. The level is controlled only by this setting; no environment variable or temporary override exists.
@@ -49,7 +69,7 @@ Use `/log <bot name>` to view the bot's latest log. Common causes:
 
 Possible causes include a network outage, an incorrect proxy node, or a reset token.
 
-If network latency is high or unstable, increase `timing.watchdog_window_ms`: the probe interval (one third of it) and the first-handshake timeout (twice it) follow it. See [watchdog.md, section 5](../mods/watchdog/watchdog-en_us.md#5-common-problems) for the detection details.
+If network latency is high or unstable, increase `timing.watchdog_window`: the probe interval (one third of it) and the first-handshake timeout (twice it) follow it. See [watchdog.md, section 5](../mods/watchdog/watchdog-en_us.md#5-common-problems) for the detection details.
 
 ## 9. The fishing bot log contains very little output
 
@@ -64,8 +84,8 @@ The log keywords do not match the messages the game server actually emits. Check
 
 ## 11. Some bots fail to start with `/startall`
 
-* Microsoft rate-limits sign-ins per egress IP. `/start`, `/startall`, `/restart` and `/restartall` share a global start queue. The example config uses `max_batch_size = 1` and `batch_login_interval_ms = 20000`, so sign-ins are at least 20 seconds apart; if you increase the batch size, set `bot_login_interval_ms` to 18-20 seconds as well. See section 12 for the mechanism, how the actual sign-in gap is computed, and the recommended values.
-* The transient memory peak of a batch start may exceed the server's available memory. A process killed by the system does not appear in `screen -list`, so the report may say "failed to start (usually because Microsoft refuses frequent logins, or out of memory)". To reduce the peak, lower the heap limit in `runtime.java_opts`; if `max_batch_size` is greater than 1, reduce it, or increase `bot_login_interval_ms` to stagger sign-ins; if memory is temporarily tight, retry later (JVM memory usage decreases over time). Increase `timing.check_grace_ms` if the verification window needs to cover a longer startup phase.
+* Microsoft rate-limits sign-ins per egress IP. `/start`, `/startall`, `/restart` and `/restartall` share a global start queue. The example config uses `max_batch_size = 1` and `batch_login_interval = 20`, so sign-ins are at least 20 seconds apart; if you increase the batch size, set `bot_login_interval` to 18-20 seconds as well. See section 12 for the mechanism, how the actual sign-in gap is computed, and the recommended values.
+* The transient memory peak of a batch start may exceed the server's available memory. A process killed by the system does not appear in `screen -list`, so the report may say "failed to start (usually because Microsoft refuses frequent logins, or out of memory)". To reduce the peak, lower the heap limit in `runtime.java_opts`; if `max_batch_size` is greater than 1, reduce it, or increase `bot_login_interval` to stagger sign-ins; if memory is temporarily tight, retry later (JVM memory usage decreases over time). Increase `timing.check_grace` if the verification window needs to cover a longer startup phase.
 
 ## 12. The same bot fails to start every time (Microsoft sign-in rate limit)
 
@@ -73,18 +93,18 @@ Symptom: the `/startall` report counts a bot as "start command sent, session app
 
 Cause: the XSTS -> Minecraft token request (`POST https://api.minecraftservices.com/authentication/login_with_xbox`) is rate-limited per **egress IP** and returns `HTTP 429` when the limit is exceeded. FishingBot does not check the status code; it reads `access_token` directly from the response, throws an exception, and the process exits 2-5 seconds after launch. Whether the failure is reported depends on the verification window:
 
-* Verification takes two `screen -list` snapshots: one immediately after the whole batch has launched, and one after `timing.check_grace_ms`. The smaller the batch, the closer this window is to launch: with `max_batch_size = 1` (one bot per batch) and for the trailing partial batch, the observation covers only about one `check_grace_ms`, so a 429 rejection 2-5 seconds after launch often goes unnoticed and is reported as success.
+* Verification takes two `screen -list` snapshots: one immediately after the whole batch has launched, and one after `timing.check_grace`. The smaller the batch, the closer this window is to launch: with `max_batch_size = 1` (one bot per batch) and for the trailing partial batch, the observation covers only about one `check_grace`, so a 429 rejection 2-5 seconds after launch often goes unnoticed and is reported as success.
 
 Rate limiting sees the actual gap between sign-ins, which is controlled by the two interval keys in `[startup_queue]`:
 
-* two bots within one batch: `bot_login_interval_ms`;
-* last bot of a batch -> first bot of the next batch: `batch_login_interval_ms` minus the time elapsed since the batch was popped through the launch of its last bot (verification runs in parallel on the command side and does not consume this wait).
+* two bots within one batch: `bot_login_interval`;
+* last bot of a batch -> first bot of the next batch: `batch_login_interval` minus the time elapsed since the batch was popped through the launch of its last bot (verification runs in parallel on the command side and does not consume this wait).
 
 Empirical values for one egress IP: one sign-in every 20 seconds (about 3 per minute) is stable; one every 12 seconds (5 per minute) loses the last one; several sign-ins within a few seconds trigger a penalty window, and every sign-in for the next few tens of seconds is rejected. Other sign-ins from the same egress IP (the official launcher, another instance, a manual login) count against the same budget.
 
 What to do:
 
-1. Ensure the effective sign-in gap is 18-20 seconds: the example config uses `max_batch_size = 1` and `batch_login_interval_ms = 20000`; if you increase the batch size, set `bot_login_interval_ms` to 18-20 seconds as well. `max_batch_size` does not set the minimum gap itself; it determines how the two interval keys combine within and between batches.
+1. Ensure the effective sign-in gap is 18-20 seconds: the example config uses `max_batch_size = 1` and `batch_login_interval = 20`; if you increase the batch size, set `bot_login_interval` to 18-20 seconds as well. `max_batch_size` does not set the minimum gap itself; it determines how the two interval keys combine within and between batches.
 2. Wait 3-5 minutes before starting the failed bot again (`/start <bot name>` or `/restart <bot name>`); do not retry immediately.
 3. There are only two main ways to speed up starts significantly: use multiple egress IPs, or let the JAR reuse the Minecraft access token (valid for 24 hours) instead of signing in on every start.
 4. How this differs from "not enough memory" (the second cause in section 11): a rate-limited process exits by itself 2-5 seconds after launch and its log shows authentication errors, while a process killed by the OOM killer is gone within 0.3 seconds, its log is empty or contains `Killed`, and `dmesg` records it.
@@ -109,8 +129,8 @@ At startup, this program validates the config and rejects unknown fields. After 
 
 Fields changed by the config cleanup (the shipped template is already updated):
 
-* `[startup_queue] batch_cooldown_ms` is now `bot_login_interval_ms`: the meaning changed from "cooldown between batches" to "the minimum gap between two sign-ins" (bots within a batch are also spaced by it), replacing the former `[timing] stagger_ms`.
-* `[timing]` no longer has `probe_interval_ms` or `first_handshake_timeout_ms`: both are derived from `watchdog_window_ms` (the probe interval is one third of the window, the first-handshake timeout twice it).
+* `[startup_queue] batch_cooldown_ms` is now `bot_login_interval`: the meaning changed from "cooldown between batches" to "the minimum gap between two sign-ins" (bots within a batch are also spaced by it), replacing the former `[timing] stagger_ms`.
+* `[timing]` no longer has `probe_interval_ms` or `first_handshake_timeout_ms`: both are derived from `watchdog_window` (the probe interval is one third of the window, the first-handshake timeout twice it).
 
 ## 16. The same command receives multiple replies
 

@@ -17,7 +17,7 @@ pub(crate) fn send_command_to_bot(
     let bot_command = raw_bot_command_args.to_clean_bot_command()?;
 
     // 会话不存在时无法发送指令。
-    if !is_bot_screen_running(bot_name) {
+    if !is_bot_screen_running(bot_name)? {
         return Err(text::get().bot_command_not_running(bot_name));
     }
 

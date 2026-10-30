@@ -16,6 +16,7 @@ use crate::utils::Report;
 /// 配置中的默认目标由运维人员提供，视为可信值。
 pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String, String> {
     let ping_config = &config::Config::get().ping;
+    let i18n_text = text::get();
     let target_host = host.unwrap_or(ping_config.default_ping_host.as_str());
     let target_port = port.unwrap_or(ping_config.default_ping_port);
     let timeout = Duration::from_millis(ping_config.timeout_ms);
@@ -31,23 +32,23 @@ pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String
             Ok(Ok(addresses)) => {
                 let addresses: Vec<_> = addresses.collect();
                 if addresses.is_empty() {
-                    return Err(text::get().ping_connect_failed(
+                    return Err(i18n_text.ping_connect_failed(
                         target_host,
                         target_port,
-                        "no address returned",
+                        i18n_text.ping_no_address_reason(),
                     ));
                 }
                 addresses
             }
             Ok(Err(e)) => {
-                return Err(text::get().ping_connect_failed(
+                return Err(i18n_text.ping_connect_failed(
                     target_host,
                     target_port,
                     &e.to_string(),
                 ));
             }
             Err(_) => {
-                return Err(text::get().ping_timeout(
+                return Err(i18n_text.ping_timeout(
                     target_host,
                     target_port,
                     ping_config.timeout_ms,
@@ -59,9 +60,9 @@ pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String
     if require_public_target
         && target_addresses
             .iter()
-            .any(|address| is_local_target_ip(address.ip()))
+            .any(|address| is_disallowed_target_ip(address.ip()))
     {
-        return Err(text::get().ping_local_target(target_host, target_port));
+        return Err(i18n_text.ping_local_target(target_host, target_port));
     }
 
     let mut stream = None;
@@ -75,7 +76,7 @@ pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String
             }
             Ok(Err(error)) => last_connect_error = Some(error),
             Err(_) => {
-                return Err(text::get().ping_timeout(
+                return Err(i18n_text.ping_timeout(
                     target_host,
                     target_port,
                     ping_config.timeout_ms,
@@ -86,10 +87,10 @@ pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String
 
     let Some(mut stream) = stream else {
         let reason = last_connect_error.map_or_else(
-            || "connection failed".to_string(),
+            || i18n_text.ping_connection_failed_reason().to_string(),
             |error| error.to_string(),
         );
-        return Err(text::get().ping_connect_failed(target_host, target_port, &reason));
+        return Err(i18n_text.ping_connect_failed(target_host, target_port, &reason));
     };
 
     // 握手使用建连后剩余的总超时时间，不指定协议版本号。
@@ -109,33 +110,33 @@ pub(crate) async fn ping(host: Option<&str>, port: Option<u16>) -> Result<String
             let latency = start.elapsed().as_millis();
 
             let mut report = Report::new();
-            report.set_title(text::get().ping_title(target_host, target_port));
+            report.set_title(i18n_text.ping_title(target_host, target_port));
             report
                 .basics
-                .push(text::get().ping_status_online().to_string());
+                .push(i18n_text.ping_status_online().to_string());
             report
                 .basics
-                .push(text::get().ping_players(response.online_players, response.max_players));
-            report.basics.push(text::get().ping_latency(latency));
+                .push(i18n_text.ping_players(response.online_players, response.max_players));
+            report.basics.push(i18n_text.ping_latency(latency));
 
             Ok(report.render())
         }
-        Ok(Err(e)) => {
-            Err(text::get().ping_protocol_failed(target_host, target_port, &e.to_string()))
-        }
-        Err(_) => Err(text::get().ping_timeout(target_host, target_port, ping_config.timeout_ms)),
+        Ok(Err(e)) => Err(i18n_text.ping_protocol_failed(target_host, target_port, &e.to_string())),
+        Err(_) => Err(i18n_text.ping_timeout(target_host, target_port, ping_config.timeout_ms)),
     }
 }
 
 /// 判断地址是否属于环回、私网、链路本地、共享地址或其他保留网段。
-fn is_local_target_ip(ip: IpAddr) -> bool {
+fn is_disallowed_target_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => is_local_ipv4(ip),
-        IpAddr::V6(ip) => is_local_ipv6(ip) || ip.to_ipv4_mapped().is_some_and(is_local_ipv4),
+        IpAddr::V4(ip) => is_disallowed_ipv4(ip),
+        IpAddr::V6(ip) => {
+            is_disallowed_ipv6(ip) || ip.to_ipv4_mapped().is_some_and(is_disallowed_ipv4)
+        }
     }
 }
 
-fn is_local_ipv4(ip: Ipv4Addr) -> bool {
+fn is_disallowed_ipv4(ip: Ipv4Addr) -> bool {
     let octets = ip.octets();
 
     ip.is_loopback()
@@ -153,7 +154,7 @@ fn is_local_ipv4(ip: Ipv4Addr) -> bool {
         || octets[0] >= 240
 }
 
-fn is_local_ipv6(ip: Ipv6Addr) -> bool {
+fn is_disallowed_ipv6(ip: Ipv6Addr) -> bool {
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_unique_local()
@@ -187,7 +188,7 @@ mod tests {
             "::ffff:127.0.0.1",
         ] {
             assert!(
-                is_local_target_ip(address.parse().expect("test address")),
+                is_disallowed_target_ip(address.parse().expect("test address")),
                 "{address} should be rejected"
             );
         }
@@ -198,7 +199,7 @@ mod tests {
     fn public_addresses_are_allowed() {
         for address in ["8.8.8.8", "1.1.1.1", "2001:4860:4860::8888"] {
             assert!(
-                !is_local_target_ip(address.parse().expect("test address")),
+                !is_disallowed_target_ip(address.parse().expect("test address")),
                 "{address} should be allowed"
             );
         }

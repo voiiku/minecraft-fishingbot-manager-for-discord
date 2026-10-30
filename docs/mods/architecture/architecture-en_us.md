@@ -209,7 +209,7 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   reference serenity or poise; they take plain arguments and return `Result<String, String>`, which keeps the business
   logic unit-testable.
 * Names explain themselves: action functions use verb phrases (`start_bot`); things that return a value use nouns
-  (`all_running_bot_status_rows`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
+  (`all_running_bot_names`, no `get_` prefix); conversions use the `to_` and `into_` prefixes (`to_clean_bot_name`,
   `into_report`; `into_` when it consumes `self`, `to_` otherwise, as clippy sees it too); constructors that search the
   disk use `find_*`; predicates use `is_` and `has_`; an ID is always `*_id` (`caller_id`, `owner_id`).
 * Add a suffix according to the return shape: lists are `*_list` (`my_bots_list`); status tables are `*_status`
@@ -228,10 +228,7 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
 * The order inside a file is fixed: module docs (`//!`), `mod` declarations, `use`, public re-exports (`pub use`),
   then constants, types and functions; the process entry (`lib.rs`, `main.rs`) follows it too, so "which submodules
   does this file have" is visible at the very top.
-* The line that becomes visible text is written in English: the first paragraph of a command's `///` and an option's
-  `#[description]` are the copies the poise macro bakes into the binary (they only show when the language table is
-  missing an entry), so they are English and word for word identical to the sentence in `en_us.rs` (a test compares
-  them word for word); the paragraphs after the first stay Chinese, details in
+* Command and option descriptions live only in the language tables and are validated before registration; see
   [commands-en_us.md](../commands/commands-en_us.md) section 1.7.1.
 * One piece of text is cleaned once over its whole path: the command layer only reads values (argument names start
   with `raw_`) and whoever really needs a value cleans it (`clean_*`).

@@ -6,7 +6,6 @@ use super::{Context, Error, read_only_query};
 use minecraft_fishingbot_manager_for_discord::text;
 use minecraft_fishingbot_manager_for_discord::{ShowAction, handle_fishingbot_config, handle_show};
 
-/// Show various information
 #[poise::command(
     slash_command,
     subcommands("status", "botconfig", "mybots", "allbots", "admins")
@@ -15,7 +14,6 @@ pub(crate) async fn show(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Show every running bot and its status
 #[poise::command(slash_command)]
 pub(crate) async fn status(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -23,7 +21,6 @@ pub(crate) async fn status(ctx: Context<'_>) -> Result<(), Error> {
     read_only_query(ctx, move || handle_show(ShowAction::Status, caller_id)).await
 }
 
-/// Show the game-side config shared by every bot (sent as an attachment)
 #[poise::command(slash_command)]
 pub(crate) async fn botconfig(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -61,7 +58,6 @@ pub(crate) async fn botconfig(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Show the bots you own and their token status
 #[poise::command(slash_command)]
 pub(crate) async fn mybots(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -69,7 +65,6 @@ pub(crate) async fn mybots(ctx: Context<'_>) -> Result<(), Error> {
     read_only_query(ctx, move || handle_show(ShowAction::MyBots, caller_id)).await
 }
 
-/// Show every bot on this host and its token status
 #[poise::command(slash_command)]
 pub(crate) async fn allbots(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
@@ -77,7 +72,6 @@ pub(crate) async fn allbots(ctx: Context<'_>) -> Result<(), Error> {
     read_only_query(ctx, move || handle_show(ShowAction::AllBots, caller_id)).await
 }
 
-/// Show the admin list
 #[poise::command(slash_command)]
 pub(crate) async fn admins(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();

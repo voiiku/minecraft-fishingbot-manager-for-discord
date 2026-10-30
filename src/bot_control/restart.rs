@@ -11,7 +11,7 @@ use crate::utils::{BotDirEntry, StartupQueue, is_bot_screen_running, restart_bot
 pub(crate) fn restart_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String> {
     let bot_name: &str = &bot_dir_entry.bot_name;
 
-    if !is_bot_screen_running(bot_name) {
+    if !is_bot_screen_running(bot_name)? {
         // 还在启动队列里排着的：没有会话可重启，队列会把它拉起来。
         if StartupQueue::get_or_init().bot_in_queue(bot_dir_entry) {
             return Err(text::get().bot_start_already_queued(bot_name));
@@ -25,7 +25,7 @@ pub(crate) fn restart_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String>
         text::get().log_text(text::LogText::BotRestartRequested { bot_name })
     );
     // 停止、启动并复核。
-    let restart_outcome = restart_bot_sessions(std::slice::from_ref(bot_dir_entry));
+    let restart_outcome = restart_bot_sessions(std::slice::from_ref(bot_dir_entry))?;
     if restart_outcome.has_failed_lines() {
         return Err(restart_outcome.to_failure_text());
     }

@@ -27,7 +27,7 @@ Discord 不可达时，我们既无法控制机器人，机器人却仍占用游
 
 细节：
 
-* 时序来自配置中的判定窗口 `timing.watchdog_window_ms`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
+* 时序来自配置中的判定窗口 `timing.watchdog_window`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
   由它派生，不再作为独立配置项——这两个值只有按窗口比例取值才有意义。入口将三项装入 `Watchdog`（对应三个
   字段），判定与探活共用同一份。派生关系保证探活间隔始终小于判定窗口，因此“探活比窗口还慢、首次失败就判
   掉线”的组合无法再被配置出来。
@@ -65,7 +65,7 @@ serenity 自带的心跳与 ACK 机制会发现并重连（协议保证），我
    与真人玩家争抢登录名额。掉线期间不会自动恢复；重连成功后，需要由人到 Discord 中发送 `/startall` 或
    `/start 名字`。
 3. 随后关闭旧连接（`shard_manager.shutdown_all()`，否则新旧两个连接会争抢同一个 bot 会话，导致 Discord 反复
-   踢下线），调用 `wait_before_reconnect()` 等待一个判定窗口（复用 `timing.watchdog_window_ms`，不新增配置项），
+   踢下线），调用 `wait_before_reconnect()` 等待一个判定窗口（复用 `timing.watchdog_window`，不新增配置项），
    再重新装配 `Client` 并连接；如果仍然失败，就按同样流程继续重试。
 
 客户端自行返回（`client.start()` 返回：客户端被关停，或 token / Intent 非法等致命错误；普通掉线不会让它返回）也走
@@ -113,7 +113,7 @@ serenity 自带的心跳与 ACK 机制会发现并重连（协议保证），我
   上验证 REST 连通性：`curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway`
   应返回 200。
 * 日志出现 `Unreachable`：可能是断网、代理失效或 Token 失效；查看上一行 `REST 探活失败:` 给出的具体原因。
-* 网络偶发抖动导致一次重连：可将 `timing.watchdog_window_ms` 调大（例如 60000）；探活间隔与首次握手超时会随之
+* 网络偶发抖动导致一次重连：可将 `timing.watchdog_window` 调大（例如 60）；探活间隔与首次握手超时会随之
   变化，窗口内恢复不会被误判为掉线。
 * 日志反复出现“重建连接失败”但进程未退出：这是正常重试（掉线不会退出进程）。若属于 `Missing Access`、`401`
   这类配置错误，进程会以退出码 1 退出；单元中配置 `RestartPreventExitStatus=1` 后不会重拉（退出一次后进入

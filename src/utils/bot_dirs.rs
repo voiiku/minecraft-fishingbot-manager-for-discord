@@ -172,25 +172,47 @@ pub fn all_bot_dir_entries() -> Result<Vec<BotDirEntry>, String> {
 
 /// 检查磁盘上是否已存在同名的机器人目录，用于 `/bot add` 与 `/bot rename` 的重名检查。
 /// 传入参数必须是 [`ToCleanBotName::to_clean_bot_name`] 转过的名字。
-pub fn is_bot_name_taken(clean_bot_name: &str) -> bool {
-    // 读取所有 Discord 用户 ID 的父目录 base_dir/bots。
-    let bots_dir = &config::Config::get().paths.bots_dir;
-    let Ok(owner_dir_names) = list_subdirectory_names(bots_dir) else {
-        return false;
+/// 根目录不存在表示未占用；读取失败返回错误。
+pub fn is_bot_name_taken(clean_bot_name: &str) -> Result<bool, String> {
+    bot_name_taken_in(&config::Config::get().paths.bots_dir, clean_bot_name)
+}
+
+fn bot_name_taken_in(bots_dir: &Path, clean_bot_name: &str) -> Result<bool, String> {
+    let entries = match fs::read_dir(bots_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(text::get().read_bots_root_failed(&error.to_string())),
     };
 
-    // 只考察真正的归属目录，再在其中查找同名子目录。
-    owner_dir_names.iter().any(|owner_dir_name| {
-        from_dir_name_to_owner_id(owner_dir_name).is_some()
-            && bots_dir.join(owner_dir_name).join(clean_bot_name).is_dir()
-    })
+    for entry in entries {
+        let entry = entry.map_err(|error| text::get().read_bots_root_failed(&error.to_string()))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if from_dir_name_to_owner_id(name).is_none() {
+            continue;
+        }
+        match fs::metadata(entry.path()) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(text::get().read_bots_root_failed(&error.to_string())),
+        }
+        let candidate = entry.path().join(clean_bot_name);
+        match fs::metadata(candidate) {
+            Ok(metadata) if metadata.is_dir() => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(text::get().read_bot_list_failed(&error.to_string())),
+        }
+    }
+    Ok(false)
 }
 
 /// 创建机器人数据目录，成功时返回新建的机器人条目。
 pub fn create_bot_dir(raw_bot_name: &str, caller_id: u64) -> Result<BotDirEntry, String> {
     let bot_dir_entry = BotDirEntry::new(raw_bot_name, caller_id)?;
 
-    if is_bot_name_taken(&bot_dir_entry.bot_name) {
+    if is_bot_name_taken(&bot_dir_entry.bot_name)? {
         return Err(text::get().bot_add_name_taken(&bot_dir_entry.bot_name));
     }
 
@@ -243,6 +265,23 @@ fn sort_by_bot_name(bot_dir_entries: &mut [BotDirEntry]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_check_distinguishes_absence_from_io_failure() {
+        let dir = crate::test_support::temp_test_dir("name-lookup");
+        fs::create_dir_all(dir.join("123")).unwrap();
+        fs::write(dir.join("456"), b"not a directory").unwrap();
+        assert!(!bot_name_taken_in(&dir.join("missing"), "duck").unwrap());
+        assert!(!bot_name_taken_in(&dir, "duck").unwrap());
+
+        fs::create_dir(dir.join("123").join("duck")).unwrap();
+        assert!(bot_name_taken_in(&dir, "duck").unwrap());
+        assert!(bot_name_taken_in(&dir.join("456"), "duck").is_err());
+
+        std::os::unix::fs::symlink("goose", dir.join("123").join("goose")).unwrap();
+        assert!(bot_name_taken_in(&dir, "goose").is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// 归属目录名必须是纯数字的 Discord 用户 ID；其他名字（例如管理员手工放入的目录）均不成立。
     ///

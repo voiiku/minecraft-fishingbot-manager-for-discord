@@ -89,13 +89,10 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    example configuration `minecraft-fishingbot-manager-for-discord.conf.example.toml` is the only exception: its comments are
    in English (aimed at people editing a config from the template), and only the few entries whose value follows the
    language and must be changed for a Chinese deployment carry an extra `# CHINESE_SIMPLIFIED:` hint line, see
-   [docs/mods/i18n/i18n-en_us.md section 1](../mods/i18n/i18n-en_us.md). One further exception: the lines that become
-   visible text are written in English, namely the first paragraph of a command's `///` and an option's
-   `#[description]`, because the poise macro treats them as the description to send to Discord (the macro only accepts
-   literals and cannot swap them at run time), so those two places are in English and match the line in the `en_us.rs`
-   table word for word (the English copy used when a table entry is missing, not a language fallback, see
-   [docs/mods/commands/commands-en_us.md section 8.1](../mods/commands/commands-en_us.md)); the paragraphs after the
-   first one stay in Chinese (for maintainers only, never sent to users). Wherever it matters who validates something
+   [docs/mods/i18n/i18n-en_us.md section 1](../mods/i18n/i18n-en_us.md). Command and option descriptions live only in
+   the language tables and are validated before registration; see
+   [command text validation](../mods/commands/commands-en_us.md#171-command-text-validation).
+   Wherever it matters who validates something
    or who is responsible, name the layer explicitly (command layer, command entry layer, business layer, utils
    primitive), for example "permissions are validated in the business layer: this function is called by
    [`crate::handle_all_bots_control`], which first evaluates `has_permission(caller_id,
@@ -156,19 +153,19 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   is only a `(Dead ...)` shell, `running_bots` reports that state directly (the JVM is gone, and the last log line may
   still be an old "online").
 * `/show status`'s table has no dedicated type: the rows are joined on the spot by
-  `utils::running_bots::all_running_bot_status_rows()` (four cells and `" | "`) and the header on the spot by
+  `utils::running_bots::status_row()` (four cells and `" | "`) and the header on the spot by
   `show/status.rs`, so the two sides must agree on the column order (the column names live in `text`, one set per
   language). The full pattern is in
   [docs/mods/commands/commands-en_us.md section 6.2](../mods/commands/commands-en_us.md#62-show-status).
 * Replies must not overstate: `/start` uses the start verification result and answers "join confirmed", "the session
   exists but its state is unconfirmed" or "start failed"; the stop stage of `/restart` is confirmed, while its launch
   stage still only says "restart command sent"; `/stop` re-checks its stop flow on the spot, so it may answer
-  "stopped successfully"; `/pause` and `/unpause` wait after sending for the configured `command_echo.wait_ms`
+  "stopped successfully"; `/pause` and `/unpause` wait after sending for the configured `command_echo.wait`
   (default 300 ms, `utils::bot_status::confirm_pause_command`) to find the echo at the end of the log, and only when
   the echo is seen do they answer "pause confirmed" or "resumed" - otherwise they only say "sent". Pick the wording of
   new commands by this principle: say exactly as much as can be verified.
 * An interaction has to be answered within 3 seconds, otherwise the user sees "the interaction failed". What we have to
-  do (starting a JVM, running `screen -list`, waiting `[startup_queue] bot_login_interval_ms` per bot, reading logs) usually takes far
+  do (starting a JVM, running `screen -list`, waiting `[startup_queue] bot_login_interval` per bot, reading logs) usually takes far
   longer, so:
   * commands that trigger process operations or external probes (`/start`, `/stop`, `/restart`, `/pause`, `/unpause`,
     `/command`, the four `*all` commands, `/ping`, `/checkserver`, `/log`) always call `ctx.defer()` first; among them
@@ -186,7 +183,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     The second reply is sent as a new message under Discord's defer behaviour; re-check this in a live deployment if
     changing the response flow.
   * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window. When a
-    batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval_ms`) the followup always
+    batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval`) the followup always
     fails, so the final report of a long command goes through `commands::say_final_report`: if it cannot be sent as a
     reply it is posted as an ordinary channel message (those are not bound to the interaction token) and a
     `LogText::ReportPostedToChannel` line records why, together with the failure reason. The batch-operation reply
@@ -376,7 +373,7 @@ Both criteria are implemented in `src/watchdog/gateway.rs` (pure timing, indepen
 
 Details:
 
-* The timings come from the judging window `timing.watchdog_window_ms` in the configuration; the probe interval (one
+* The timings come from the judging window `timing.watchdog_window` in the configuration; the probe interval (one
   third of the window) and the first-handshake timeout (twice the window) are derived from it
   (`TimingConfig::probe_interval` / `first_handshake_timeout`) instead of being separate keys, because those two only
   make sense as a ratio of the window. The entry point builds them into the `Watchdog` (they are three of its fields),
@@ -410,9 +407,9 @@ project's dedicated code for a deliberate failure, which a systemd unit can keep
 The start-up queue runs the pipeline in four stages; the command side only touches the first:
 
 1. `StartupQueue::start_bots(bots)`: the command-side entry, which creates the ledger, calls `add_bots_to_queue` and `wait_until_done()` until every entry has been launched once, then hands the results to `verify_batch`.
-2. The starter thread `run_starter`: wait for a non-empty queue, wait for `[startup_queue] batch_login_interval_ms` (counted from when the previous batch was popped), then `pop_bots_from_head(max_batch_size)`.
-3. `start_single_batch` calls `launch_one_bot` → `add_bot_for_login` per bot: create this run's log file (on failure no session is launched) → prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, with `raw/log0.log` pointing at `/dev/null`) → start the session with `screen -dmS` and a command shaped like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`; adjacent bots in a batch are separated by `bot_login_interval_ms`.
-4. `verify_batch`: take a `screen -list` snapshot immediately after launch, wait for `timing.check_grace_ms`, then take a second snapshot; only surviving the second one counts as started, and the log only states whether the bot is confirmed in-game.
+2. The starter thread `run_starter`: wait for a non-empty queue, wait for `[startup_queue] batch_login_interval` (counted from when the previous batch was popped), then `pop_bots_from_head(max_batch_size)`.
+3. `start_single_batch` calls `launch_one_bot` → `add_bot_for_login` per bot: create this run's log file (on failure no session is launched) → prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, with `raw/log0.log` pointing at `/dev/null`) → start the session with `screen -dmS` and a command shaped like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`; adjacent bots in a batch are separated by `bot_login_interval`.
+4. `verify_batch`: take a `screen -list` snapshot immediately after launch, wait for `timing.check_grace`, then take a second snapshot; only surviving the second one counts as started, and the log only states whether the bot is confirmed in-game.
 
 Follow this style for new flows: one function per step, and every step readable on its own.
 

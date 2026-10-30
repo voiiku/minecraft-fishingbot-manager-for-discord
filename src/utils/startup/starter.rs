@@ -19,9 +19,6 @@ use crate::utils::reply::BotStartOutcome;
 use super::ledger::StartLedger;
 use super::{QueuedBot, StartupQueue};
 
-/// 队列放不下时，记进账本的失败明细里的原因。
-pub(super) const QUEUE_FULL_REASON: &str = "启动队列已满（max_pending_requests）";
-
 /// 启动线程 panic 后、重启它之前的等待（避免连续 panic 时刷屏）。
 const STARTER_RESTART_BACKOFF: Duration = Duration::from_secs(1);
 
@@ -73,7 +70,7 @@ impl StartupQueue {
             // 批与批之间固定等一个间隔：从"上一次取出一批"算起，扣掉已经过去的部分。
             thread::sleep(remaining_batch_wait(
                 Duration::from_millis(self.batch_login_interval_ms),
-                self.latest_poped_timestamp(),
+                self.last_batch_dequeued_at(),
                 Instant::now(),
             ));
 
@@ -91,7 +88,7 @@ impl StartupQueue {
         }
     }
 
-    /// 复核的宽限期：每次启动请求拉起后观察这批会话存活多久（见 `timing.check_grace_ms`）。
+    /// 复核的宽限期：每次启动请求拉起后观察这批会话存活多久（见 `timing.check_grace`）。
     pub(super) fn check_grace(&self) -> Duration {
         Duration::from_millis(self.check_grace_ms)
     }
@@ -140,8 +137,12 @@ impl StartupQueue {
         let bot_dir_path = &bot_dir_entry.bot_dir_path;
 
         // 已经在跑的不再拉起（跳过，不算失败）。
-        if is_bot_screen_running(bot_name) {
-            return BotStartOutcome::Skipped;
+        match is_bot_screen_running(bot_name) {
+            Ok(true) => return BotStartOutcome::Skipped,
+            Ok(false) => {}
+            Err(error) => {
+                return BotStartOutcome::Failure(text::get().start_launch_failed(bot_name, &error));
+            }
         }
 
         // 与 `/bot login` 共用同一份实现（见 [`Self::add_bot_for_login`]）。
@@ -158,10 +159,10 @@ impl StartupQueue {
 /// 这一批还要等多久：`interval` 减去"距离上一次取出一批"已经过去的部分。
 fn remaining_batch_wait(
     interval: Duration,
-    latest_poped_timestamp: Instant,
+    last_batch_dequeued_at: Instant,
     now: Instant,
 ) -> Duration {
-    interval.saturating_sub(now.saturating_duration_since(latest_poped_timestamp))
+    interval.saturating_sub(now.saturating_duration_since(last_batch_dequeued_at))
 }
 
 /// 这几台各记一条失败明细（原因拼成能直接进回复的一行）。

@@ -6,6 +6,36 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+/// 反 AFK 输入及执行间隔，目标使用 `runtime.screen_prefix`。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AntiAfkConfig {
+    /// 使用 input-pulse 语法发送到 screen 的输入。
+    pub command: String,
+    /// 每轮输入完成后的等待时间（秒），必须大于 0。
+    #[serde(rename = "execution_interval")]
+    pub execution_interval_seconds: u64,
+    /// 每个字符或按键后的延迟（秒），允许为 0。
+    #[serde(rename = "input_delay")]
+    pub input_delay_seconds: f64,
+}
+
+impl AntiAfkConfig {
+    /// 构建并验证实际运行使用的 input-pulse 配置。
+    pub(crate) fn input_pulse_config(
+        &self,
+        screen_prefix: &str,
+    ) -> Result<input_pulse::InputPulseConfig, String> {
+        input_pulse::InputPulseConfig::new(
+            input_pulse::TargetMode::ScreenSession,
+            screen_prefix,
+            &self.command,
+            self.execution_interval_seconds,
+            self.input_delay_seconds,
+        )
+    }
+}
+
 /// `/ping` 的默认目标与超时配置。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +45,10 @@ pub struct PingConfig {
     /// 默认探测的服务器端口。
     pub default_ping_port: u16,
     /// `/ping` 总超时（毫秒），包括 TCP 建连与状态握手。
+    #[serde(
+        rename = "timeout",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub timeout_ms: u64,
 }
 
@@ -153,10 +187,18 @@ pub struct StartupQueueConfig {
     ///
     /// 微软按出口 IP 限制登录频率（见 `docs/troubleshooting/troubleshooting-zh_cn.md` 第 12 节），
     /// 这个值管"同一批里相邻两台之间"的错峰。
+    #[serde(
+        rename = "bot_login_interval",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub bot_login_interval_ms: u64,
     /// 批与批之间的间隔（毫秒）。
     ///
     /// 一批跑完（拉起 + 复核）之后至少隔它才开下一批——即使上一批只有一台。
+    #[serde(
+        rename = "batch_login_interval",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub batch_login_interval_ms: u64,
     /// 全局队列最多暂存的启动请求数量。
     ///
@@ -165,7 +207,7 @@ pub struct StartupQueueConfig {
     pub max_pending_requests: usize,
 }
 
-/// 启动、停止与看门狗的时序参数，时间单位为毫秒。
+/// 启动、停止与看门狗的时序参数；配置为秒，内部保存毫秒。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingConfig {
@@ -173,13 +215,29 @@ pub struct TimingConfig {
     ///
     /// 复核据此判定"拉起来了没有"：拉起后立即判定一次（会话消失或残壳即失败），
     /// 过了宽限期会话仍存活即算启动成功；此刻是否已进服由日志另行说明，不参与判定。
+    #[serde(
+        rename = "check_grace",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub check_grace_ms: u64,
     /// 等待 JVM 优雅退出的时间（毫秒），超时后强杀。
+    #[serde(
+        rename = "stop_grace",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub stop_grace_ms: u64,
     /// 强制退出后、重新启动前的等待时间（毫秒）。
+    #[serde(
+        rename = "stop_settle",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub stop_settle_ms: u64,
     /// 看门狗判定窗口（毫秒），掉线后也用作重连等待时间。
     /// 探活间隔与首次握手超时由它派生
+    #[serde(
+        rename = "watchdog_window",
+        deserialize_with = "super::parse::seconds_to_millis"
+    )]
     pub watchdog_window_ms: u64,
 }
 
@@ -212,6 +270,7 @@ pub struct CommandEchoConfig {
     /// `/unpause` 生效后 JAR 打印的回显（默认值按英文 jar；中文 jar 是 `已恢复钓鱼`）。
     pub unpause_echo: String,
     /// 指令发出去之后等多久再去看日志回显（毫秒）。
+    #[serde(rename = "wait", deserialize_with = "super::parse::seconds_to_millis")]
     pub wait_ms: u64,
     /// 检查回显时读取的日志行数。
     pub scan_lines: usize,

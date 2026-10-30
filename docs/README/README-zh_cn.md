@@ -38,7 +38,7 @@
 * `/whoami`：查看调用者的 Discord 用户 ID。
 * `/ping [地址] [端口]`：探测游戏服务器；不带参数时用配置中 `[ping]` 设定的默认值。
 * `/checkserver`：查看钓鱼服务器自身的性能情况（CPU、内存、磁盘、运行时长）。
-* `/show status`：检查全部运行中机器人的状态。
+* `/show status`：检查运行中的机器人与反 AFK 线程状态。
 * `/show botconfig`：查看全部钓鱼机器人共用的配置文件，以附件发出。
 * `/show mybots`、`/show allbots`、`/show admins`：查看自己名下的机器人、全服机器人、管理员名单。
 * `/bot add <机器人名>`：添加机器人（还需要设置 Token 才可开始使用）。
@@ -56,6 +56,7 @@
 仅管理员可用：
 
 * `/startall`、`/stopall`、`/restartall`、`/commandall <指令>`：对全服机器人批量操作。
+* `/anti-afk <on|off>`：启动或停止匹配 screen 会话的反 AFK；可通过 `/show status` 查看状态。
 
 ## 4. 项目现状
 

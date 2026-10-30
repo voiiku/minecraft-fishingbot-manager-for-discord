@@ -10,14 +10,10 @@ use minecraft_fishingbot_manager_for_discord::text;
 /// `/log` 默认读取的行数；业务层还会按配置限制上限。
 const DEFAULT_LOG_LINES: usize = 50;
 
-/// Read a bot's latest log
 #[poise::command(slash_command)]
 pub(crate) async fn log(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_any_bot_names"]
-    #[description = "bot name"]
-    name: String,
-    #[description = "how many trailing lines to read (default 50, cap in runtime.max_reply_log_lines)"]
+    #[autocomplete = "super::autocomplete_any_bot_names"] name: String,
     lines: Option<i64>,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();

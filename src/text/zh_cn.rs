@@ -1,6 +1,6 @@
 //! 简体中文文案。
 
-use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
+use super::{CommandText, CommandTextProblem, ConfigRequirement, LogText, Text, WatchdogText};
 
 /// 简体中文的实现（不需要实例状态）。
 pub(super) struct ZhCn;
@@ -21,7 +21,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     },
     CommandText {
         name_path: "show status",
-        description: "查看全部正在运行的机器人及状态",
+        description: "查看运行中的机器人与反 AFK 状态",
         options: &[],
     },
     CommandText {
@@ -155,6 +155,11 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             "command",
             "游戏内指令 (带斜杠为指令，不带为聊天；直接写入，含空格时无需加引号)",
         )],
+    },
+    CommandText {
+        name_path: "anti-afk",
+        description: "启动或停止反 AFK (仅管理员)",
+        options: &[("command", "选择 on 启动或 off 停止")],
     },
 ];
 
@@ -517,6 +522,54 @@ impl Text for ZhCn {
         "全服机器人停止结果"
     }
 
+    fn anti_afk_started(&self) -> &'static str {
+        "反 AFK 已启动（不保证已有匹配会话或输入已送达）"
+    }
+
+    fn anti_afk_already_running(&self) -> &'static str {
+        "反 AFK 已在运行，无需重复启动"
+    }
+
+    fn anti_afk_stopped(&self) -> &'static str {
+        "反 AFK 已停止"
+    }
+
+    fn anti_afk_status(&self, running: bool) -> &'static str {
+        if running {
+            "反 AFK: 运行中"
+        } else {
+            "反 AFK: 未运行"
+        }
+    }
+
+    fn anti_afk_stop_not_running(&self) -> &'static str {
+        "错误: 反 AFK 功能未在运行，无需停止"
+    }
+
+    fn anti_afk_lock_failed(&self, reason: &str) -> String {
+        format!("获取反 AFK 状态锁失败: {reason}")
+    }
+
+    fn anti_afk_config_failed(&self, reason: &str) -> String {
+        format!("构建反 AFK 配置失败: {reason}")
+    }
+
+    fn anti_afk_worker_failed(&self, reason: &str) -> String {
+        format!("反 AFK 线程运行失败: {reason}")
+    }
+
+    fn anti_afk_start_failed(&self, reason: &str) -> String {
+        format!("启动反 AFK 失败: {reason}")
+    }
+
+    fn anti_afk_stop_failed(&self, reason: &str) -> String {
+        format!("停止反 AFK 失败: {reason}")
+    }
+
+    fn anti_afk_status_failed(&self, reason: &str) -> String {
+        format!("查询反 AFK 状态失败: {reason}")
+    }
+
     fn restartall_nothing_running(&self) -> &'static str {
         "全部重启执行结果: 没有运行的机器人实例，无需重启"
     }
@@ -639,6 +692,14 @@ impl Text for ZhCn {
         format!("服务器 ({host}:{port}) 连接失败：\n{reason}")
     }
 
+    fn ping_no_address_reason(&self) -> &'static str {
+        "域名解析未返回地址"
+    }
+
+    fn ping_connection_failed_reason(&self) -> &'static str {
+        "连接失败"
+    }
+
     fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String {
         format!("连接服务器 ({host}:{port}) 超时({timeout_ms} 毫秒无响应)")
     }
@@ -724,6 +785,10 @@ impl Text for ZhCn {
         "内部错误（见程序日志）"
     }
 
+    fn start_queue_full_reason(&self) -> &'static str {
+        "启动队列已满（max_pending_requests）"
+    }
+
     fn command_start_queue_summary(
         &self,
         batch_size: usize,
@@ -799,6 +864,14 @@ impl Text for ZhCn {
 
     fn read_bots_root_failed(&self, reason: &str) -> String {
         format!("错误: 读取机器人根目录失败: {reason}")
+    }
+
+    fn screen_list_failed(&self, reason: &str) -> String {
+        format!("查询 screen 会话失败: {reason}")
+    }
+
+    fn screen_unrecognized_output(&self, output: &str) -> String {
+        format!("无法识别的输出: {output}")
     }
 
     fn refusal_bot_running(&self, bot_name: &str) -> String {
@@ -910,6 +983,18 @@ impl Text for ZhCn {
         COMMAND_TEXTS
     }
 
+    fn command_text_invalid(&self, path: &str, problem: CommandTextProblem) -> String {
+        let reason = match problem {
+            CommandTextProblem::Missing => "缺少说明".to_string(),
+            CommandTextProblem::Duplicate => "说明重复".to_string(),
+            CommandTextProblem::Unknown => "不存在对应的指令或选项".to_string(),
+            CommandTextProblem::InvalidLength { length } => {
+                format!("说明必须为 1-100 个 UTF-16 码元且不能全为空白，当前长度为 {length}")
+            }
+        };
+        format!("指令文案 {path} 无效: {reason}")
+    }
+
     fn token_modal_title(&self) -> &'static str {
         "写入机器人 refreshToken"
     }
@@ -965,6 +1050,17 @@ impl Text for ZhCn {
                  首次握手超时 {first_handshake_timeout_secs} 秒"
             ),
             LogText::CommandRunFailed { error } => format!("指令执行出错: {error}"),
+            LogText::CommandFallbackReplyFailed {
+                caller_id,
+                command_path,
+                reason,
+            } => format!("向 Discord 用户 {caller_id} 发送 /{command_path} 兜底回复失败: {reason}"),
+            LogText::AutocompleteLookupFailed { reason } => {
+                format!("自动候选查询失败: {reason}")
+            }
+            LogText::AutocompleteTaskFailed { reason } => {
+                format!("自动候选查询任务失败: {reason}")
+            }
             LogText::CommandReplied {
                 caller_id,
                 command_path,
@@ -1033,11 +1129,11 @@ impl Text for ZhCn {
                 "清除服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (不影响全局注册，下次启动会重试)"
             ),
             LogText::GlobalCommandsReadFailed { reason } => {
-                format!("读不到现有的全局指令，本轮跳过 guild 指令残留清理: {reason}")
+                format!("获取全局指令失败: {reason}；将在稍后重新检查，满足条件后清理各服务器的遗留 guild 指令")
             }
             LogText::GuildCommandsCleanupWaiting { minutes } => format!(
-                "这套全局指令在 Discord 侧还没满 1 小时 (还差约 {minutes} 分钟)，本轮不清各服务器上\
-                 遗留的 guild 指令；满 1 小时后的下一次启动会自动清理"
+                "全局指令尚未满足传播稳定性检查条件；将在约 {minutes} 分钟后重新检查，\
+                 并在条件满足时清理各服务器的遗留 guild 指令"
             ),
             LogText::DiscordClientEnded => "与 Discord 的连接已结束 (客户端正常返回)".to_string(),
             LogText::DiscordClientError { error } => format!("与 Discord 的连接发送错误: {error}"),
@@ -1185,6 +1281,10 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
         ConfigRequirement::PlainName => "不能包含空格或斜杠，也不能写成 . 或 ..".to_string(),
         ConfigRequirement::PortRange => "必须是 1-65535 之间的端口号".to_string(),
         ConfigRequirement::GreaterThanZero => "必须大于 0".to_string(),
+        ConfigRequirement::NonNegativeDuration => "必须是可表示的非负有限秒数".to_string(),
+        ConfigRequirement::InputPulseCommand { reason } => {
+            format!("必须是 screen 模式支持的 input-pulse 输入: {reason}")
+        }
         ConfigRequirement::DiscordTokenEmpty => {
             "不能为空 (在Discord开发者面板 → 你的应用 → Bot → Reset Token 中获取)".to_string()
         }

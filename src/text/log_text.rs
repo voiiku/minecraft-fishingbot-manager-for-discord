@@ -36,6 +36,16 @@ pub enum LogText<'a> {
     },
     /// 指令回调返回了 `Err`。
     CommandRunFailed { error: &'a str },
+    /// 发送指令失败兜底回复时出错。
+    CommandFallbackReplyFailed {
+        caller_id: u64,
+        command_path: &'a str,
+        reason: &'a str,
+    },
+    /// 自动候选查询失败。
+    AutocompleteLookupFailed { reason: &'a str },
+    /// 自动候选查询任务失败。
+    AutocompleteTaskFailed { reason: &'a str },
     /// 每次回复用户都记一条：谁调的、哪条指令、回了什么。
     ///
     /// 记录回复内容，供排查问题时核对。
@@ -102,9 +112,9 @@ pub enum LogText<'a> {
         guild_name: &'a str,
         reason: &'a str,
     },
-    /// 读不到现有的全局指令，于是跳过 guild 指令残留清理（注册本身不受影响）。
+    /// 读取全局指令失败，稍后重新检查（注册本身不受影响）。
     GlobalCommandsReadFailed { reason: &'a str },
-    /// 这套全局指令还不满 1 小时（或本轮刚改过），本轮不动 guild 指令残留。
+    /// 全局指令未满足清理条件，将在等待后重新检查。
     GuildCommandsCleanupWaiting { minutes: u64 },
     /// 与 Discord 的连接正常结束（客户端返回 `Ok`）。
     DiscordClientEnded,

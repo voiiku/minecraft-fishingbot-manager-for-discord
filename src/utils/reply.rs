@@ -1,14 +1,4 @@
-//! 组装与渲染回复报告。
-//!
-//! 需要输出报告的指令都用 [`Report`] 组装、由 [`Report::render`] 渲染，
-//! 简短回复用结果类型上的 `has_failed_lines` 与 `to_failure_text`（启动那套定义在本文件）。
-//!
-//! 新增输出类型时，在结构体中加入可选字段并同步更新 [`Report::new`] 与 [`Report::render`] 即可，
-//!
-//! 提供 [`IntoReplyText`]：业务结果直接转成回复文本 —— `Result<String, String>` 原样透出，
-//! 带明细的结果类型在这里渲染整段回复（例如 `startup::BotStartResults`：`into_report` 与 `to_reply_text` 定义在本文件）。
-//!
-//! 关于`/show status` 的回复文本：因为/show status 只展示运行中的机器人状态，所以它定义在 [`super::running_bots`] 中
+//! 组装报告，并将业务结果转换为回复文本。
 
 use crate::config;
 use crate::text;
@@ -21,9 +11,6 @@ pub struct Report {
     /// 标题；`None` 时省略标题与分隔线。
     pub title: Option<String>,
     /// 基础信息行与列表行：计数、环境指标、表头、名单、状态行等。
-    ///
-    /// 名单、状态表这类“一行一条”的数据放这里 —— 它们算报告开头就该看到的信息，
-    /// 单独开一节会把表头与数据行割裂开，因此不再另设明细字段。
     pub basics: Vec<String>,
     /// 成功明细行。
     pub succeeded: Vec<String>,
@@ -63,10 +50,7 @@ impl Report {
         self.title = Some(title.into());
     }
 
-    /// 用一组 标签 + 数量 覆盖基础信息行，统一格式为「标签: N 个」。
-    /// 如第一行-成功：2个，第二行-失败：1个
-    /// 批量指令的计数行使用它：一次性完全传递，传递顺序与实际回复一致。
-    /// 非计数信息（表头、名单、说明）直接向 `basics` 中 push，不使用本函数。
+    /// 用按给定顺序排列的计数行覆盖基础信息。
     pub fn set_counts(&mut self, counts: &[(&str, usize)]) {
         self.basics = counts
             .iter()
@@ -74,73 +58,48 @@ impl Report {
             .collect();
     }
 
-    /// 把report渲染成回复文本（`ctx.say` 发送它）：
-    ///
-    /// 1. 标题块：`title` 有值时：标题一行 + 一条分隔线；否则为空
-    /// 2. 基础信息与列表行（计数、表头、名单、状态行…）：逐行加 `- `，与下面的明细行保持一致；
-    /// 3. 三个明细小节：成功 / 跳过 / 失败，各自非空才出现（见 `Report::push_list_block`）；
-    /// 4. 整块内容：`标签:` 一行 + 原文原样输出（日志、配置、帮助文本这类不能被逐行加前缀）；
-    /// 5. 各块之间用空行分隔，拼成完整回复；
-    /// 6. 截断：超过 `runtime.max_reply_chars` 就从末尾开始按行丢弃，并注明省略了多少行
-    ///    Discord 对单条消息有硬上限（2000个utf16字符），超长会发送失败（用户那边看起来"什么都没发生"）。
-    ///    截断时先把截断提示的长度算进去，所以上限装得下"第一行 + 说明"，结果就一定在上限之内。
-    ///    长度口径见 `Utf16Len::utf16_len`（UTF-16 是 Discord 的口径）。
+    /// 按标题、基础信息、各类明细和原文内容的顺序渲染。
+    /// 超过 `runtime.max_reply_chars` 时按行截断并注明省略行数；长度以 UTF-16 码元计算。
     pub fn render(&self) -> String {
         let mut blocks: Vec<String> = Vec::new();
 
-        // 1. 标题块。
         let mut header: Vec<String> = Vec::new();
-        // 如果已经存在标题，就加上分隔线；否则不加，避免空标题时出现。
         if let Some(title) = &self.title {
             header.push(format!("{title}:"));
             header.push("=======================".to_string());
         }
-        // 2. 基础信息与列表行：每行前加 `- `，与明细行保持一致。
         header.extend(self.basics.iter().map(|line| format!("- {line}")));
         if !header.is_empty() {
             blocks.push(header.join("\n"));
         }
 
-        // 3. 明细小节：成功 / 跳过 / 排队 / 失败，各自非空才出现（标签自带括号，见 push_list_block）。
+        let i18n_text = text::get();
         Self::push_list_block(
             &mut blocks,
-            text::get().report_succeeded_label(),
+            i18n_text.report_succeeded_label(),
             &self.succeeded,
         );
-        Self::push_list_block(
-            &mut blocks,
-            text::get().report_skipped_label(),
-            &self.skipped,
-        );
-        Self::push_list_block(&mut blocks, text::get().report_queued_label(), &self.queued);
-        Self::push_list_block(&mut blocks, text::get().report_failed_label(), &self.failed);
-        // 4. 整块内容：先写前缀并换行，再把整块内容原样输出（不逐行加前缀）。
+        Self::push_list_block(&mut blocks, i18n_text.report_skipped_label(), &self.skipped);
+        Self::push_list_block(&mut blocks, i18n_text.report_queued_label(), &self.queued);
+        Self::push_list_block(&mut blocks, i18n_text.report_failed_label(), &self.failed);
         if let Some(content) = &self.content {
-            blocks.push(format!(
-                "{}:\n{content}",
-                text::get().report_content_label()
-            ));
+            blocks.push(format!("{}:\n{content}", i18n_text.report_content_label()));
         }
 
-        // 5. 各块之间用空行分隔，拼成完整回复。
         let reply_text = blocks.join("\n\n");
 
-        // 6. 截断逻辑。
         let max_utf16_units = config::Config::get().runtime.max_reply_chars;
         if reply_text.utf16_len() <= max_utf16_units {
             return reply_text;
         }
 
-        // 超长度：从末尾按行丢（关键信息都在头），注明省略了多少行。
         let lines: Vec<&str> = reply_text.lines().collect();
         let mut kept_lines: Vec<&str> = Vec::new();
         let mut used_chars = 0usize;
         for line in &lines {
-            // 换行符也算进长度，否则多行拼起来又会重新超限。
             let line_chars = line.utf16_len() + 1;
-            // 保留的说明占位
             let omitted_line_count = lines.len() - kept_lines.len() - 1;
-            let omitted_note = text::get().report_omitted_lines_note(omitted_line_count);
+            let omitted_note = i18n_text.report_omitted_lines_note(omitted_line_count);
             if used_chars + line_chars + omitted_note.utf16_len() > max_utf16_units {
                 break;
             }
@@ -148,18 +107,16 @@ impl Report {
             used_chars += line_chars;
         }
 
-        // 保留多少行、丢了多少行一起算清，末尾接上说明（上限小到连第一行都放不下属于坏配置，不考虑）。
+        // 上限过小时，省略说明本身可能超过该上限。
         let dropped_line_count = lines.len() - kept_lines.len();
         format!(
             "{}\n{}",
             kept_lines.join("\n"),
-            text::get().report_omitted_lines_note(dropped_line_count)
+            i18n_text.report_omitted_lines_note(dropped_line_count)
         )
     }
 
-    /// 追加逐行列出的小节；内容为空时跳过。
-    /// 标签自己带括号（中文是 `(成功明细)`、英文是 `Success`）：中英文的括号样式不同，由各语言的实现决定。
-    /// 这里只负责拼标签和每一行的前缀‘-’。
+    /// 追加非空的明细小节。
     fn push_list_block(blocks: &mut Vec<String>, label: &str, lines: &[String]) {
         if lines.is_empty() {
             return;

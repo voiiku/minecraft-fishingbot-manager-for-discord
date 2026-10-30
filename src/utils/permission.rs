@@ -22,7 +22,6 @@ pub fn has_permission(caller_id: u64, required: RequiredPermission) -> bool {
         RequiredPermission::Everyone => true,
         // 管理员名单唯一，所以先放行管理员。
         _ if config::Config::admins().is_admin(caller_id) => true,
-        // 执行到这一步说明不是管理员，不满足MustBeAdmin。
         RequiredPermission::MustBeAdmin => false,
         // 随后检查归属 Discord 用户 ID 是否匹配（是否是本人）。
         RequiredPermission::OwnerOrAdmin(owner_id) => owner_id == caller_id,

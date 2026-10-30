@@ -19,12 +19,12 @@ pub(crate) fn stop_bot(bot_dir_entry: &BotDirEntry) -> Result<String, String> {
     }
 
     // 会话不存在时无需停止。
-    if !is_bot_screen_running(bot_name) {
+    if !is_bot_screen_running(bot_name)? {
         return Err(text::get().bot_stop_not_running(bot_name));
     }
 
     // 检查停止结果。
-    let outcome = stop_single_bot_session(bot_dir_entry.clone());
+    let outcome = stop_single_bot_session(bot_dir_entry.clone())?;
     if outcome.has_failed_lines() {
         return Err(outcome.to_failure_text());
     }

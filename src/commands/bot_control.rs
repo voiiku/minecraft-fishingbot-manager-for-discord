@@ -7,13 +7,10 @@ use super::{Context, single_bot_control};
 use minecraft_fishingbot_manager_for_discord::text;
 use minecraft_fishingbot_manager_for_discord::{BotControlAction, handle_bot_control};
 
-/// Start the given bot
 #[poise::command(slash_command)]
 pub(crate) async fn start(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_stopped_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_stopped_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -25,14 +22,11 @@ pub(crate) async fn start(
     .await
 }
 
-/// Stop the given bot
 #[poise::command(slash_command)]
 pub(crate) async fn stop(
     ctx: Context<'_>,
     // 排队等待启动的也能被 `/stop` 取消，所以候选给全部状态（标注里能看出它是在跑还是排队）。
-    #[autocomplete = "super::autocomplete_any_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_any_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -44,13 +38,10 @@ pub(crate) async fn stop(
     .await
 }
 
-/// Restart the given bot
 #[poise::command(slash_command)]
 pub(crate) async fn restart(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_running_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_running_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -62,13 +53,10 @@ pub(crate) async fn restart(
     .await
 }
 
-/// Pause fishing without going offline
 #[poise::command(slash_command)]
 pub(crate) async fn pause(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_running_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_running_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -80,13 +68,10 @@ pub(crate) async fn pause(
     .await
 }
 
-/// Resume fishing
 #[poise::command(slash_command)]
 pub(crate) async fn unpause(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_running_bot_names"]
-    #[description = "bot name"]
-    name: String,
+    #[autocomplete = "super::autocomplete_running_bot_names"] name: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
 
@@ -98,14 +83,10 @@ pub(crate) async fn unpause(
     .await
 }
 
-/// Send an in-game command to the given bot
 #[poise::command(slash_command)]
 pub(crate) async fn command(
     ctx: Context<'_>,
-    #[autocomplete = "super::autocomplete_running_bot_names"]
-    #[description = "bot name"]
-    name: String,
-    #[description = "in-game command (leading slash = command, otherwise chat; write it as is, no quotes)"]
+    #[autocomplete = "super::autocomplete_running_bot_names"] name: String,
     command: String,
 ) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();

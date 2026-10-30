@@ -27,7 +27,6 @@ pub fn regenerate_fishingbot_config() -> Result<(), String> {
 }
 
 /// 生成要覆盖配置模板的键与取值。
-/// 生成流程使用它覆盖模板
 fn managed_values(fishingbot: &FishingBotConfig, language: Language) -> Vec<(&'static str, Value)> {
     let start_text = &fishingbot.start_text;
 
@@ -58,7 +57,6 @@ fn managed_values(fishingbot: &FishingBotConfig, language: Language) -> Vec<(&'s
 }
 
 /// 生成游戏侧配置文件：先删除已经存在的，再写入新的。
-/// 路径与取值全由调用方提供（实际上可以自行读取而不用提供，只是方便测试）。
 fn write_fishingbot_config(
     path: &Path,
     fishingbot: &FishingBotConfig,
@@ -113,18 +111,15 @@ fn fishingbot_config_json(
     language_name: &str,
 ) -> Result<String, String> {
     let language = Language::from_name(language_name)?;
-    // 将模板文本转化为可解析的结构体
     let mut fishingbot_config: Value =
         serde_json::from_str(FISHINGBOT_CONFIG_TEMPLATE).map_err(|e| {
             text::get().log_text(text::LogText::FishingbotConfigTemplateInvalid {
                 reason: &e.to_string(),
             })
         })?;
-    // 按字段写入值
     for (path, value) in managed_values(fishingbot, language) {
         set_json_path(&mut fishingbot_config, path, value)?;
     }
-    // 将修改完的文本返回
     serde_json::to_string_pretty(&fishingbot_config).map_err(|e| {
         text::get().log_text(text::LogText::FishingbotConfigSerializeFailed {
             reason: &e.to_string(),

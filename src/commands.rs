@@ -1,7 +1,7 @@
 //! 命令层：定义斜杠指令，取参数、校验数字、defer，并把结果交给 `lib::handle_*`。
 //! 权限与业务逻辑在下层；同步业务调用统一放进 `spawn_blocking`。
 //!
-//! 命令说明和选项说明写在宏里的英文是兜底文案，注册前会按配置语言覆盖。
+//! 命令和选项说明统一来自文案表，注册前按配置语言校验并填充。
 //! 每条指令都必须经过 `lib::handle_*`，不能在本层跳过权限检查或自行拼业务回复。
 
 mod all_bots;
@@ -15,9 +15,10 @@ mod show;
 mod token;
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::future::Future;
 
-use minecraft_fishingbot_manager_for_discord::text;
+use minecraft_fishingbot_manager_for_discord::text::{self, CommandText, CommandTextProblem, Text};
 
 pub(crate) use registration::register_commands;
 
@@ -37,17 +38,16 @@ pub(crate) struct Data;
 /// 命令层错误类型；业务错误文案由 `on_error` 记入日志。
 pub(crate) type Error = Box<dyn std::error::Error + Send + Sync>;
 
-/// 返回待注册的指令列表（顺序就是 Discord 中的显示顺序）。
-///
-/// 宏里的说明是英文兜底；注册前按 `[i18n] language` 覆盖指令与选项说明。
-pub(crate) fn all_commands() -> Vec<poise::Command<Data, Error>> {
+/// 返回已按配置语言校验的指令列表。
+pub(crate) fn all_commands() -> Result<Vec<poise::Command<Data, Error>>, String> {
     let mut commands = declared_commands();
-    localize_command_texts(&mut commands, "");
+    let i18n_text = text::get();
+    localize_command_texts(&mut commands, i18n_text.command_texts(), i18n_text)?;
 
-    commands
+    Ok(commands)
 }
 
-/// 创建宏生成的英文兜底指令树，供本地化与测试使用。
+/// 创建不含说明的指令树。
 fn declared_commands() -> Vec<poise::Command<Data, Error>> {
     vec![
         general::help(),
@@ -68,44 +68,99 @@ fn declared_commands() -> Vec<poise::Command<Data, Error>> {
         all_bots::stopall(),
         all_bots::restartall(),
         all_bots::commandall(),
+        all_bots::anti_afk(),
     ]
 }
 
-/// 用配置语言的说明覆盖宏里的说明；`parent_path` 是父指令路径（顶层传空串，子指令拼成
-/// `"bot add"` 这种以空格分隔的路径）。
-///
-/// 只覆盖表里找得到的项：表里没有的保留宏的文档注释（不会静默出错，
-/// 下面的 `every_command_and_option_has_text_in_every_language` 测试会把缺口报出来）。
-fn localize_command_texts(commands: &mut [poise::Command<Data, Error>], parent_path: &str) {
-    let i18n_text = text::get();
+/// 校验指令树与文案表一一对应，再填入说明。
+fn localize_command_texts(
+    commands: &mut [poise::Command<Data, Error>],
+    texts: &[CommandText],
+    i18n_text: &dyn Text,
+) -> Result<(), String> {
+    let mut used = HashSet::new();
+    localize_command_tree(commands, texts, i18n_text, "", &mut used)?;
+    for entry in texts {
+        if !used.contains(entry.name_path) {
+            return Err(
+                i18n_text.command_text_invalid(entry.name_path, CommandTextProblem::Unknown)
+            );
+        }
+    }
+    Ok(())
+}
 
-    for command in commands.iter_mut() {
+fn localize_command_tree(
+    commands: &mut [poise::Command<Data, Error>],
+    texts: &[CommandText],
+    i18n_text: &dyn Text,
+    parent_path: &str,
+    used: &mut HashSet<String>,
+) -> Result<(), String> {
+    for command in commands {
         let name_path = if parent_path.is_empty() {
             command.name.to_string()
         } else {
             format!("{parent_path} {}", command.name)
         };
 
-        if let Some(command_text) = i18n_text
-            .command_texts()
-            .iter()
-            .find(|command_text| command_text.name_path == name_path)
-        {
-            command.description = Some(Cow::Borrowed(command_text.description));
+        let mut matches = texts.iter().filter(|entry| entry.name_path == name_path);
+        let command_text = matches.next().ok_or_else(|| {
+            i18n_text.command_text_invalid(&name_path, CommandTextProblem::Missing)
+        })?;
+        if matches.next().is_some() || !used.insert(name_path.clone()) {
+            return Err(i18n_text.command_text_invalid(&name_path, CommandTextProblem::Duplicate));
+        }
+        validate_description(&name_path, command_text.description, i18n_text)?;
+        command.description = Some(Cow::Borrowed(command_text.description));
 
-            for (option_name, option_description) in command_text.options {
-                if let Some(parameter) = command
-                    .parameters
-                    .iter_mut()
-                    .find(|parameter| parameter.name.as_ref() == *option_name)
-                {
-                    parameter.description = Some(Cow::Borrowed(option_description));
-                }
+        let mut parameter_names = HashSet::new();
+        for parameter in &command.parameters {
+            if !parameter_names.insert(parameter.name.as_ref()) {
+                return Err(i18n_text.command_text_invalid(
+                    &format!("{name_path} {}", parameter.name),
+                    CommandTextProblem::Duplicate,
+                ));
             }
         }
-
-        localize_command_texts(&mut command.subcommands, &name_path);
+        let mut option_names = HashSet::new();
+        for (option_name, description) in command_text.options {
+            let path = format!("{name_path} {option_name}");
+            if !option_names.insert(*option_name) {
+                return Err(i18n_text.command_text_invalid(&path, CommandTextProblem::Duplicate));
+            }
+            if !parameter_names.contains(option_name) {
+                return Err(i18n_text.command_text_invalid(&path, CommandTextProblem::Unknown));
+            }
+            validate_description(&path, description, i18n_text)?;
+        }
+        drop(parameter_names);
+        for parameter in &mut command.parameters {
+            let (_, description) = command_text
+                .options
+                .iter()
+                .find(|(name, _)| *name == parameter.name)
+                .ok_or_else(|| {
+                    i18n_text.command_text_invalid(
+                        &format!("{name_path} {}", parameter.name),
+                        CommandTextProblem::Missing,
+                    )
+                })?;
+            parameter.description = Some(Cow::Borrowed(description));
+        }
+        localize_command_tree(&mut command.subcommands, texts, i18n_text, &name_path, used)?;
     }
+    Ok(())
+}
+
+fn validate_description(path: &str, description: &str, i18n_text: &dyn Text) -> Result<(), String> {
+    let length = description.encode_utf16().count();
+    if description.trim().is_empty() || !(1..=100).contains(&length) {
+        return Err(
+            i18n_text.command_text_invalid(path, CommandTextProblem::InvalidLength { length })
+        );
+    }
+    Ok(())
 }
 
 // ======================== 指令回复入口 ========================
@@ -150,8 +205,8 @@ where
     run_and_reply(ctx, run).await
 }
 
-/// 异步执行服务器探测并发送结果。
-pub(crate) async fn server_probe(
+/// 异步执行业务操作并发送结果。
+pub(crate) async fn run_async_and_reply(
     ctx: Context<'_>,
     run: impl Future<Output = String>,
 ) -> Result<(), Error> {
@@ -197,7 +252,12 @@ pub(crate) async fn reply_command_failure(ctx: Context<'_>) {
     {
         Ok(_) => log_reply(caller_id, &command_path, reply),
         Err(error) => ::log::warn!(
-            "Failed to send the fallback response for /{command_path} to Discord user {caller_id}: {error}"
+            "{}",
+            text::get().log_text(text::LogText::CommandFallbackReplyFailed {
+                caller_id,
+                command_path: &command_path,
+                reason: &error.to_string(),
+            })
         ),
     }
 }
@@ -271,38 +331,11 @@ mod tests {
         );
     }
 
-    /// 将指令树展开为 `(指令路径, 选项名列表)`，路径示例：`"start"`、`"bot add"`。
-    fn command_paths(
-        commands: &[poise::Command<Data, Error>],
-        parent_path: &str,
-    ) -> Vec<(String, Vec<String>)> {
-        let mut paths = Vec::new();
-
-        for command in commands {
-            let name_path = if parent_path.is_empty() {
-                command.name.to_string()
-            } else {
-                format!("{parent_path} {}", command.name)
-            };
-
-            let option_names = command
-                .parameters
-                .iter()
-                .map(|parameter| parameter.name.to_string())
-                .collect();
-            paths.push((name_path.clone(), option_names));
-
-            paths.extend(command_paths(&command.subcommands, &name_path));
-        }
-
-        paths
-    }
-
     /// 注册前，指令说明必须已替换为当前语言表中的文案。
     #[test]
     fn command_descriptions_come_from_the_language_table() {
         install_english_text();
-        let commands = all_commands();
+        let commands = all_commands().expect("指令文案应完整");
         let command_texts = minecraft_fishingbot_manager_for_discord::text::get().command_texts();
 
         let start = commands
@@ -342,6 +375,25 @@ mod tests {
             lines.description.as_deref(),
             Some(expected_lines_description)
         );
+    }
+
+    #[test]
+    fn anti_afk_command_has_only_on_and_off_choices() {
+        let commands = declared_commands();
+        let command = commands
+            .iter()
+            .find(|command| command.name == "anti-afk")
+            .expect("anti-afk must be registered");
+        assert_eq!(command.parameters.len(), 1);
+        let option = &command.parameters[0];
+        assert_eq!(option.name, "command");
+        assert!(option.required);
+        let choices: Vec<&str> = option
+            .choices
+            .iter()
+            .map(|choice| choice.name.as_ref())
+            .collect();
+        assert_eq!(choices, ["on", "off"]);
     }
 
     /// 一条指令展开后的说明：`(指令路径, 指令说明, [(选项名, 选项说明)])`。
@@ -385,98 +437,150 @@ mod tests {
         collected
     }
 
-    /// 宏声明的文案副本必须与 `en_us.rs` 中的英文表逐字一致。
-    ///
-    /// poise 宏会在编译期将 `///` 首段与 `#[description]` 写入指令定义；
-    /// 语言表缺项时，这些副本会被直接注册到 Discord。该测试同时验证：
-    /// 宏副本与英文表一致，且本地化后的指令树与宏声明结构一致。
     #[test]
-    fn macro_texts_match_the_english_table() {
-        install_english_text();
-        let declared = descriptions(&declared_commands(), "");
-        let localized = descriptions(&all_commands(), "");
-
-        assert_eq!(declared.len(), localized.len(), "指令树结构必须一致");
-        for (declared_command, localized_command) in declared.iter().zip(&localized) {
-            assert_eq!(declared_command.0, localized_command.0, "指令路径必须一致");
-            assert_eq!(
-                declared_command.1, localized_command.1,
-                "指令 {} 的说明必须与英文表一致",
-                declared_command.0
-            );
-            assert_eq!(
-                declared_command.2, localized_command.2,
-                "指令 {} 的选项说明必须与英文表一致",
-                declared_command.0
-            );
+    fn both_languages_populate_the_entire_command_tree() {
+        for (_, description, options) in descriptions(&declared_commands(), "") {
+            assert!(description.is_none(), "宏中不应保留命令说明");
+            assert!(options.iter().all(|(_, description)| description.is_none()));
         }
-    }
 
-    /// 指令与选项说明必须落在 Discord 的 100 字符上限内。
-    ///
-    /// Discord 按 UTF-16 码元计数，与 `utils/reply.rs` 的消息长度口径一致。
-    /// 命令说明超限时 poise 会在编译期报错；选项说明没有编译期检查，需要此测试覆盖。
-    #[test]
-    fn every_description_fits_discords_100_character_limit() {
-        for text_impl in minecraft_fishingbot_manager_for_discord::text::all_languages() {
-            for command_text in text_impl.command_texts() {
-                let length = command_text.description.encode_utf16().count();
-                assert!(
-                    (1..=100).contains(&length),
-                    "指令 {} 的说明 {length} 字符（上限 100）",
-                    command_text.name_path
-                );
-
-                for (option_name, option_description) in command_text.options {
-                    let length = option_description.encode_utf16().count();
-                    assert!(
-                        (1..=100).contains(&length),
-                        "指令 {} 的选项 {option_name} 说明 {length} 字符（上限 100）",
-                        command_text.name_path
+        for i18n_text in text::all_languages() {
+            let mut commands = declared_commands();
+            localize_command_texts(&mut commands, i18n_text.command_texts(), *i18n_text)
+                .expect("文案表应完整且有效");
+            for (path, description, options) in descriptions(&commands, "") {
+                let expected = i18n_text
+                    .command_texts()
+                    .iter()
+                    .find(|entry| entry.name_path == path)
+                    .expect("必须有命令文案");
+                assert_eq!(description.as_deref(), Some(expected.description), "{path}");
+                for (name, description) in options {
+                    let expected_option = expected.options.iter().find(|(key, _)| *key == name);
+                    assert_eq!(
+                        description.as_deref(),
+                        expected_option.map(|(_, description)| *description),
+                        "{path} {name}"
                     );
                 }
             }
-        }
-    }
-
-    /// 每种语言的说明表必须覆盖全部指令与选项。
-    ///
-    /// 该测试发现“新增指令或选项但未补充文案”的遗漏，并列出缺失项。
-    /// 直接读取语言表，不调用 `install`，避免污染并发测试的全局语言状态。
-    #[test]
-    fn every_command_and_option_has_text_in_every_language() {
-        install_english_text();
-        let paths = command_paths(&all_commands(), "");
-
-        let mut missing: Vec<String> = Vec::new();
-        for text_impl in minecraft_fishingbot_manager_for_discord::text::all_languages() {
-            let command_texts = text_impl.command_texts();
-
-            for (name_path, option_names) in &paths {
-                let Some(command_text) = command_texts
-                    .iter()
-                    .find(|command_text| command_text.name_path == *name_path)
-                else {
-                    missing.push(format!("缺少指令说明: {name_path}"));
-                    continue;
-                };
-
-                for option_name in option_names {
-                    if !command_text
-                        .options
-                        .iter()
-                        .any(|(name, _)| name == option_name)
-                    {
-                        missing.push(format!("缺少选项说明: {name_path} {option_name}"));
+            fn assert_registered_descriptions(value: &serde_json::Value) {
+                let description = value["description"]
+                    .as_str()
+                    .expect("注册的指令和选项必须有说明");
+                assert_ne!(description, "A slash command");
+                assert_ne!(description, "A slash command parameter");
+                if let Some(options) = value.get("options").and_then(|value| value.as_array()) {
+                    for option in options {
+                        assert_registered_descriptions(option);
                     }
                 }
             }
+            for command in commands {
+                let builder = command
+                    .create_as_slash_command()
+                    .expect("声明的指令应可注册");
+                let payload = serde_json::to_value(builder).expect("指令应可序列化");
+                assert_registered_descriptions(&payload);
+            }
         }
+    }
 
-        assert!(
-            missing.is_empty(),
-            "指令说明表有缺口:\n{}",
-            missing.join("\n")
+    #[test]
+    fn invalid_command_texts_are_rejected() {
+        let i18n_text = text::all_languages()[1];
+        let original = i18n_text.command_texts();
+        let start = original
+            .iter()
+            .position(|entry| entry.name_path == "start")
+            .unwrap();
+
+        let check = |texts: &[CommandText], path: &str, problem: CommandTextProblem| {
+            let error = localize_command_texts(&mut declared_commands(), texts, i18n_text)
+                .expect_err("无效文案必须被拒绝");
+            assert_eq!(error, i18n_text.command_text_invalid(path, problem));
+        };
+
+        let mut texts = original.to_vec();
+        texts.remove(start);
+        check(&texts, "start", CommandTextProblem::Missing);
+
+        let mut texts = original.to_vec();
+        texts[start].options = &[];
+        check(&texts, "start name", CommandTextProblem::Missing);
+
+        let mut texts = original.to_vec();
+        texts.push(original[start]);
+        check(&texts, "start", CommandTextProblem::Duplicate);
+
+        let mut texts = original.to_vec();
+        texts[start].options = &[("name", "bot name"), ("name", "duplicate")];
+        check(&texts, "start name", CommandTextProblem::Duplicate);
+
+        let mut texts = original.to_vec();
+        texts[start].options = &[("name", "bot name"), ("unknown", "unknown")];
+        check(&texts, "start unknown", CommandTextProblem::Unknown);
+
+        let mut texts = original.to_vec();
+        texts.push(CommandText {
+            name_path: "unknown",
+            description: "unknown",
+            options: &[],
+        });
+        check(&texts, "unknown", CommandTextProblem::Unknown);
+
+        let mut texts = original.to_vec();
+        texts[start].description = "  ";
+        check(
+            &texts,
+            "start",
+            CommandTextProblem::InvalidLength { length: 2 },
+        );
+
+        let mut texts = original.to_vec();
+        texts[start].options = &[("name", "")];
+        check(
+            &texts,
+            "start name",
+            CommandTextProblem::InvalidLength { length: 0 },
+        );
+    }
+
+    #[test]
+    fn duplicate_command_definitions_are_rejected() {
+        let i18n_text = text::all_languages()[1];
+        let mut commands = declared_commands();
+        commands.push(bot_control::start());
+        let error = localize_command_texts(&mut commands, i18n_text.command_texts(), i18n_text)
+            .expect_err("重复命令必须被拒绝");
+        assert_eq!(
+            error,
+            i18n_text.command_text_invalid("start", CommandTextProblem::Duplicate)
+        );
+
+        let mut commands = declared_commands();
+        let duplicate_parameter = bot_control::start().parameters.pop().unwrap();
+        let start = commands
+            .iter_mut()
+            .find(|command| command.name == "start")
+            .unwrap();
+        start.parameters.push(duplicate_parameter);
+        let error = localize_command_texts(&mut commands, i18n_text.command_texts(), i18n_text)
+            .expect_err("重复选项必须被拒绝");
+        assert_eq!(
+            error,
+            i18n_text.command_text_invalid("start name", CommandTextProblem::Duplicate)
+        );
+    }
+
+    #[test]
+    fn description_length_uses_utf16_units() {
+        let i18n_text = text::all_languages()[1];
+        assert!(validate_description("start", &"🐟".repeat(50), i18n_text).is_ok());
+        assert_eq!(
+            validate_description("start", &"🐟".repeat(51), i18n_text).unwrap_err(),
+            i18n_text
+                .command_text_invalid("start", CommandTextProblem::InvalidLength { length: 102 })
         );
     }
 }

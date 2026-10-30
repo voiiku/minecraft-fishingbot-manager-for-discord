@@ -20,7 +20,7 @@ use super::bot_status::BotPauseStatusMemory;
 use super::reply::Report;
 use super::running_bots::split_bot_entries_by_is_running;
 use super::screen::{
-    active_screen_sessions, force_quit_session, send_stop_signal_to_session, session_name,
+    force_quit_session, screen_session_snapshot, send_stop_signal_to_session, session_name,
 };
 use super::startup::StartupQueue;
 
@@ -99,16 +99,16 @@ pub(crate) fn stop_all_bot_sessions() -> Result<StopOutcome, String> {
     startup_queue.remove_all_bots_from_queue();
 
     let all_bot_entries = all_bot_dir_entries()?;
-    let (running_bot_entries, _) = split_bot_entries_by_is_running(&all_bot_entries);
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(&all_bot_entries)?;
 
     // 3. 关掉全部会话（所有停止入口的唯一实现：注入 Ctrl+C → 超时强杀 → 复核）。
-    let mut outcome = stop_bot_sessions(&running_bot_entries);
+    let mut outcome = stop_bot_sessions(&running_bot_entries)?;
 
     // 4. 再次扫描：首次快照之后才出现的会话在此收掉（第一遍未停掉的不重试，结论已在明细中）。
     let late_outcome = stop_bot_sessions(&late_running_bot_entries(
         &all_bot_entries,
         &running_bot_entries,
-    ));
+    )?)?;
     outcome
         .stopped_bot_names
         .extend(late_outcome.stopped_bot_names);
@@ -125,22 +125,22 @@ pub(crate) fn stop_all_bot_sessions() -> Result<StopOutcome, String> {
 fn late_running_bot_entries(
     all_bot_entries: &[BotDirEntry],
     already_handled: &[BotDirEntry],
-) -> Vec<BotDirEntry> {
-    let (running_bot_entries, _) = split_bot_entries_by_is_running(all_bot_entries);
+) -> Result<Vec<BotDirEntry>, String> {
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(all_bot_entries)?;
 
-    running_bot_entries
+    Ok(running_bot_entries
         .into_iter()
         .filter(|bot_dir_entry| {
             !already_handled
                 .iter()
                 .any(|handled| handled.bot_name == bot_dir_entry.bot_name)
         })
-        .collect()
+        .collect())
 }
 
 /// 停止单个机器人对应的会话（供 `/stop` 使用）。
 /// 调用方负责先确认该会话确实在运行，并将已鉴权的条目传入；同样只返回原始明细。
-pub(crate) fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> StopOutcome {
+pub(crate) fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> Result<StopOutcome, String> {
     stop_bot_sessions(&[bot_dir_entry])
 }
 
@@ -148,13 +148,13 @@ pub(crate) fn stop_single_bot_session(bot_dir_entry: BotDirEntry) -> StopOutcome
 ///
 /// 这是所有停止入口的唯一实现（`/stop`、`/stopall`、重启的停止阶段、进程收尾）。
 /// `entries_to_stop` 为要停的那批（原本未运行的机器人不必传入：报告只记停止的成功与失败）。
-/// 两种等待都直接读取配置：正常退出等待（`stop_grace_ms`）与注销缓冲（`stop_settle_ms`）均在本模块。
+/// 两种等待都直接读取配置：正常退出等待（`stop_grace`）与注销缓冲（`stop_settle`）均在本模块。
 /// 这两个键名不带 `batch_` 前缀，因为它们同时服务于单机与批量（单机即长度为 1 的切片）。
-pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> StopOutcome {
+pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> Result<StopOutcome, String> {
     let mut outcome = StopOutcome::default();
 
     if entries_to_stop.is_empty() {
-        return outcome;
+        return Ok(outcome);
     }
 
     // 1. 先统一算出会话名：拼不出会话名的目录（名字含非法字符）记一条失败明细，不参与后续步骤。
@@ -187,7 +187,7 @@ pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> StopOutcome 
     ));
 
     // 强杀尚未退出的会话（先前发信号的那批是同时等待的，因此这里只需一次快照）。
-    let still_alive_sessions = active_screen_sessions();
+    let still_alive_sessions = screen_session_snapshot()?;
     for target_session_name in target_session_names
         .iter()
         .filter(|target_session_name| still_alive_sessions.contains_key(**target_session_name))
@@ -201,7 +201,7 @@ pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> StopOutcome 
     thread::sleep(Duration::from_millis(
         config::Config::get().timing.stop_settle_ms,
     ));
-    let final_sessions = active_screen_sessions();
+    let final_sessions = screen_session_snapshot()?;
     for (bot_name, target_session_name) in &target_sessions {
         if final_sessions.contains_key(target_session_name) {
             outcome
@@ -214,5 +214,5 @@ pub(crate) fn stop_bot_sessions(entries_to_stop: &[BotDirEntry]) -> StopOutcome 
         }
     }
 
-    outcome
+    Ok(outcome)
 }

@@ -19,7 +19,7 @@ mod test_support;
 // 业务函数统一从父模块导入；子模块保持私有。
 use crate::all_bots_control::{
     planned_startall_notice, restart_all_bots, send_command_to_all_bots, start_all_bots,
-    stop_all_bots,
+    start_anti_afk, stop_all_bots, stop_anti_afk,
 };
 use crate::bot_control::{
     bot_log_view, pause_fishing, restart_bot, send_command_to_bot, start_bot, stop_bot,
@@ -88,6 +88,12 @@ pub enum AllBotsControlAction<'a> {
     RestartAll,
     /// 向全部运行中的机器人发送同一条指令（原始片段，口径同 [`BotControlAction::Command`]）。
     CommandAll(&'a [&'a str]),
+}
+
+/// 反 AFK 开关动作（仅管理员）。
+pub enum AntiAfkAction {
+    On,
+    Off,
 }
 
 impl AllBotsControlAction<'_> {
@@ -257,5 +263,31 @@ pub fn handle_all_bots_control(action: AllBotsControlAction<'_>, caller_id: u64)
         AllBotsControlAction::CommandAll(raw_bot_command_args) => {
             send_command_to_all_bots(raw_bot_command_args).to_reply_text()
         }
+    }
+}
+
+/// 处理反 AFK 开关，要求管理员权限。
+pub async fn handle_anti_afk(action: AntiAfkAction, caller_id: u64) -> String {
+    if !has_permission(caller_id, RequiredPermission::MustBeAdmin) {
+        return permission_refusal(caller_id);
+    }
+
+    let i18n_text = text::get();
+    match action {
+        AntiAfkAction::On => start_anti_afk()
+            .await
+            .map(|started| {
+                if started {
+                    i18n_text.anti_afk_started()
+                } else {
+                    i18n_text.anti_afk_already_running()
+                }
+                .to_string()
+            })
+            .to_reply_text(),
+        AntiAfkAction::Off => stop_anti_afk()
+            .await
+            .map(|()| i18n_text.anti_afk_stopped().to_string())
+            .to_reply_text(),
     }
 }

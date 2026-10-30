@@ -1,9 +1,4 @@
-//! 全局注册斜杠指令，并在确认传播完成后清理 Discord 服务器上遗留的 guild 指令。
-//!
-//! 背景：旧版本可按配置将指令注册到单个服务器，这些 guild 指令不会自动消失；
-//! 客户端会同时展示全局指令与该服务器的 guild 指令，导致同名指令重复。
-//! 注册成功仅表示 Discord API 已完成注册，客户端最长需要 1 小时同步。
-//! 因此需要注册新指令时，必须等待传播完成，且旧指令存在满 1 小时后才能清理。
+//! 全局指令最长需要一小时传播；稳定后清理遗留 guild 指令，未稳定时后台重试。
 
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,7 +34,6 @@ pub(crate) async fn register_commands(
                 clear_guild_scope_leftovers(ctx, guilds).await;
             } else {
                 let wait_minutes = minutes_until_cleanup(registered, commands, now);
-                // 记录本次未立即清理的原因。
                 log::info!(
                     "{}",
                     text::get().log_text(text::LogText::GuildCommandsCleanupWaiting {
@@ -78,7 +72,7 @@ fn global_commands_settled(
     same_command_names(registered, commands) && propagation_wait_minutes(registered, now_ms) == 0
 }
 
-/// 离"可以清理残留指令"还要等多少分钟。
+/// 计算清理遗留指令前的等待分钟数。
 fn minutes_until_cleanup(
     registered: &[serenity::Command],
     commands: &[poise::Command<Data, Error>],
@@ -216,7 +210,6 @@ async fn clear_guild_scope_leftovers(
         let guild_name = guild_name(ctx, guild_id);
 
         match left_commands(ctx, guild_id).await {
-            // 已经干净：不发写请求。
             Ok(0) => {}
             Ok(count) => match guild_id.set_commands(ctx, Vec::new()).await {
                 Ok(_) => log::info!(

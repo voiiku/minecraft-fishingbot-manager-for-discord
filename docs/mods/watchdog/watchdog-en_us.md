@@ -31,7 +31,7 @@ process manager to restart it. This avoids a cold start and a new program log fi
 
 Details:
 
-* The timings come from the judging window `timing.watchdog_window_ms`; the probe interval (one third of the window)
+* The timings come from the judging window `timing.watchdog_window`; the probe interval (one third of the window)
   and the first-handshake timeout (twice the window) are derived from it rather than being separate keys, because those
   values only make sense as ratios of the window. The entry point stores all three in the `Watchdog` (its three fields),
   and both the decision and the probe use the same copy. The derivation guarantees that the probe interval is always
@@ -79,7 +79,7 @@ server's notice channel under the title "shutdown signal received, wrap-up", and
    offline; after a successful reconnect, a person sends `/startall` or `/start <name>` in Discord.
 3. It then closes the old connection (`shard_manager.shutdown_all()`, otherwise the old and new connections fight over
    the same bot session and Discord kicks them in turn), calls `wait_before_reconnect()` for one judging window
-   (reusing `timing.watchdog_window_ms`, with no new config field), and builds a fresh `Client`; if that still fails,
+   (reusing `timing.watchdog_window`, with no new config field), and builds a fresh `Client`; if that still fails,
    it keeps retrying the same way.
 
 The client returning on its own (`client.start()` returning: shut down, or a fatal error such as an invalid token or
@@ -136,7 +136,7 @@ no pending copy is kept and the next startup does not resend it.
   `curl -sS -o /dev/null -w '%{http_code}\n' https://discord.com/api/v10/gateway` should return 200.
 * The log shows `Unreachable`: the network may be down, the proxy may have died, or the token may have expired; the
   previous line, `REST probe failed:`, gives the concrete reason.
-* A brief network fluctuation causes one reconnect: raise `timing.watchdog_window_ms` (for example, 60000). The probe
+* A brief network fluctuation causes one reconnect: raise `timing.watchdog_window` (for example, 60). The probe
   interval and first-handshake timeout follow it, and recovery inside the window is not mistaken for a disconnect.
 * The log keeps reporting that the connection could not be rebuilt while the process stays alive: this is normal retry
   behaviour (a disconnect does not exit the process). For a configuration error such as `Missing Access` or `401`, the
