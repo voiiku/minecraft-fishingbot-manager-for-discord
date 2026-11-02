@@ -11,6 +11,10 @@ pub enum ConfigRequirement<'a> {
     PortRange,
     /// 通用：必须大于 0。
     GreaterThanZero,
+    /// 非负、有限且可表示的秒数。
+    NonNegativeDuration,
+    /// input-pulse 输入动作解析或 screen 模式校验失败。
+    InputPulseCommand { reason: &'a str },
     /// Discord token 不能为空。
     DiscordTokenEmpty,
     /// 取值里不能有单引号（会破坏 `grep -E` 的单引号参数）。
@@ -33,7 +37,7 @@ pub enum ConfigRequirement<'a> {
     ReplyCharsPositive,
     /// `runtime.max_autocomplete_choices` 必须在 1..=25 之间（Discord 对自动候选条数的硬上限）。
     AutocompleteChoicesInRange,
-    /// 网关看门狗的判定窗口（`timing.watchdog_window_ms`）必须大于 0。
+    /// 网关看门狗的判定窗口（`timing.watchdog_window`）必须大于 0。
     WatchdogTimingPositive,
     /// `command_echo.pause_echo` 与 `command_echo.unpause_echo` 不能相同或互相包含。
     EchoTextsOverlap,

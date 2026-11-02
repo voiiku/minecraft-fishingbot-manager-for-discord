@@ -1,24 +1,22 @@
 # lib：指令入口层（路由层）
 [English](lib-en_us.md) | **简体中文**
 
-* 代码：`src/lib.rs`（指令入口）；autocomplete 的候选查询 `bot_name_candidate_states(caller_id)` 在命令层，实现在 `src/commands/autocomplete.rs`
+* 代码：`src/lib.rs`（公开接口）与 `src/handlers/routes/`（指令路由）；autocomplete 候选查询位于 `src/discord_commands/autocomplete.rs`。
 * 定位：把 Discord 斜杠指令翻译成动作函数的那一层（架构文档里叫指令入口层，简称路由层，见
   [architecture-zh_cn.md](../architecture/architecture-zh_cn.md) 第 1 节的术语说明），并统一处理错误文案与回复格式。
-* 上层是命令层（读取参数、校验数字、`defer` 与发送结果），下层是 `bot_control`、`bot_manage`、`all_bots_control`、`show`
-  与 `general` 这些业务模块。
+* 上层是命令层（读取参数、校验数字、`defer` 与发送结果），下层 `handlers` 包含单机器人控制、账号管理、批量操作、只读查询和通用指令。
 * 权限全部在本层判一次（`has_permission`），底层被调用的函数不校验：每条指令都声明一个要求
   （`utils::RequiredPermission`，见第 3 节）；单机器人指令的要求是目标机器人归调用者或调用者是管理员，
   归属要先解析出目标条目才知道，因此本层用 `BotDirEntry::find_by_name` 取出条目并判定后，再交给业务函数。
 * 报告由调用方拼装：utils 只返回原始明细（例如停止操作返回 `StopOutcome`，它自带 `into_report()` 与
   `to_failure_text()`），`into_report()` 必须由调用方显式调用，utils 不返回拼好的 `Report`。
-  批量停止由 `all_bots_control::stopall::stop_all_bots()` 显式拼装；进程收尾在
+  批量停止由 `handlers::stop_all_bots()` 显式拼装；进程收尾在
   `watchdog::Watchdog::exit_on_shutdown_signal()` 中就地拼同一份明细（只有标题不同）。
 * 可见性：每个模块只暴露一个受控接口。crate 的对外接口由 `lib.rs` 提供（`pub fn handle_*`、视图类型
   `BotLogView`、`BotLoginPrompt` 与 `FishingbotConfigView`、`ProcessLog`、`StartupQueue` 等原语、
-  `WATCHDOG` 与 `Watchdog`，以及 `pub mod config`、`pub mod text`、`pub mod utils`）。下层五个业务模块与
-  `utils` 结构相同：子模块是私有 `mod`，父模块顶部的 `pub(crate) use` 清单就是其对外接口。因此
-  `lib.rs` 只能通过 `crate::bot_control::start_bot` 这类路径访问，函数是否对外可见也只取决于父模块顶部
-  的清单（`utils.rs`、`bot_control.rs`、`bot_manage.rs`、`general.rs`、`show.rs`、`all_bots_control.rs` 六份）。
+  `WATCHDOG` 与 `Watchdog`，以及 `pub mod config`、`pub mod text`、`pub mod utils`）。
+  `handlers` 的业务模块和路由模块均为私有；路由层访问内部业务入口，公开的 `handle_*`、动作枚举与视图类型
+  由 `lib.rs` 再导出。
 * 参数同样不在本层清洗：命令层只切分并原样透传（动作枚举中保存 `raw_*`），真正使用该值的层再清洗一次
   （机器人名在 `utils::ToCleanBotName::to_clean_bot_name`，指令片段在 `utils::ToCleanBotCommand`）。
 
@@ -39,7 +37,7 @@
 * `ShowAction` 由 `handle_show` 处理，覆盖 `/show status`、`/show mybots`、`/show allbots`、`/show admins`；`/show botconfig` 不使用动作枚举
   （它返回附件而不是文本），走 `handle_fishingbot_config`。
 * `AllBotsControlAction` 由 `handle_all_bots_control` 处理，覆盖 `/startall`、`/stopall`、
-  `/restartall`、`/commandall`。
+  `/restartall`、`/pauseall`、`/unpauseall`、`/commandall`。
 
 其余指令没有动作枚举，各有专用入口：`handle_help`、`handle_whoami`、`handle_ping`、`handle_checkserver`、`handle_bot_log`、`handle_fishingbot_config`，以及 `/bot login` 的两段式入口。
 
@@ -62,8 +60,8 @@
 
 * `Everyone`：`/help`、`/whoami`、`/show status`、`/ping`、`/checkserver`、`/show *`（含
   `/show botconfig`），由本层的各 `handle_*` 判一次。
-* `MustBeAdmin`：`/startall`、`/stopall`、`/restartall`、`/commandall`，由本层的
-  `handle_all_bots_control` 判一次（所以 `all_bots_control/*` 一律不带 `caller_id`）。
+* `MustBeAdmin`：`/startall`、`/stopall`、`/restartall`、`/pauseall`、`/unpauseall`、`/commandall`，由本层的
+  `handle_all_bots_control` 判一次（所以 `handlers/all_bots_control/*` 一律不带 `caller_id`）。
 * `OwnerOrAdmin(归属用户ID)`：单机器人指令（`/start`、`/stop`、`/log` 等）与账号管理指令
   （`/bot del`、`/bot rename`、`/token`、`/bot login`），由本层 `permitted_bot_dir_entry` 判一次（先
   `find_by_name` 解析条目，再按归属判）。
@@ -76,7 +74,7 @@
 
 ## 4. 进程级生命周期
 
-进程级生命周期在 `src/watchdog/lifecycle.rs`，是 `Watchdog` 对象上的方法（路由层只是替 `main.rs` 再导出）：
+进程级生命周期在 `src/runtime/watchdog/lifecycle.rs`，是 `Watchdog` 对象上的方法（路由层只是替 `main.rs` 再导出）：
 
 * `WATCHDOG.get_or_init()`：获取进程内唯一的看门狗（首次调用按配置 `[timing]` 创建，后续调用返回同一实例；
   进程入口与事件回调都通过它取用）。必须在 `config::Config::get_or_init()` 之后调用，因为首次调用会读取配置。

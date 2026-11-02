@@ -1,5 +1,4 @@
-//! 通用的处理文件和路径的函数都在这里，如何处理是调用方的逻辑。
-//! 具体功能专用的文件查询/筛选由各自模块内部定义，不在此处
+//! 通用文件和路径操作。
 
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -10,22 +9,26 @@ use crate::text;
 /// 从文件末尾往回读时每次读多少字节。
 const BACKWARD_READ_BLOCK_BYTES: usize = 16 * 1024;
 
-/// 从文件末尾往回逐行读，由 `when_to_stop` 判断何时停止（包括判断成功那一行）；
-/// 返回扫到的行（文件顺序：由旧到新）。
-/// 例如，状态判定只关心最新的关键词（[`BotDirEntry::connection_status`]）。
-/// 文件为空时返回空数组，调用方据此区分"文件不存在"与"文件是空的"。
+/// 从文件末尾向前读取，直到 `when_to_stop` 匹配；返回的行按文件顺序排列。
+/// 空文件返回空数组，打开或读取失败返回错误。
 pub fn read_lines_backwards_until(
     file_path: &Path,
+    when_to_stop: impl FnMut(&str) -> bool,
+) -> Result<Vec<String>, String> {
+    read_lines_backwards_from(file_path, 0, when_to_stop)
+}
+
+fn read_lines_backwards_from(
+    file_path: &Path,
+    start: u64,
     mut when_to_stop: impl FnMut(&str) -> bool,
 ) -> Result<Vec<String>, String> {
-    // 尝试打开文件
     let mut file = File::open(file_path).map_err(|e| {
         text::get().log_text(text::LogText::OpenLogFileFailed {
             reason: &e.to_string(),
         })
     })?;
 
-    // 文件长度就是文件末尾的位置
     let file_len = file
         .metadata()
         .map_err(|e| {
@@ -34,16 +37,15 @@ pub fn read_lines_backwards_until(
             })
         })?
         .len();
-    // 开始向前扫描的起点位置，会逐块向前推进。
+    if start > file_len {
+        return Err(text::get().log_text(text::LogText::ReadLogContentFailed {
+            reason: "log truncated before the requested offset",
+        }));
+    }
     let mut position = file_len;
-    // 已扫到的行（由新到旧）的收集器，最后会被反转成文件顺序返回。
     let mut scanned_lines: Vec<String> = Vec::new();
-    // 预定义要用的闭包函数
-    // 1. 获取一块字节：position - read_size = 下次要读取字节块的起点。
     let mut read_previous_chunk = |position: &mut u64| -> Result<Vec<u8>, String> {
-        // 取实际最小的读取范围值，因为文件可能小于 BACKWARD_READ_BLOCK_BYTES。
-        let read_size = std::cmp::min(BACKWARD_READ_BLOCK_BYTES as u64, *position) as usize;
-        // 一次读取的起点（position创建时对应文件末尾，此时减去read_size就表示对应要读取字节块的起点）
+        let read_size = std::cmp::min(BACKWARD_READ_BLOCK_BYTES as u64, *position - start) as usize;
         *position -= read_size as u64;
 
         file.seek(SeekFrom::Start(*position)).map_err(|e| {
@@ -51,7 +53,6 @@ pub fn read_lines_backwards_until(
                 reason: &e.to_string(),
             })
         })?;
-        // 临时存储字节块数据的缓冲区，大小为 read_size
         let mut chunk = vec![0u8; read_size];
         file.read_exact(&mut chunk).map_err(|e| {
             text::get().log_text(text::LogText::ReadLogContentFailed {
@@ -62,19 +63,12 @@ pub fn read_lines_backwards_until(
         Ok(chunk)
     };
 
-    // 2. 攒行器：获取一块字节（由新到旧）以及"是否已经到文件开头了"的判断，
-    // 它返回这一块里全部的完整行（由新到旧）；第二个返回值是判断是否该结束整个扫描。
-    // 一行可能横跨两块（读取是按字节块的），"正在攒的那一行"只能由它自己保管。
+    // 倒序读取时，一行可能跨越多个字节块。
     let mut take_lines = {
-        // 需要积攒的行收集器，按倒序扫描每一行（遇到\n就认为这一行已经收集完毕）。
         let mut reversed_line_bytes: Vec<u8> = Vec::new();
 
         move |chunk: &[u8], at_file_start: bool| -> (Vec<String>, bool) {
-            // 这一块攒出的行（由新到旧）的收集数组。
             let mut lines: Vec<String> = Vec::new();
-            // 定义要用的单行攒行器
-            // 收集正在攒的这一行：翻正 → 解码 → 去掉 CRLF 的 `\r` → 问 `when_to_stop` 要不要停。
-            // 返回true就结束扫描（本行也收集）。
             let mut take_line = |reversed_line_bytes: &mut Vec<u8>| -> bool {
                 reversed_line_bytes.reverse();
                 let mut line = String::from_utf8_lossy(reversed_line_bytes).into_owned();
@@ -88,13 +82,10 @@ pub fn read_lines_backwards_until(
                 should_stop
             };
 
-            // 预定义结束状态标志bool
             let mut should_stop = false;
-            // 一块字节出现 `\n` 就说明"现在正在攒的那一行"完毕了
             for &byte in chunk.iter().rev() {
                 if byte == b'\n' {
                     if take_line(&mut reversed_line_bytes) {
-                        // 判断为true则停止，并把这一行收集到 lines 里（take_line 内部实现）。
                         should_stop = true;
                         break;
                     }
@@ -103,7 +94,6 @@ pub fn read_lines_backwards_until(
                 }
             }
 
-            // 若已经扫到文件开头（开头那一行前面没有 `\n`），存入lines。
             if at_file_start && !should_stop {
                 take_line(&mut reversed_line_bytes);
             }
@@ -112,48 +102,48 @@ pub fn read_lines_backwards_until(
         }
     };
 
-    // 第一步：若空文件直接返回空数组
-    if file_len == 0 {
+    if file_len == start {
         return Ok(Vec::new());
     }
 
-    // 第二步：文件末尾里的最后一个字节如果是 `\n`，去掉后，就认为"`\n` = 上一行的结束标志"。
+    // 末尾换行是上一行的结束符，不是额外的空行。
     let mut chunk = read_previous_chunk(&mut position)?;
     if chunk.last() == Some(&b'\n') {
-        // 丢弃最后一个字节\n，但是保留这个块，因为之后还要用
         chunk.pop();
     }
 
-    // 第三步：按字节块循环往前读取并倒序存储在scanned_lines数组中，直到走到文件开头。
-    'scan: loop {
-        // 把这一块交给攒行器：它产出该块内可攒出的行（由新到旧），并返回判定是否命中。
-        // `position == 0` 表示这一块已经到文件开头 —— 那时它会连"开头那一行"（可能为空行）一起保存。
-        let (lines, should_stop) = take_lines(&chunk, position == 0);
+    loop {
+        let (lines, should_stop) = take_lines(&chunk, position == start);
         scanned_lines.extend(lines);
 
-        // 第四步：判定true或已经扫描到文件开头就结束。
-        if should_stop || position == 0 {
-            break 'scan;
+        if should_stop || position == start {
+            break;
         }
 
-        // 第五步：若一次扫描还没到文件开头，再向前取一块字节，回到第三步重复。
         chunk = read_previous_chunk(&mut position)?;
     }
 
-    // 上面是"由新到旧"存储的，翻转成文件顺序（由旧到新）返回。
     scanned_lines.reverse();
     Ok(scanned_lines)
 }
 
-/// 读取文件的最后 `max_lines` 行。
-/// `max_lines` 为 0 直接报错返回给调用者。
+/// 读取文件末尾的 `max_lines` 行；行数为零时返回错误。
 pub fn read_last_lines(file_path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
+    read_last_lines_after(file_path, 0, max_lines)
+}
+
+/// 读取指定字节偏移之后的末尾行。
+pub(crate) fn read_last_lines_after(
+    file_path: &Path,
+    start: u64,
+    max_lines: usize,
+) -> Result<Vec<String>, String> {
     if max_lines == 0 {
         return Err(text::get().bot_log_zero_lines().to_string());
     }
 
     let mut counted_lines = 0usize;
-    read_lines_backwards_until(file_path, |_| {
+    read_lines_backwards_from(file_path, start, |_| {
         counted_lines += 1;
         counted_lines >= max_lines
     })
@@ -174,12 +164,9 @@ pub fn list_subdirectory_names(dir: &Path) -> Result<Vec<String>, std::io::Error
     Ok(subdirectory_names)
 }
 
-/// 删除目录，目录本来不存在时也算成功。
-/// 调用方关心的是"保证目录不存在"这个结果，调用方不必再校验目录的存在性。
-/// （`/bot del` 删数据目录、拉起会话前清 `raw/`）
+/// 删除目录；目录不存在时视为成功。
 pub fn remove_dir_all_if_exists(dir: &Path) -> Result<(), std::io::Error> {
     match fs::remove_dir_all(dir) {
-        // 目录本来就不在 = 达成执行目标。
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
@@ -240,6 +227,29 @@ mod tests {
         );
 
         fs::remove_dir_all(&dir).expect("清理临时目录");
+    }
+
+    #[test]
+    fn last_lines_after_offset_exclude_older_content() {
+        let dir = temp_test_dir("read-after-offset");
+        fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("bot.log");
+        let old = "旧回显\n";
+        fs::write(&log_path, old).unwrap();
+        let offset = old.len() as u64;
+        assert!(
+            read_last_lines_after(&log_path, offset, 2)
+                .unwrap()
+                .is_empty()
+        );
+
+        fs::write(&log_path, format!("{old}第一行\n第二行\n第三行\n")).unwrap();
+        assert_eq!(
+            read_last_lines_after(&log_path, offset, 2).unwrap(),
+            ["第二行", "第三行"]
+        );
+        assert!(read_last_lines_after(&log_path, u64::MAX, 2).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// 空行处理与 `str::lines()` 一致；唯一特例是文件末尾的换行不计为额外空行。

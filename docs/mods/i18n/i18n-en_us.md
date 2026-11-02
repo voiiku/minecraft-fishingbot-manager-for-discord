@@ -36,10 +36,9 @@ Deliberately not included:
   plus `cargo test` assertion texts. Apart from the 14 watchdog lock-poisoning texts, they are not in the language
   tables (they do not implement `Text`); the one that must be fixed English lives in `bootstrap`, see section 4. The
   watchdog texts are the exception: they occur after the config has loaded, so they must follow `[i18n] language`.
-* Code comments, `docs/` and command names (Discord only allows lowercase ASCII). Exceptions: the first paragraph of
-  a command's `///` and an option's `#[description]` become the text sent to Discord, and those two are written in
-  English (the same sentence as in the `en_us.rs` table, see
-  [commands-en_us.md section 1.7.1](../commands/commands-en_us.md#171-what-the-copy-inside-the-macro-is-the-english-copy)).
+* Code comments, `docs/` and command names (Discord only allows lowercase ASCII). Command and option descriptions
+  live only in the language tables and are validated before registration (see
+  [commands-en_us.md section 1.7.1](../commands/commands-en_us.md#171-command-text-validation)).
 * The example config's comments are fixed English: they are for people who edit the config by copying the template,
   and they are kept apart from the Chinese code comments. Only the few entries whose value changes with the language
   and must be changed for a Chinese deployment carry one extra `# CHINESE_SIMPLIFIED:` line (the two `command_echo`
@@ -91,7 +90,7 @@ and you set `[i18n] language` to the matching language (when the texts really di
 3. Add the language name to `Language::supported_names()`. That is the single source of valid values: config
    validation, error texts, the example config and this document all take it from there, so there are never two lists
    to drift apart. Copy the value from FishingBot's own `i18n.Language` enum constants - it is also what goes into
-   `conf.json` as `misc.language`, so do not invent another set of names (that would add a mapping table).
+   `config.json` as `misc.language`, so do not invent another set of names (that would add a mapping table).
 
 No business layer and no config parsing changes are needed: the business layer only calls `text::get()`.
 
@@ -128,7 +127,7 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
 
   The example config's `language = "ENGLISH"` only decides which language a new deployment runs in (change it to
   `CHINESE_SIMPLIFIED` for a Chinese deployment); it has nothing to do with the English implementation used in a test
-  build before installation. It is also the value written into the generated `conf.json` as `misc.language` (the same
+  build before installation. It is also the value written into the generated `config.json` as `misc.language` (the same
   value, not a mapped one, see [config.md section 3.2](../config/config-en_us.md)), so the jar speaks the same language
   and the two can no longer disagree.
 * When the language is installed decides which messages can only be bootstrap English:
@@ -147,7 +146,7 @@ wants `/help` in English just replaces `text.help` (it was always meant to be wr
 * Watchdog mutex-poisoning texts are provided by `crate::text::watchdog::WatchdogText` and
   `Text::watchdog_text`, and follow `[i18n] language`; static strings avoid building a temporary `String` on every lock
   operation.
-* Registration-time texts such as command descriptions read the same `get()`: `commands::all_commands()` calls it
+* Registration-time texts such as command descriptions read the same `get()`: `discord_commands::all_commands()` calls it
   once after building the command tree (by then `install()` has run).
 
 ## 5. Layout rules: symbols follow the language, asides use round brackets
@@ -164,7 +163,7 @@ option: `读取最新多少行 (默认 50，上限见配置 runtime.max_reply_lo
 like brackets but are not asides, and keep their own form:
 
 * Config table names copy the brackets: `[admins]`, `[keywords]`, `[raw_game_logs]`.
-* `Report` section labels: `[成功明细]`, `[内容]`, `[Success]`, `[Content]`.
+* `Report` section labels: `[完成明细]`, `[异常明细]`, `[Completed]`, `[Issues]`.
 * Argument marks in usage hints: optional arguments as `[行数]` and required ones as `<机器人名>`, matching the
   notation in [README-en_us.md](../../README/README-en_us.md).
 
@@ -188,12 +187,12 @@ The following text is provided through `Text` and the related enums:
 * `utils/bot_name.rs`: bot name errors.
 * `utils/bot_dirs.rs` (including the `Display` of `BotTokenStatus`) and `utils/running_bots.rs` (including the
   `/show status` column names).
-* `utils/screen.rs`, `utils/startup.rs`, `utils/shutdown.rs`: the detail lines of the start and stop flows.
-* `bot_control/*`, `bot_manage/*`, `all_bots_control/*`, `show/*`, `general/*`.
+* `utils/screen.rs`, `runtime/startup.rs`, `utils/shutdown.rs`: the detail lines of the start and stop flows.
+* `handlers/bot_control/*`, `handlers/bot_manage/*`, `handlers/all_bots_control/*`, `show/*`, `general/*`.
 * `lib.rs` (the not-an-admin refusal) and the fixed command-layer texts ("started running", attachment bodies, usage
   hints, `/whoami`).
-* Command metadata: command descriptions, option descriptions and the `/token` modal labels (the macro-generated
-  command tree is rewritten before registration, see below).
+* Command metadata: command and option descriptions are supplied by the language table before registration; `/token`
+  modal labels are read when the modal is created.
 * The program log (`log::*`), the bootstrap console notes and config errors (`config.rs` and `config/*`): through the
   `LogText` enum and `log_text()`, with an exhaustive `match` in both languages.
 * Watchdog lock operations: through the `WatchdogText` enum and `watchdog_text()` (14 texts, following the language).
@@ -226,32 +225,24 @@ run once; the unit test `text::tests::english_impl_is_english` asserts against t
 (it does not call `install`, because `OnceLock` is process-wide and installing would disturb other tests running in
 parallel).
 
-The wording follows the Chinese: to change a text, change `zh_cn.rs` first (the original of both content and layout),
-then align `en_us.rs` line by line, and finally sync the English copy in `commands/*.rs`, which is word for word the
-same as the English table. A test process may not install a language, so `get()` returns the English implementation
-and wording assertions use English as their baseline; this does not change the status of the Chinese original.
+The wording follows the Chinese: change `zh_cn.rs` first, then align `en_us.rs`. A test process may not install a
+language, so `get()` returns the English implementation and wording assertions use English as their baseline.
 
 ### Command metadata (command descriptions, option descriptions, the `/token` modal)
 
-These texts are written into the binary at compile time by the `#[poise::command]` and `#[derive(Modal)]` macros,
-which only accept literals, so they cannot be changed at run time. The way round it is to rewrite the texts once
-before registration (and once only):
+These texts follow the configured language and are not written into the command macros:
 
-* Command and option descriptions: after `commands::all_commands()` has built the command tree,
-  `Text::command_texts()` (the table) overwrites poise's `Command.description` and `CommandParameter.description` one
-  by one (both fields are public in poise and can be written directly).
+* Command and option descriptions: after `discord_commands::all_commands()` has built the command tree,
+  `Text::command_texts()` is validated and supplies poise's `Command.description` and `CommandParameter.description`.
 * The `/token` modal title, field labels and placeholders: instead of `#[derive(Modal)]`, a hand-written
   `impl poise::Modal` takes the texts in `create()` and the values in `parse()` by `custom_id` (the shape is exactly
   what derive would generate).
 
 So these texts follow the config language too (not the Discord client language), the same switch as the replies.
 
-How completeness is guaranteed: command descriptions use "a table plus an overwrite test" instead of dozens of trait
-methods, because the metadata maps one to one to the names in `src/commands/*.rs` and a table is easier to compare.
-Two tests in `commands` pin this down: `every_command_and_option_has_text_in_every_language` checks every command and
-every option per language (listing whatever is missing), and `command_descriptions_come_from_the_language_table`
-proves the overwrite really happens at registration (rather than the table just sitting there). The effect equals a
-missing translation failing the build, only it happens at test time.
+The command tree and selected language table must match: framework construction rejects missing, duplicate or unknown
+entries and invalid description lengths rather than registering placeholders. Tests check both languages and the
+serialized registration structure.
 
 The difference from Discord's own `description_localized`: that lets Discord pick which version to show by client
 language, a different mechanism from "one language per process". This project does not use it, otherwise a

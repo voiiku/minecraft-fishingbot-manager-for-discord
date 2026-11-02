@@ -1,7 +1,7 @@
 # process_log：程序日志
 [English](process-log-en_us.md) | **简体中文**
 
-* 代码：`src/process_log.rs`（`process_log/levels.rs` 负责级别判定，`process_log/format.rs` 负责记录渲染；
+* 代码：`src/runtime/process_log.rs`（`src/runtime/process_log/levels.rs` 负责级别判定，`src/runtime/process_log/format.rs` 负责记录渲染；
   两部分都是纯函数，各自带测试）
 * 对外 API：`ProcessLog::get_or_init()`（`ProcessLog` 从 crate 根重导出）。首次调用会尝试创建本次日志文件、安装
   logger，并记录配置路径与进程号（日志文件可用时也记录其路径）。
@@ -29,14 +29,14 @@ serenity 与 poise 通过 `tracing` 记录日志，默认只写终端；本项�
 * 本项目自身的事件：配置加载、启动、关停、看门狗、机器人目录与会话、启动/停止/重启/暂停明细，
   以及警告与错误。
 * 每一次回复（`LogText::CommandReplied`）：调用者（Discord 用户 ID）、指令与回复内容。命令层的回复统一
-  经由 `commands::say_and_log` 与 `log_reply` 输出（见 [commands-zh_cn.md](../commands/commands-zh_cn.md)），
+  经由 `discord_commands::say_and_log` 与 `log_reply` 输出（见 [commands-zh_cn.md](../commands/commands-zh_cn.md)），
   因此“用户声称收到的内容”可以逐条与日志核对。
 * 第三方 crate（serenity、poise）默认只记录到 `WARN`（见下一节），因为它们按心跳持续输出 `INFO`，会使
   上面两类记录难以查找。
 
 ## 3. 日志级别
 
-`process_log/levels.rs` 的 `LogLevels::from_config` 只根据 `[log] debug` 计算两档上限：
+`src/runtime/process_log/levels.rs` 的 `LogLevels::from_config` 只根据 `[log] debug` 计算两档上限：
 
 * 本项目（target 以 `minecraft_fishingbot_manager_for_discord` 开头，lib 与 bin 都是）：`false` 时为
   `INFO`，`true` 时为 `DEBUG`。启动、状态与报告等信息在 `INFO` 下已足够阅读。
@@ -71,7 +71,7 @@ serenity 与 poise 通过 `tracing` 记录日志，默认只写终端；本项�
 级别由它自行从配置读取 `[log] debug`，因此入口不传参数。
 
 配置加载失败时进程尚未创建日志，相关提示只会出现在终端。不经 logger 的直写仅剩启动早期几处：
-`src/config.rs` 的模板/配置路径提示（stdout）与配置错误（stderr），以及 `src/process_log.rs` 的两条说明
+`src/runtime/config.rs` 的模板/配置路径提示（stdout）与配置错误（stderr），以及 `src/runtime/process_log.rs` 的两条说明
 （logger 安装失败、重复初始化时保留现有 logger，stdout）。
 
 ## 6. 文件保留策略

@@ -1,14 +1,18 @@
-//! English 文案，与 `zh_cn.rs` 的接口和占位符一一对应。
+//! 英文文案，与 `zh_cn.rs` 的接口和占位符对应。
 
-use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
+use std::time::Duration;
 
-/// 英文实现（不需要实例状态）。
+use super::{
+    CommandText, CommandTextProblem, ConfigRequirement, LogText, Text, WatchdogText, format_seconds,
+};
+
+/// 英文文案实现。
 pub(super) struct EnUs;
 
-/// 进程内唯一的英文实现（[`super::install`] 用它）。
+/// 进程内共享的英文文案实现。
 pub(super) static EN_US: EnUs = EnUs;
 
-/// 全部指令与子指令的说明（把命令注册到 Discord 时用，表结构见 [`super::CommandText`]）。
+/// Discord 指令与子指令说明。
 pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     CommandText {
         name_path: "help",
@@ -22,7 +26,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     },
     CommandText {
         name_path: "show status",
-        description: "Show every running bot and its status",
+        description: "Show running bots and anti-AFK status",
         options: &[],
     },
     CommandText {
@@ -39,6 +43,11 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     CommandText {
         name_path: "checkserver",
         description: "Show this fishing host's performance",
+        options: &[],
+    },
+    CommandText {
+        name_path: "sync-commands",
+        description: "Update commands and clear old scopes as configured (admins only)",
         options: &[],
     },
     CommandText {
@@ -162,6 +171,16 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
         options: &[],
     },
     CommandText {
+        name_path: "pauseall",
+        description: "Pause fishing for all running bots (admins only)",
+        options: &[],
+    },
+    CommandText {
+        name_path: "unpauseall",
+        description: "Resume fishing for all running bots (admins only)",
+        options: &[],
+    },
+    CommandText {
         name_path: "commandall",
         description: "Send the same in-game command to every running bot (admins only)",
         options: &[(
@@ -169,58 +188,59 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             "in-game command (leading slash = command, otherwise chat; write it as is, no quotes)",
         )],
     },
+    CommandText {
+        name_path: "anti-afk",
+        description: "Start or stop anti-AFK (admins only)",
+        options: &[("command", "select on to start or off to stop")],
+    },
 ];
 
 impl Text for EnUs {
     fn watchdog_text(&self, message: WatchdogText) -> &'static str {
         match message {
-            WatchdogText::StartedLockReset => {
-                "Failed to reset the start of this connection attempt: the mutex for Watchdog.started is poisoned"
-            }
+            WatchdogText::StartedLockReset => "Watchdog.started mutex poisoned: reset failed",
             WatchdogText::LastHandshakeLockClear => {
-                "Failed to clear the previous handshake state: the mutex for Watchdog.last_handshake is poisoned"
+                "Watchdog.last_handshake mutex poisoned: clear failed"
             }
             WatchdogText::LastHandshakeLockRecord => {
-                "Failed to record the handshake state: the mutex for Watchdog.last_handshake is poisoned"
+                "Watchdog.last_handshake mutex poisoned: record failed"
             }
             WatchdogText::LastHandshakeLockRead => {
-                "Failed to evaluate the network state: the mutex for Watchdog.last_handshake is poisoned"
+                "Watchdog.last_handshake mutex poisoned: read failed"
             }
             WatchdogText::UnhealthySinceLockClear => {
-                "Failed to clear the probe-failure state: the mutex for Watchdog.unhealthy_since is poisoned"
+                "Watchdog.unhealthy_since mutex poisoned: clear failed"
             }
             WatchdogText::UnhealthySinceLockRecord => {
-                "Failed to record a probe failure: the mutex for Watchdog.unhealthy_since is poisoned"
+                "Watchdog.unhealthy_since mutex poisoned: record failed"
             }
             WatchdogText::UnhealthySinceLockRead => {
-                "Failed to evaluate the network state: the mutex for Watchdog.unhealthy_since is poisoned"
+                "Watchdog.unhealthy_since mutex poisoned: read failed"
             }
-            WatchdogText::StartedLockRead => {
-                "Failed to evaluate the network state: the mutex for Watchdog.started is poisoned"
-            }
+            WatchdogText::StartedLockRead => "Watchdog.started mutex poisoned: read failed",
             WatchdogText::OfflineSinceLockRecord => {
-                "Failed to record the offline state: the mutex for Watchdog.offline_since is poisoned"
+                "Watchdog.offline_since mutex poisoned: record failed"
             }
             WatchdogText::OfflineSinceLockRead => {
-                "Failed to read the offline state: the mutex for Watchdog.offline_since is poisoned"
+                "Watchdog.offline_since mutex poisoned: read failed"
             }
             WatchdogText::PendingDisconnectReasonLockRecord => {
-                "Failed to record the disconnect reason: the mutex for Watchdog.pending_disconnect_reason is poisoned"
+                "Watchdog.pending_disconnect_reason mutex poisoned: record failed"
             }
             WatchdogText::PendingDisconnectReasonLockRead => {
-                "Failed to read the disconnect reason: the mutex for Watchdog.pending_disconnect_reason is poisoned"
+                "Watchdog.pending_disconnect_reason mutex poisoned: read failed"
             }
             WatchdogText::NoticeCtxLockSendReport => {
-                "Failed to send the shutdown report: the mutex for Watchdog.notice_ctx is poisoned"
+                "Watchdog.notice_ctx mutex poisoned: shutdown report read failed"
             }
             WatchdogText::NoticeCtxLockRecord => {
-                "Failed to record the Discord context: the mutex for Watchdog.notice_ctx is poisoned"
+                "Watchdog.notice_ctx mutex poisoned: record failed"
             }
         }
     }
 
     fn report_succeeded_label(&self) -> &'static str {
-        "[Success]"
+        "[Completed]"
     }
 
     fn report_skipped_label(&self) -> &'static str {
@@ -232,7 +252,7 @@ impl Text for EnUs {
     }
 
     fn report_failed_label(&self) -> &'static str {
-        "[Failed]"
+        "[Issues]"
     }
 
     fn report_content_label(&self) -> &'static str {
@@ -279,11 +299,7 @@ impl Text for EnUs {
         "paused"
     }
 
-    // FishingBot.jar's own fixed messages (the Chinese pair is in `zh_cn.rs`; the JAR prints
-    // these by its own language resource, so "中文日志 ↔ `zh_cn.rs`" / "英文日志 ↔ 这里" 是一对)。
-    // 来源：`docs/refs/BOT_COMMANDS_AND_MESSAGES-zh_cn.md` 的 `bot-automatic-reconnect`。
-    // `/pause` 与 `/unpause` 的回显同属 JAR 打印，但已挪到配置 `[command_echo]`（要配 jar 的构建）。
-    // 后缀带前导空格：它要卡住数字与单位（`... in 5 seconds...`），单写 `seconds` 太松。
+    // FishingBot 重连提示用于识别日志状态；后缀的前导空格用于匹配数字与单位。
 
     fn jar_reconnect_prefix(&self) -> &'static str {
         "FishingBot will reconnect in"
@@ -294,7 +310,7 @@ impl Text for EnUs {
     }
 
     fn bot_name_empty(&self) -> &'static str {
-        "Bot name cannot be empty (letters, digits, underscore and hyphen only)"
+        "Bot name cannot be empty"
     }
 
     fn bot_name_illegal_char(&self, raw_bot_name: &str, illegal_char: char) -> String {
@@ -303,13 +319,13 @@ impl Text for EnUs {
         )
     }
 
-    // ============ 单机器人指令（`bot_control/*`） ============
+    // ============ 单机器人指令（`handlers/bot_control/*`） ============
     fn bot_start_missing_token(&self, bot_name: &str) -> String {
         format!("Error: bot '{bot_name}' has no token file and cannot be started.")
     }
 
     fn bot_start_already_running(&self, bot_name: &str) -> String {
-        format!("Error: bot '{bot_name}' is already running.")
+        format!("Bot '{bot_name}' already has a screen session.")
     }
 
     fn bot_start_already_queued(&self, bot_name: &str) -> String {
@@ -317,7 +333,7 @@ impl Text for EnUs {
     }
 
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
-        format!("Error: bot '{bot_name}' is not running.")
+        format!("Bot '{bot_name}' has no screen session to stop.")
     }
 
     fn bot_stop_succeeded(&self, bot_name: &str) -> String {
@@ -334,12 +350,22 @@ impl Text for EnUs {
         )
     }
 
+    fn bot_restart_online_confirmed(&self, bot_name: &str) -> String {
+        format!("Bot {bot_name}: server join confirmed after restart")
+    }
+
+    fn bot_restart_session_unconfirmed(&self, bot_name: &str) -> String {
+        format!(
+            "Bot {bot_name}: session exists after restart; server status unconfirmed (check /show status later)"
+        )
+    }
+
     fn bot_command_empty(&self) -> &'static str {
         "Error: the command to send must not be empty."
     }
 
     fn bot_command_not_running(&self, bot_name: &str) -> String {
-        format!("Error: bot '{bot_name}' is not running and cannot receive commands.")
+        format!("Bot '{bot_name}' has no screen session; cannot send commands.")
     }
 
     fn bot_command_sent(&self, bot_name: &str, bot_command: &str) -> String {
@@ -354,6 +380,10 @@ impl Text for EnUs {
         format!("Confirmed bot '{bot_name}' resumed fishing")
     }
 
+    fn bot_pause_unconfirmed(&self, bot_name: &str, bot_command: &str) -> String {
+        format!("Bot '{bot_name}': {bot_command} sent; status unconfirmed")
+    }
+
     fn bot_pause_superseded(&self, my_command: &str, current_pause_status: &str) -> String {
         format!("Sent {my_command}, but the latest status is {current_pause_status}")
     }
@@ -366,13 +396,10 @@ impl Text for EnUs {
         format!("Error: bot '{bot_name}' has no log file")
     }
 
-    // ============ 账号管理指令（`bot_manage/*`） ============
+    // ============ 账号管理指令（`handlers/bot_manage/*`） ============
     fn bot_add_succeeded(&self, bot_name: &str) -> String {
         format!(
-            "Bot '{bot_name}' was added.\n\
-             Configure its token before starting it.\n\
-             Use /bot login to authenticate with Microsoft.\n\
-             If /bot login fails, use /token to set the refreshToken manually."
+            "Bot '{bot_name}' added. Configure credentials with /bot login, or use /token if login fails."
         )
     }
 
@@ -420,9 +447,8 @@ impl Text for EnUs {
 
     fn bot_login_prompt(&self, bot_name: &str, verification_url: &str, user_code: &str) -> String {
         format!(
-            "Sign-in requested for bot '{bot_name}'. Open {verification_url} in a browser and enter \
-             code {user_code}. The code is valid for approximately 10 minutes.\n\
-             The result will be sent in a follow-up message."
+            "Bot '{bot_name}': open {verification_url} and enter {user_code} within 10 minutes. \
+             The authorization result will follow."
         )
     }
 
@@ -431,16 +457,13 @@ impl Text for EnUs {
     }
 
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
-        format!(
-            "Bot '{bot_name}': the sign-in credential is saved (any previous token file was removed) and \
-             the bot is starting; check /show status for its state."
-        )
+        format!("Bot '{bot_name}': credentials saved; check /show status.")
     }
 
     fn bot_login_already_running(&self, bot_name: &str) -> String {
         format!(
-            "Bot '{bot_name}' is already attempting to sign in. If a /bot login request is in \
-             progress, wait for its result. To sign in again, stop the bot with /stop first."
+            "Bot '{bot_name}' has a session but no token. If sign-in is in progress, wait for \
+             its result or stop the session before retrying."
         )
     }
 
@@ -449,31 +472,27 @@ impl Text for EnUs {
     }
 
     fn bot_login_prompt_missing(&self, bot_name: &str) -> String {
-        format!(
-            "Error: the session for bot '{bot_name}' started, but no device code was displayed. \
-             Check its output with /log {bot_name}. Common causes: incorrect JAR arguments, \
-             insufficient memory, or a build without device-code sign-in support."
-        )
+        format!("Bot '{bot_name}': no device code found; check /log {bot_name}.")
     }
 
     fn bot_login_timed_out(&self, bot_name: &str, waited_minutes: u64) -> String {
         format!(
-            "Error: obtaining credentials for bot '{bot_name}' timed out after {waited_minutes} \
-             minutes. The sign-in session was cancelled. Retry or use /token."
+            "Bot '{bot_name}': credential wait timed out after {waited_minutes} minutes. \
+             Check the session before retrying or using /token."
         )
     }
 
-    // ============ 批量指令（`all_bots_control/*`） ============
+    // ============ 批量指令（`handlers/all_bots_control/*`） ============
     fn count_valid_accounts(&self) -> &'static str {
-        "total valid accounts"
+        "tokens configured"
     }
 
     fn count_start_command_sent(&self) -> &'static str {
-        "start commands sent"
+        "sessions present after start"
     }
 
     fn count_skipped_running(&self) -> &'static str {
-        "skipped (already running)"
+        "skipped (session exists)"
     }
 
     fn count_skipped_missing_token(&self) -> &'static str {
@@ -485,42 +504,55 @@ impl Text for EnUs {
     }
 
     fn count_start_failed(&self) -> &'static str {
-        "start failed"
+        "start issues"
     }
 
     fn count_running_accounts(&self) -> &'static str {
-        "running accounts"
+        "target bots"
     }
 
     fn count_restart_command_sent(&self) -> &'static str {
-        "restart commands sent"
+        "sessions present after restart"
     }
 
     fn count_restart_failed(&self) -> &'static str {
-        "restart failed"
+        "restart issues"
     }
 
     fn count_sent_ok(&self) -> &'static str {
-        "sent successfully"
+        "sent"
     }
 
     fn count_send_failed(&self) -> &'static str {
         "send failed"
     }
 
+    fn count_processed_successfully(&self) -> &'static str {
+        "completed"
+    }
+
+    fn count_processing_failed(&self) -> &'static str {
+        "processing issues"
+    }
+
+    fn pauseall_title(&self) -> &'static str {
+        "Pause-all result"
+    }
+
+    fn unpauseall_title(&self) -> &'static str {
+        "Unpause-all result"
+    }
+
     fn startall_no_valid_accounts(&self) -> &'static str {
-        "Start-all result: no eligible accounts are configured; no bots were started."
+        "No bots can be started."
     }
 
     fn startall_no_valid_accounts_with_missing(&self, missing_token_count: usize) -> String {
-        format!(
-            "Start-all result: no eligible bots; none were started.\n\
-             {missing_token_count} accounts have no token file."
-        )
+        format!("No bots can be started ({missing_token_count} missing a token).")
     }
 
     fn startall_all_running(&self) -> &'static str {
-        "Start-all result: all eligible bots are already running."
+        "All bots with tokens already have sessions."
     }
 
     fn startall_title(&self) -> &'static str {
@@ -528,11 +560,59 @@ impl Text for EnUs {
     }
 
     fn startall_skipped_running(&self, bot_name: &str) -> String {
-        format!("Bot {bot_name}: already running")
+        format!("Bot {bot_name}: session already exists")
     }
 
     fn stopall_title(&self) -> &'static str {
         "Stop result for all bots"
+    }
+
+    fn anti_afk_started(&self) -> &'static str {
+        "Anti-AFK started (matching sessions and input delivery are not guaranteed)"
+    }
+
+    fn anti_afk_already_running(&self) -> &'static str {
+        "Anti-AFK is already running; no need to start it again"
+    }
+
+    fn anti_afk_stopped(&self) -> &'static str {
+        "Anti-AFK stopped"
+    }
+
+    fn anti_afk_status(&self, running: bool) -> &'static str {
+        if running {
+            "Anti-AFK: running"
+        } else {
+            "Anti-AFK: not running"
+        }
+    }
+
+    fn anti_afk_stop_not_running(&self) -> &'static str {
+        "Error: Anti-AFK is not running; no need to stop"
+    }
+
+    fn anti_afk_lock_failed(&self, reason: &str) -> String {
+        format!("Failed to lock anti-AFK state: {reason}")
+    }
+
+    fn anti_afk_config_failed(&self, reason: &str) -> String {
+        format!("Failed to build anti-AFK config: {reason}")
+    }
+
+    fn anti_afk_worker_failed(&self, reason: &str) -> String {
+        format!("Anti-AFK worker failed: {reason}")
+    }
+
+    fn anti_afk_start_failed(&self, reason: &str) -> String {
+        format!("Failed to start anti-AFK: {reason}")
+    }
+
+    fn anti_afk_stop_failed(&self, reason: &str) -> String {
+        format!("Failed to stop anti-AFK: {reason}")
+    }
+
+    fn anti_afk_status_failed(&self, reason: &str) -> String {
+        format!("Failed to query anti-AFK status: {reason}")
     }
 
     fn restartall_nothing_running(&self) -> &'static str {
@@ -557,7 +637,7 @@ impl Text for EnUs {
     }
 
     fn status_no_running_bots(&self) -> &'static str {
-        "No bots are currently running."
+        "No bots with tokens have a session or are queued"
     }
 
     fn status_column_bot_name(&self) -> &'static str {
@@ -617,7 +697,7 @@ impl Text for EnUs {
     }
 
     fn admins_empty(&self) -> &'static str {
-        "No admin configured: the server admin has to add one to [admins] in the config file"
+        "No admin configured; add one under [admins] in the config file"
     }
 
     fn admins_row(&self, name: &str, user_id: &str) -> String {
@@ -625,10 +705,7 @@ impl Text for EnUs {
     }
 
     fn botconfig_read_failed(&self, path: &str, reason: &str) -> String {
-        format!(
-            "Error: could not read the game-side config {path}: {reason} (generated at startup \
-             from [fishingbot])"
-        )
+        format!("Failed to read game config {path}: {reason}")
     }
 
     fn botconfig_too_large(&self, bytes: usize, max_bytes: usize) -> String {
@@ -663,9 +740,18 @@ impl Text for EnUs {
         format!("Cannot connect to server ({host}:{port}):\n{reason}")
     }
 
-    fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String {
+    fn ping_no_address_reason(&self) -> &'static str {
+        "no address returned"
+    }
+
+    fn ping_connection_failed_reason(&self) -> &'static str {
+        "connection failed"
+    }
+
+    fn ping_timeout(&self, host: &str, port: u16, timeout: Duration) -> String {
+        let seconds = format_seconds(timeout);
         format!(
-            "Timed out connecting to server ({host}:{port}) ({timeout_ms} ms without a response)"
+            "Timed out connecting to server ({host}:{port}) ({seconds} seconds without a response)"
         )
     }
 
@@ -679,6 +765,18 @@ impl Text for EnUs {
 
     fn checkserver_title(&self) -> &'static str {
         "Fishing host status"
+    }
+
+    fn checkserver_system_failed(&self, reason: &str) -> String {
+        format!("Failed to initialize system information: {reason}")
+    }
+
+    fn checkserver_disks_failed(&self, reason: &str) -> String {
+        format!("Failed to query disk information: {reason}")
+    }
+
+    fn checkserver_uptime_failed(&self, reason: &str) -> String {
+        format!("Failed to query system uptime: {reason}")
     }
 
     fn checkserver_cpu_usage(&self, cpu_usage: f32) -> String {
@@ -717,9 +815,57 @@ impl Text for EnUs {
         format!("System time: {time_text}")
     }
 
-    // ============ 命令层的固定话术（`commands/*`） ============
+    // ============ Discord 指令文案 ============
+    fn command_sync_title(&self) -> &'static str {
+        "Discord command synchronization"
+    }
+
+    fn command_sync_registered(&self) -> &'static str {
+        "Global commands updated; old server commands were checked for immediate cleanup. Propagation may take up to one hour"
+    }
+
+    fn command_sync_summary(&self, guilds: usize, cleared: usize, failed: usize) -> String {
+        format!("Checked {guilds} servers; cleared {cleared}, failed {failed}")
+    }
+
+    fn command_sync_guild_updated(&self, guild_name: &str) -> String {
+        format!("Updated commands in server {guild_name}")
+    }
+
+    fn command_sync_guild_failed(&self, guild_name: &str, reason: &str) -> String {
+        format!("Failed to update commands in server {guild_name}: {reason}")
+    }
+
+    fn command_sync_bootstrap_failed(&self, guild_name: &str, reason: &str) -> String {
+        format!("Failed to register /sync-commands in server {guild_name}: {reason}")
+    }
+
+    fn command_sync_guild_summary(&self, guilds: usize, updated: usize, failures: usize) -> String {
+        format!("Target servers: {guilds}; updated: {updated}, update failures: {failures}")
+    }
+
+    fn command_sync_cleanup_skipped(&self) -> &'static str {
+        "Synchronization incomplete; no further old-scope cleanup. Fix the errors and rerun /sync-commands"
+    }
+
+    fn command_sync_global_cleared(&self, count: usize) -> String {
+        format!("Cleared {count} old global commands")
+    }
+
+    fn command_sync_global_clear_failed(&self, reason: &str) -> String {
+        format!("Failed to clear old global commands: {reason}")
+    }
+
+    fn command_sync_failed(&self, reason: &str) -> String {
+        format!("Global command update failed; old server commands were not cleared: {reason}")
+    }
+
+    fn command_sync_in_progress(&self) -> &'static str {
+        "A command synchronization is already running; try again later"
+    }
+
     fn command_started_notice(&self, command_tag: &str) -> String {
-        format!("{command_tag} started. The complete result will follow in a separate message.")
+        format!("{command_tag} started; the result will follow.")
     }
 
     fn command_unexpected_failure(&self) -> &'static str {
@@ -751,14 +897,20 @@ impl Text for EnUs {
         "internal error (see the program log)"
     }
 
+    fn start_queue_full_reason(&self) -> &'static str {
+        "start queue is full (max_pending_requests)"
+    }
+
     fn command_start_queue_summary(
         &self,
         batch_size: usize,
-        bot_login_interval_ms: u64,
-        batch_login_interval_ms: u64,
+        bot_login_interval: Duration,
+        batch_login_interval: Duration,
     ) -> String {
+        let bot_login_interval = format_seconds(bot_login_interval);
+        let batch_login_interval = format_seconds(batch_login_interval);
         format!(
-            "Start queue: up to {batch_size} per batch, {bot_login_interval_ms} ms between bots in a batch, {batch_login_interval_ms} ms between batches"
+            "Start queue: up to {batch_size} per batch, {bot_login_interval} seconds between bots in a batch, {batch_login_interval} seconds between batches"
         )
     }
 
@@ -836,8 +988,16 @@ impl Text for EnUs {
         format!("Error: failed to read the bots root directory: {reason}")
     }
 
+    fn screen_list_failed(&self, reason: &str) -> String {
+        format!("Failed to list screen sessions: {reason}")
+    }
+
+    fn screen_unrecognized_output(&self, output: &str) -> String {
+        format!("unrecognized output: {output}")
+    }
+
     fn refusal_bot_running(&self, bot_name: &str) -> String {
-        format!("Error: bot '{bot_name}' is running. Stop it with /stop first.")
+        format!("Bot '{bot_name}' has a screen session; stop it first")
     }
 
     fn refusal_bot_queued(&self, bot_name: &str) -> String {
@@ -902,26 +1062,23 @@ impl Text for EnUs {
         format!("Bot {bot_name}: starting was cancelled (all bots were being stopped)")
     }
 
-    fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
+    fn start_result_timeout(&self, bot_name: &str, timeout: Duration) -> String {
+        let seconds = format_seconds(timeout);
         format!(
-            "Bot {bot_name}: timed out waiting for the launch result ({seconds} seconds); marked unconfirmed (check the program log or /show status)"
+            "Bot {bot_name}: launch result timed out after {seconds} seconds; status unconfirmed. Check the log or /show status."
         )
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
-        format!(
-            "Bot {bot_name}: failed to start (usually because Microsoft throttles frequent logins, or because it ran out of memory)"
-        )
+        format!("Bot {bot_name}: failed to start")
     }
 
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!(
-            "Bot {bot_name}: no token file, so restarting would fail to log in; left unchanged (run /token first, then restart)"
-        )
+        format!("Bot {bot_name}: no token; restart skipped (use /stop to stop it)")
     }
 
     fn restart_not_running(&self, bot_name: &str) -> String {
-        format!("Bot '{bot_name}' is not running, nothing to restart!")
+        format!("Bot '{bot_name}' has no screen session to restart")
     }
 
     fn bot_candidate_running_note(&self) -> &'static str {
@@ -953,6 +1110,18 @@ impl Text for EnUs {
     // ============ 指令元数据（注册到 Discord 的说明文字） ============
     fn command_texts(&self) -> &'static [CommandText] {
         COMMAND_TEXTS
+    }
+
+    fn command_text_invalid(&self, path: &str, problem: CommandTextProblem) -> String {
+        let reason = match problem {
+            CommandTextProblem::Missing => "description is missing".to_string(),
+            CommandTextProblem::Duplicate => "description is duplicated".to_string(),
+            CommandTextProblem::Unknown => "command or option does not exist".to_string(),
+            CommandTextProblem::InvalidLength { length } => format!(
+                "description must be 1-100 UTF-16 units and not whitespace-only; length is {length}"
+            ),
+        };
+        format!("Invalid command text {path}: {reason}")
     }
 
     fn token_modal_title(&self) -> &'static str {
@@ -1003,14 +1172,29 @@ impl Text for EnUs {
             }
             LogText::ProbeFailed { reason } => format!("REST probe failed: {reason}"),
             LogText::WatchdogReady {
-                window_secs,
-                probe_interval_secs,
-                first_handshake_timeout_secs,
+                window,
+                probe_interval,
+                first_handshake_timeout,
             } => format!(
-                "gateway watchdog ready: judging window {window_secs} s, probe every {probe_interval_secs} s, \
-                 first handshake timeout {first_handshake_timeout_secs} s"
+                "gateway watchdog ready: judging window {} s, probe every {} s, first handshake timeout {} s",
+                format_seconds(window),
+                format_seconds(probe_interval),
+                format_seconds(first_handshake_timeout)
             ),
             LogText::CommandRunFailed { error } => format!("command failed: {error}"),
+            LogText::CommandFallbackReplyFailed {
+                caller_id,
+                command_path,
+                reason,
+            } => format!(
+                "Failed to send the fallback response for /{command_path} to Discord user {caller_id}: {reason}"
+            ),
+            LogText::AutocompleteLookupFailed { reason } => {
+                format!("Autocomplete candidate lookup failed: {reason}")
+            }
+            LogText::AutocompleteTaskFailed { reason } => {
+                format!("Autocomplete candidate lookup task failed: {reason}")
+            }
             LogText::CommandReplied {
                 caller_id,
                 command_path,
@@ -1038,14 +1222,17 @@ impl Text for EnUs {
                  stopped, then we try to reconnect..."
                     .to_string()
             }
-            LogText::ReconnectScheduled { attempt, seconds } => {
-                format!("reconnect attempt #{attempt} starts in {seconds}s")
+            LogText::ReconnectScheduled { attempt, delay } => {
+                format!("reconnect attempt #{attempt} starts in {}s", format_seconds(delay))
             }
             LogText::ReconnectFailed {
                 attempt,
-                seconds,
+                delay,
                 reason,
-            } => format!("reconnect attempt #{attempt} failed: {reason}; retrying in {seconds}s"),
+            } => format!(
+                "reconnect attempt #{attempt} failed: {reason}; retrying in {}s",
+                format_seconds(delay)
+            ),
             LogText::ReconnectedAfterOffline {
                 offline_secs,
                 notified_guilds,
@@ -1083,16 +1270,7 @@ impl Text for EnUs {
             ),
             LogText::GuildCommandsClearFailed { guild_name, reason } => format!(
                 "could not clear the leftover guild commands on the server {guild_name}: {reason} \
-                 (the global registration is unaffected; the next startup tries again)"
-            ),
-            LogText::GlobalCommandsReadFailed { reason } => format!(
-                "could not read the current global commands, so the leftover guild command \
-                 cleanup is skipped this run: {reason}"
-            ),
-            LogText::GuildCommandsCleanupWaiting { minutes } => format!(
-                "this global command set has not been in place for a full hour on Discord's side \
-                 yet (about {minutes} more minutes), so the leftover guild commands are left \
-                 alone this run; a later startup after that clears them automatically"
+                 (run /sync-commands again)"
             ),
             LogText::DiscordClientEnded => {
                 "the Discord connection ended (the client returned normally)".to_string()
@@ -1149,9 +1327,10 @@ impl Text for EnUs {
             LogText::StartLaunchPanicked { bot_name, reason } => {
                 format!("internal error while launching bot {bot_name}: {reason}")
             }
-            LogText::StartResultTimeout { bot_name, seconds } => {
+            LogText::StartResultTimeout { bot_name, timeout } => {
                 format!(
-                    "timed out after {seconds} seconds waiting for the launch result of bot {bot_name}; marked unconfirmed"
+                    "timed out after {} seconds waiting for the launch result of bot {bot_name}; marked unconfirmed",
+                    format_seconds(timeout)
                 )
             }
             LogText::StarterRestarting { reason } => {
@@ -1236,8 +1415,7 @@ impl Text for EnUs {
                 format!("failed to read the log file contents: {reason}")
             }
 
-            // Config layer (the messages for "config could not be read at all" live in
-            // `text::bootstrap` — they are fixed English, so they are not in this table)
+            // 配置加载前的文案由 `text::bootstrap` 提供。
             LogText::ConfigFieldInvalid { field, requirement } => {
                 format!("config item {field} {}", requirement_text(requirement))
             }
@@ -1261,6 +1439,12 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
         }
         ConfigRequirement::PortRange => "must be a port number between 1 and 65535".to_string(),
         ConfigRequirement::GreaterThanZero => "must be greater than 0".to_string(),
+        ConfigRequirement::NonNegativeDuration => {
+            "must be a finite, non-negative number of seconds within the supported range".to_string()
+        }
+        ConfigRequirement::InputPulseCommand { reason } => {
+            format!("must be input-pulse input supported in screen mode: {reason}")
+        }
         ConfigRequirement::DiscordTokenEmpty => {
             "must not be empty (Developer Portal -> your app -> Bot -> Reset Token)".to_string()
         }

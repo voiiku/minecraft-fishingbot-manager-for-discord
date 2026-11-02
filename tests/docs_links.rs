@@ -7,16 +7,12 @@ use std::path::{Path, PathBuf};
 /// 免检关键字。
 const SKIP_MARKER: &str = "<!-- docs-links: skip -->";
 
-/// 仓库根目录（`cargo test` 的工作目录不保证是它，所以用 `CARGO_MANIFEST_DIR` 定位）。
+/// 返回仓库根目录。
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// 要检查的 Markdown：仓库根目录一层的 + `docs/` 下的（`CONTEXT-zh_cn.md` 在 `docs/CONTEXTS/`，递归会查到）。
-///
-/// `docs/` 递归下去：文档按用途分了子目录（`README/`、`tutorial/`、`mods/<模块>/`、`refs/` 等，见
-/// `docs/index-*.md` 的说明），每份文档都带语言后缀（`-zh_cn` / `-en_us`，缺的那份是空占位）。
-/// 子目录里的链接与锚点同样要盯；仓库根只取一层，免得走进 `target/`、`.git/` 这些不属于文档的目录。
+/// 收集仓库根目录和 `docs/` 下的 Markdown。
 fn markdown_files() -> Vec<PathBuf> {
     let root = repo_root();
     let mut files: Vec<PathBuf> = fs::read_dir(&root)
@@ -27,16 +23,14 @@ fn markdown_files() -> Vec<PathBuf> {
         .collect();
 
     collect_markdown(&root.join("docs"), &mut files);
-    // 软链接（`docs/README/README-en_us.md` → 仓库根 `README.md`）只是同一份内容的另一个入口：
-    // 它的相对链接按它自己所在目录解析，而内容里的链接是按目标文件的目录写的，在那里自然对不上。
-    // 跳过它——内容已按目标位置查过，软链接本身由 `the_english_readme_is_a_symlink_to_the_default_readme` 盯着。
+    // 软链接的相对链接按目标文件的位置检查。
     files.retain(|path| !is_symlink(path));
     files.sort();
 
     files
 }
 
-/// 是不是软链接（`fs::metadata` 会跟着链接走，所以要用 `symlink_metadata`）。
+/// 检查路径是否为软链接。
 fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
 }
@@ -62,8 +56,7 @@ fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// 要检查的正文：带行号、跳过 ``` 代码块里的行（代码块里的 `# 注释` 不是标题，里面的路径也多是命令
-/// 而不是本仓库的文件），并跳过标了免检的文件（返回空）。
+/// 返回待检查正文及行号；跳过代码块和免检文档。
 fn checked_lines(markdown: &str) -> Vec<(usize, &str)> {
     if markdown
         .lines()
@@ -143,6 +136,55 @@ mod tests {
         assert!(!anchors.contains("not-a-heading"));
         assert!(!anchors.contains("too-deep"));
     }
+
+    #[test]
+    fn repository_root_links_resolve_from_any_document() {
+        let root = repo_root();
+        let expected = root.join("docs/assets/demo1.gif");
+
+        for document in [
+            root.join("README.md"),
+            root.join("docs/README/README-zh_cn.md"),
+        ] {
+            assert_eq!(
+                resolve_link_path(&root, &document, "/docs/assets/demo1.gif"),
+                expected
+            );
+        }
+        assert!(expected.is_file());
+        assert!(
+            !resolve_link_path(
+                &root,
+                &root.join("README.md"),
+                "/docs/assets/demo1.gif/nonexistent"
+            )
+            .exists()
+        );
+    }
+
+    #[test]
+    fn relative_links_and_fragment_only_links_use_document_location() {
+        let root = repo_root();
+        let document = root.join("docs/README/README-zh_cn.md");
+
+        assert_eq!(
+            resolve_link_path(&root, &document, "../assets/demo1.gif"),
+            root.join("docs/README/../assets/demo1.gif")
+        );
+        assert_eq!(resolve_link_path(&root, &document, ""), document);
+    }
+
+    #[test]
+    fn repository_root_links_can_target_heading_anchors() {
+        let root = repo_root();
+        let document = root.join("docs/README/README-zh_cn.md");
+        let target_path = resolve_link_path(&root, &document, "/README.md");
+        let markdown = fs::read_to_string(target_path).expect("读取根 README");
+        let anchors = heading_anchors(&markdown);
+
+        assert!(anchors.contains("1-project-overview"));
+        assert!(!anchors.contains("nonexistent-heading"));
+    }
 }
 
 /// 标题 → 锚点（照 GitHub：小写、去掉标点（`-` 与 `_` 除外）、空格换连字符）。
@@ -167,12 +209,23 @@ fn link_targets(line: &str) -> Vec<&str> {
             break;
         };
         let target = &after_open[..close];
-        // 图片 `![x](y)` 也算同一类链接，这里的解析方式对它们一样适用。
+        // 图片与普通链接使用相同的目标解析。
         targets.push(target);
         rest = &after_open[close + 1..];
     }
 
     targets
+}
+
+/// 仓库根路径从根目录解析，相对路径从文档所在目录解析，空路径指向文档本身。
+fn resolve_link_path(root: &Path, document: &Path, file_part: &str) -> PathBuf {
+    if file_part.is_empty() {
+        document.to_path_buf()
+    } else if file_part.starts_with('/') {
+        root.join(file_part.trim_start_matches('/'))
+    } else {
+        document.parent().expect("文件都有父目录").join(file_part)
+    }
 }
 
 /// 显示成相对仓库根的形式，失败信息里好读。
@@ -183,7 +236,7 @@ fn relative(path: &Path, root: &Path) -> String {
         .to_string()
 }
 
-/// 每一条指向仓库内文件的链接都要存在（含 `docs/x.md` 与 `x.md` 两种写法，相对链接所在目录解析）。
+/// 每一条指向仓库内文件的链接都要存在。
 #[test]
 fn every_doc_link_points_at_an_existing_file() {
     let root = repo_root();
@@ -191,11 +244,9 @@ fn every_doc_link_points_at_an_existing_file() {
 
     for path in markdown_files() {
         let markdown = fs::read_to_string(&path).expect("读 Markdown");
-        let dir = path.parent().expect("文件都有父目录").to_path_buf();
-
         for (line_no, line) in checked_lines(&markdown) {
             for target in link_targets(line) {
-                // 外链、邮件与纯锚点（`#xxx`）不在这里管。
+                // 跳过外链、邮件和纯锚点。
                 if target.starts_with("http")
                     || target.starts_with("mailto")
                     || target.starts_with('#')
@@ -208,7 +259,7 @@ fn every_doc_link_points_at_an_existing_file() {
                     continue;
                 }
 
-                if !dir.join(file_part).exists() {
+                if !resolve_link_path(&root, &path, file_part).exists() {
                     problems.push(format!(
                         "{}:{} -> {}（目标文件不存在）",
                         relative(&path, &root),
@@ -235,8 +286,6 @@ fn every_doc_anchor_matches_a_heading() {
 
     for path in markdown_files() {
         let markdown = fs::read_to_string(&path).expect("读 Markdown");
-        let dir = path.parent().expect("文件都有父目录").to_path_buf();
-
         for (line_no, line) in checked_lines(&markdown) {
             for target in link_targets(line) {
                 if target.starts_with("http") || target.starts_with("mailto") {
@@ -250,12 +299,7 @@ fn every_doc_anchor_matches_a_heading() {
                     continue;
                 }
 
-                // 纯锚点（`#xxx`）指本文，其余相对链接所在目录。
-                let target_path = if file_part.is_empty() {
-                    path.clone()
-                } else {
-                    dir.join(file_part)
-                };
+                let target_path = resolve_link_path(&root, &path, file_part);
                 let Ok(target_markdown) = fs::read_to_string(&target_path) else {
                     continue; // 目标文件不存在由上一个测试报，这里不重复。
                 };
@@ -279,11 +323,7 @@ fn every_doc_anchor_matches_a_heading() {
     );
 }
 
-/// `docs/` 里写出来的代码路径（反引号里的 `src/....rs`）都要真实存在 —— 改名、拆文件之后最容易忘。
-///
-/// 只查"形状确定的自家路径"：以 `src/` 开头、以 `.rs` 结尾、不含通配符与省略号与花括号简写
-/// （`src/text/*.rs`、`src/commands/{a,b}.rs` 这类跳过），而且它所在的目录必须真的在仓库里
-/// （这样 `poise_macros` 的 `src/command/mod.rs` 这种引用别人 crate 内部路径的句子不会被误判）。
+/// 检查文档中完整的仓库源码路径；跳过通配符和外部 crate 路径。
 #[test]
 fn every_source_path_mentioned_in_docs_exists() {
     let root = repo_root();
@@ -306,7 +346,7 @@ fn every_source_path_mentioned_in_docs_exists() {
                     continue;
                 }
 
-                // 只认自家目录下的：父目录得在仓库里存在（否则是别的 crate 的路径）。
+                // 外部 crate 的源码路径不在仓库内校验。
                 let Some(parent) = Path::new(candidate).parent() else {
                     continue;
                 };
@@ -333,10 +373,7 @@ fn every_source_path_mentioned_in_docs_exists() {
     );
 }
 
-/// `docs/README/README-en_us.md` 必须是指向仓库根 `README.md` 的软链接，不能是复制的一份。
-///
-/// 仓库根的 `README.md` 是默认 README（GitHub 首页与 crates.io 显示的就是它，链接按仓库根写）；
-/// `docs/README/` 里那份是它在文档树里的入口，用软链接指回根 —— 一份内容两个位置，改一处不会忘记另一处。
+/// 英文文档入口必须以相对软链接指向仓库根 README。
 #[test]
 fn the_english_readme_is_a_symlink_to_the_default_readme() {
     let root = repo_root();

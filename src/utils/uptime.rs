@@ -1,9 +1,4 @@
-//! 运行时长：读出「一个进程已经跑了多久」，并把它格式化成「天-时-分」。
-//!
-//! * 读取（[`process_elapsed_seconds`]）是 Linux 专有信息（本项目只面向 Linux 部署）：
-//!   `/proc/<pid>/stat` 给出进程启动时刻相对系统开机时刻的滴答数，再结合 `/proc/stat` 里的
-//!   btime 才能换算成"已运行秒数"；
-//! * 格式化（[`format_uptime`]）供机器人运行时长与服务器运行时长共用（后者由 `sysinfo` 给出秒数）。
+//! 读取 Linux 进程运行时长，并格式化为天、时、分。
 
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,12 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn process_elapsed_seconds(pid: u32) -> Option<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
 
-    // /proc/<pid>/stat 的第 2 个字段 comm 可能带空格和括号，
-    // 先定位到最后一个 ')'，从第 3 个字段开始数；starttime 是第 22 个字段，
-    // 所以相对 after_comm 的下标是 22 - 3 = 19。
+    // comm 可含空格和括号；最后一个 ')' 之后索引 19（从零开始）为 starttime。
     let after_comm = stat.rsplit(')').next()?;
-    let fields: Vec<&str> = after_comm.split_whitespace().collect();
-    let starttime: u64 = fields.get(19)?.parse().ok()?;
+    let starttime: u64 = after_comm.split_whitespace().nth(19)?.parse().ok()?;
 
     // Linux 的 USER_HZ 固定是 100，starttime 要除以 100 才是秒。
     let start_epoch = system_boot_time()?.checked_add(starttime / 100)?;

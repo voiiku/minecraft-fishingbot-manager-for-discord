@@ -1,0 +1,269 @@
+//! 启动队列的内部工具函数。
+
+use std::collections::VecDeque;
+use std::sync::MutexGuard;
+use std::time::Instant;
+
+use super::{QueuedBot, StartupQueue};
+
+impl StartupQueue {
+    /// 按先进先出顺序接收启动条目，容量不足时返回未接收的条目。
+    pub(super) fn add_waiting_bots(&self, entries: Vec<QueuedBot>) -> Result<(), Vec<QueuedBot>> {
+        let rejected = {
+            let mut waiting_bots = self.waiting_bots_mut();
+            let free_slots = self.max_pending_requests.saturating_sub(waiting_bots.len());
+            let mut accepted = entries;
+            let rejected = accepted.split_off(free_slots.min(accepted.len()));
+            waiting_bots.extend(accepted);
+
+            rejected
+        };
+
+        self.added.notify_all();
+
+        if rejected.is_empty() {
+            Ok(())
+        } else {
+            Err(rejected)
+        }
+    }
+
+    /// 等待队列非空或收到停止请求；后者避免停止请求滞留至下一次启动。
+    pub(super) fn wait_until_work(&self) {
+        let mut waiting_bots = self.waiting_bots_mut();
+        while waiting_bots.is_empty() && !self.has_stop_request() {
+            waiting_bots = self
+                .added
+                .wait(waiting_bots)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    /// 从队首取出最多 `bot_count` 台，并记录非空批次的取出时刻。
+    pub(super) fn pop_bots_from_head(&self, bot_count: usize) -> Vec<QueuedBot> {
+        let popped: Vec<QueuedBot> = {
+            let mut waiting_bots = self.waiting_bots_mut();
+            let take_count = bot_count.min(waiting_bots.len());
+
+            waiting_bots.drain(..take_count).collect()
+        };
+
+        if !popped.is_empty() {
+            *self.last_batch_dequeued_at_mut() = Instant::now();
+        }
+
+        popped
+    }
+
+    /// 最近一次取出批次的时刻。
+    pub(super) fn last_batch_dequeued_at(&self) -> Instant {
+        *self.last_batch_dequeued_at_mut()
+    }
+
+    /// 获取待启动列表；锁中毒时保留其中的数据。
+    pub(super) fn waiting_bots_mut(&self) -> MutexGuard<'_, VecDeque<QueuedBot>> {
+        self.waiting_bots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// 获取最近取出批次的时刻；锁中毒时保留原值。
+    fn last_batch_dequeued_at_mut(&self) -> MutexGuard<'_, Instant> {
+        self.last_batch_dequeued_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::thread;
+
+    use crate::runtime::startup::StartLedger;
+    use crate::utils::{BotDirEntry, BotTokenStatus};
+
+    use super::*;
+
+    /// 创建仅用于队列交互的测试队列；时间参数不影响本组用例。
+    fn queue() -> StartupQueue {
+        queue_with_capacity(32)
+    }
+
+    /// 创建指定待处理容量的测试队列。
+    fn queue_with_capacity(max_pending_requests: usize) -> StartupQueue {
+        StartupQueue::new_for_test(3, 20_000, 30_000, 300, max_pending_requests)
+    }
+
+    fn bot(bot_name: &str) -> BotDirEntry {
+        BotDirEntry {
+            owner_id: 1,
+            bot_name: bot_name.to_string(),
+            bot_dir_path: PathBuf::from("/nonexistent"),
+            bot_token_status: BotTokenStatus::Missing,
+        }
+    }
+
+    fn bot_names<'a>(bots: impl IntoIterator<Item = &'a BotDirEntry>) -> Vec<String> {
+        bots.into_iter().map(|bot| bot.bot_name.clone()).collect()
+    }
+
+    /// 返回当前排队机器人名称，顺序与先进先出一致。
+    fn waiting_bots(queue: &StartupQueue) -> Vec<String> {
+        bot_names(
+            queue
+                .waiting_bots_mut()
+                .iter()
+                .map(|queued_bot| queued_bot.bot()),
+        )
+    }
+
+    /// 构造一个待启动条目（机器人及其对应的账本）。
+    fn queued(bot_name: &str) -> QueuedBot {
+        let bot_dir_entry = bot(bot_name);
+        let ledger = StartLedger::new(std::slice::from_ref(&bot_dir_entry));
+
+        QueuedBot::new(bot_dir_entry, ledger)
+    }
+
+    /// 将队列内容替换为指定机器人名称。
+    fn set_waiting_bots(queue: &StartupQueue, bot_names: &[&str]) {
+        let entries: Vec<QueuedBot> = bot_names.iter().map(|name| queued(name)).collect();
+
+        *queue.waiting_bots_mut() = entries.into();
+    }
+
+    #[test]
+    fn queue_capacity_accounts_for_existing_entries() {
+        for (initial, incoming) in [
+            (&[][..], &["duck", "goose", "crane"][..]),
+            (&["duck"][..], &["goose", "crane"][..]),
+        ] {
+            let queue = queue_with_capacity(2);
+            queue
+                .add_waiting_bots(initial.iter().map(|name| queued(name)).collect())
+                .expect("initial entries fit");
+            let rejected = queue
+                .add_waiting_bots(incoming.iter().map(|name| queued(name)).collect())
+                .expect_err("entries beyond capacity must be rejected");
+
+            assert_eq!(waiting_bots(&queue), ["duck", "goose"]);
+            assert_eq!(
+                bot_names(rejected.iter().map(|entry| entry.bot())),
+                ["crane"]
+            );
+        }
+    }
+
+    /// 从队首按先进先出取机器人；数量不足时返回现有全部条目。
+    #[test]
+    fn popping_takes_the_oldest_bots_first() {
+        let queue = queue();
+        assert!(queue.pop_bots_from_head(2).is_empty(), "空队列应返回空结果");
+
+        set_waiting_bots(&queue, &["duck", "goose", "crane"]);
+
+        assert_eq!(
+            bot_names(
+                queue
+                    .pop_bots_from_head(2)
+                    .iter()
+                    .map(|queued_bot| queued_bot.bot())
+            ),
+            ["duck", "goose"]
+        );
+        assert_eq!(queue.waiting_bots_mut().len(), 1);
+        assert_eq!(
+            bot_names(
+                queue
+                    .pop_bots_from_head(5)
+                    .iter()
+                    .map(|queued_bot| queued_bot.bot())
+            ),
+            ["crane"],
+            "数量不足时返回剩余条目"
+        );
+        assert!(queue.pop_bots_from_head(1).is_empty());
+    }
+
+    /// 仅在成功取出条目时更新时间戳；空队列取出不改变时间戳。
+    #[test]
+    fn only_a_real_pop_updates_the_timestamp() {
+        let queue = queue();
+        let loaded_at = queue.last_batch_dequeued_at();
+
+        queue.pop_bots_from_head(1);
+        assert_eq!(
+            queue.last_batch_dequeued_at(),
+            loaded_at,
+            "空队列不应更新时间戳"
+        );
+
+        set_waiting_bots(&queue, &["duck"]);
+        queue.pop_bots_from_head(1);
+        let first_pop = queue.last_batch_dequeued_at();
+        assert!(first_pop >= loaded_at);
+
+        set_waiting_bots(&queue, &["goose"]);
+        queue.pop_bots_from_head(1);
+        let second_pop = queue.last_batch_dequeued_at();
+        assert!(second_pop >= first_pop, "成功取出后应更新时间戳");
+    }
+
+    /// 队列可查询指定机器人是否正在等待启动。
+    #[test]
+    fn the_queue_reports_which_bots_are_waiting() {
+        let queue = queue();
+        set_waiting_bots(&queue, &["duck", "goose"]);
+
+        assert!(queue.bot_in_queue(&bot("duck")));
+        assert!(!queue.bot_in_queue(&bot("crane")));
+
+        let answers = queue.bots_in_queue(&[bot("duck"), bot("crane"), bot("goose")]);
+        let flags: Vec<bool> = answers.into_iter().map(|(_, in_queue)| in_queue).collect();
+
+        assert_eq!(flags, [true, false, true]);
+    }
+
+    /// 移除机器人时逐项返回是否成功；不存在于队列的条目返回 `false`，整体操作不失败。
+    #[test]
+    fn removing_bots_from_the_queue_answers_per_bot() {
+        let queue = queue();
+        set_waiting_bots(&queue, &["duck", "goose"]);
+
+        let answers = queue.remove_bots_from_queue(&[bot("duck"), bot("crane")]);
+        let flags: Vec<bool> = answers.into_iter().map(|(_, removed)| removed).collect();
+
+        assert_eq!(flags, [true, false], "crane 不在队列中");
+        assert_eq!(waiting_bots(&queue), ["goose"]);
+    }
+
+    /// 清空队列（用于 `/stopall`）。
+    #[test]
+    fn clearing_the_queue_empties_it() {
+        let queue = queue();
+        set_waiting_bots(&queue, &["duck", "goose"]);
+
+        queue.remove_all_bots_from_queue();
+
+        assert!(waiting_bots(&queue).is_empty());
+    }
+
+    /// 停止请求可以唤醒等待中的启动线程；请求被取走一次后清除。
+    #[test]
+    fn a_stop_request_wakes_the_waiting_starter_once() {
+        let queue = Arc::new(queue());
+        let waiting_queue = Arc::clone(&queue);
+        let waiter = thread::spawn(move || {
+            waiting_queue.wait_until_work();
+            waiting_queue.take_stop_request()
+        });
+
+        // 队列是空的：这一次唤醒只可能来自停止请求。
+        queue.request_stop();
+
+        assert!(waiter.join().expect("等待线程不该挂"), "取到停止请求");
+        assert!(!queue.take_stop_request(), "取走之后不再有");
+    }
+}

@@ -25,7 +25,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   Do not bundle FishingBot: it is a separate
   GPL-3.0 program that this project only launches with `java -jar`, without modifying or linking it; if you really do
   put the jar and the binary into one distribution, the jar part of that distribution has to be handled under GPL-3.0.
-* Upstream (`MrKinau/FishingBot`, GPL-3.0) plans to add the `/pause` and `/unpause` in-game commands. Until the JAR in use includes those commands, `/pause` and `/unpause` only reply "command sent" and the pause state is not updated. Their echoes remain in `[command_echo]` as `pause_echo` / `unpause_echo`, so switching to a JAR that includes them needs no rebuild; the two keys are kept for now and can move into the language table, derived from `[i18n] language`, once upstream supports them.
+* Upstream (`MrKinau/FishingBot`, GPL-3.0) plans to add the `/pause` and `/unpause` in-game commands. Until the JAR supports them, single-bot and batch pause commands can only report that commands were sent; the pause state is not updated. Echoes remain configured as `[command_echo]` `pause_echo` / `unpause_echo`.
 * What it does: use Discord slash commands to manage [FishingBot](https://github.com/MrKinau/FishingBot)
   auto-fishing instances for many Minecraft accounts in bulk.
 * Tech stack: Rust (edition 2024), [serenity](https://github.com/serenity-rs/serenity) 0.12.5,
@@ -70,7 +70,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    So do thin functions that mirror a structure: config validation keeps one function per table, with `validate()`
    only calling them in order (see section 5 of the config document).
 5. Naming: functions use verb phrases (`start_bot`, `create_bot_log_file`); things that return a value use nouns
-   without a `get_` prefix (`latest_log_path`, `all_running_bot_names`); predicates use `is_` and `has_`; conversions
+   without a `get_` prefix (`latest_log_path`, `token_ready_bot_names_with_screen_sessions`); predicates use `is_` and `has_`; conversions
    use `to_`, and a conversion that can fail returns `Result`, where the `Err` is text that can be replied to the
    user directly (`raw_bot_name.to_clean_bot_name()`, `from_dir_name_to_owner_id`); when constructing a type, use
    `new` when the facts are known and `find_*` when they have to be looked up (`BotDirEntry::new` versus
@@ -89,13 +89,10 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
    example configuration `minecraft-fishingbot-manager-for-discord.conf.example.toml` is the only exception: its comments are
    in English (aimed at people editing a config from the template), and only the few entries whose value follows the
    language and must be changed for a Chinese deployment carry an extra `# CHINESE_SIMPLIFIED:` hint line, see
-   [docs/mods/i18n/i18n-en_us.md section 1](../mods/i18n/i18n-en_us.md). One further exception: the lines that become
-   visible text are written in English, namely the first paragraph of a command's `///` and an option's
-   `#[description]`, because the poise macro treats them as the description to send to Discord (the macro only accepts
-   literals and cannot swap them at run time), so those two places are in English and match the line in the `en_us.rs`
-   table word for word (the English copy used when a table entry is missing, not a language fallback, see
-   [docs/mods/commands/commands-en_us.md section 8.1](../mods/commands/commands-en_us.md)); the paragraphs after the
-   first one stay in Chinese (for maintainers only, never sent to users). Wherever it matters who validates something
+   [docs/mods/i18n/i18n-en_us.md section 1](../mods/i18n/i18n-en_us.md). Command and option descriptions live only in
+   the language tables and are validated before registration; see
+   [command text validation](../mods/commands/commands-en_us.md#171-command-text-validation).
+   Wherever it matters who validates something
    or who is responsible, name the layer explicitly (command layer, command entry layer, business layer, utils
    primitive), for example "permissions are validated in the business layer: this function is called by
    [`crate::handle_all_bots_control`], which first evaluates `has_permission(caller_id,
@@ -148,37 +145,39 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 * A bot has two sources of state: the connection state can only be confirmed from the log (only the JVM knows whether
   it connected or dropped), so it is not stored across calls and is read afresh on every call
   (`BotDirEntry::connection_status`, so the caller always gets the newest value); the pause state follows the command
-  echo we confirmed ourselves and is remembered in the process (`bot_status::BotPauseStatus`, stored by bot name, with
-  `update_bot_pause_status` as the only writer) and is reset when a session starts and ends
-  (`forget_bot_pause_status`). That way `/show status` does not have to scan to the beginning of a file looking for a pause
+  echo we confirmed ourselves and is remembered in the process (`models::BotPauseStatus`, stored by bot name, with
+  `update_bot_pause_status` to write confirmed state) and is reset when the manager starts a new session or successfully stops one
+  (`forget_bot_pause_status`). A game-server reconnect within the same FishingBot session neither resets the record nor
+  resends the pause command; the displayed state may differ from the JAR's state. The initial "fishing" value is a default,
+  not a live confirmation. That way `/show status` does not have to scan to the beginning of a file looking for a pause
   keyword that never appeared. The pause state is written only by the confirmation path of `/pause` and `/unpause`, and
   read everywhere else. The exception is "the process has ended": it does not look at the log at all - when a session
-  is only a `(Dead ...)` shell, `running_bots` reports that state directly (the JVM is gone, and the last log line may
+  is only a `(Dead ...)` shell, `utils::running_bots` reports that state directly (the JVM is gone, and the last log line may
   still be an old "online").
 * `/show status`'s table has no dedicated type: the rows are joined on the spot by
-  `utils::running_bots::all_running_bot_status_rows()` (four cells and `" | "`) and the header on the spot by
-  `show/status.rs`, so the two sides must agree on the column order (the column names live in `text`, one set per
+  `utils::running_bots::status_row()` (four cells and `" | "`) and the header on the spot by
+  `src/handlers/show/status.rs`, so the two sides must agree on the column order (the column names live in `text`, one set per
   language). The full pattern is in
   [docs/mods/commands/commands-en_us.md section 6.2](../mods/commands/commands-en_us.md#62-show-status).
 * Replies must not overstate: `/start` uses the start verification result and answers "join confirmed", "the session
-  exists but its state is unconfirmed" or "start failed"; the stop stage of `/restart` is confirmed, while its launch
-  stage still only says "restart command sent"; `/stop` re-checks its stop flow on the spot, so it may answer
-  "stopped successfully"; `/pause` and `/unpause` wait after sending for the configured `command_echo.wait_ms`
-  (default 300 ms, `utils::bot_status::confirm_pause_command`) to find the echo at the end of the log, and only when
+  exists but its state is unconfirmed" or "start failed"; `/restart` confirms the old session stopped and reports the
+  new session and log verification result; `/stop` re-checks its stop flow on the spot, so it may answer
+  "stopped successfully"; `/pause` and `/unpause` wait after sending for the configured `command_echo.wait`
+  (default 0.3 seconds, `utils::bot_status::confirm_pause_command`) to find the echo at the end of the log, and only when
   the echo is seen do they answer "pause confirmed" or "resumed" - otherwise they only say "sent". Pick the wording of
   new commands by this principle: say exactly as much as can be verified.
 * An interaction has to be answered within 3 seconds, otherwise the user sees "the interaction failed". What we have to
-  do (starting a JVM, running `screen -list`, waiting `[startup_queue] bot_login_interval_ms` per bot, reading logs) usually takes far
+  do (starting a JVM, running `screen -list`, waiting `[startup_queue] bot_login_interval` per bot, reading logs) usually takes far
   longer, so:
   * commands that trigger process operations or external probes (`/start`, `/stop`, `/restart`, `/pause`, `/unpause`,
-    `/command`, the four `*all` commands, `/ping`, `/checkserver`, `/log`) always call `ctx.defer()` first; among them
+    `/command`, the six `*all` commands, `/ping`, `/checkserver`, `/log`) always call `ctx.defer()` first; among them
     `/log` uses `ctx.defer_ephemeral()` **and every reply is explicitly `.ephemeral(true)`** (logs are sensitive
     content that only the caller may see; why defer alone is not enough is explained in
     [docs/mods/commands/commands-en_us.md section 3](../mods/commands/commands-en_us.md));
   * commands that are pure local text (`/help`, `/whoami`) do not defer and answer directly;
   * a reply after a defer consists of two messages (a Discord compatibility behaviour, spelled out in the official
     documentation): the first replaces the "thinking" placeholder and only the second is a new message. Long commands
-    (the four `*all` ones and the single-bot start, stop and restart) are therefore sent as two messages: first an
+    (the six `*all` ones and the single-bot start, stop and restart) are therefore sent as two messages: first an
     "executing /startall now, the full result follows when it finishes" progress line, so the user sees progress
     immediately, and after it finishes the full report from `Report::render()`. `/startall`'s first reply also states how
     many bots will be started, how many are already queued, the estimated duration and the result timeout, see
@@ -186,8 +185,8 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
     The second reply is sent as a new message under Discord's defer behaviour; re-check this in a live deployment if
     changing the response flow.
   * an interaction token lasts only 15 minutes: every reply after a defer has to be sent inside that window. When a
-    batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval_ms`) the followup always
-    fails, so the final report of a long command goes through `commands::say_final_report`: if it cannot be sent as a
+    batch start runs longer than that (many bots, a large `[startup_queue] bot_login_interval`) the followup always
+    fails, so the final report of a long command goes through `discord_commands::say_final_report`: if it cannot be sent as a
     reply it is posted as an ordinary channel message (those are not bound to the interaction token) and a
     `LogText::ReportPostedToChannel` line records why, together with the failure reason. The batch-operation reply
     design is assessed in section 8.1; the current behaviour is unchanged.
@@ -208,7 +207,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   ?Discord does not spell out how it counts "2000 characters", and taking the stricter side means no guessing. `/log` is
   not subject to this limit because it goes as an attachment.
 * Every reply leaves one program-log line: the command layer never calls `ctx.say` directly, and every user-facing reply
-  goes through `commands::say_and_log` (the business layer through `commands::log_reply`) to
+  goes through `discord_commands::say_and_log` (the business layer through `discord_commands::log_reply`) to
   `LogText::CommandReplied`, which fixes in the program log who received what and when. When something goes wrong, look
   there first.
 * `/log` is sent as an attachment and is no longer truncated: the last N lines are read and uploaded as an attachment
@@ -240,7 +239,7 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   the game server**, and when Microsoft keeps rejecting the request (returning an empty token) it ends the JVM by
   itself - which is why the second step reports "the session disappeared" directly as "exited after start-up".
   See [docs/mods/commands/commands-en_us.md section 4.6](../mods/commands/commands-en_us.md#46-bot-login).
-* The game-side configuration (FishingBot's `conf.json`) is a **generated artifact**: at process start-up the old file
+* The game-side configuration (FishingBot's `config.json`) is a **generated artifact**: at process start-up the old file
   is deleted, the complete template shipped with the repository (`fishingbot-config.example.json`) is used as the base,
   and the `[fishingbot]` keys are overlaid on top (`utils/fishingbot_config.rs`). What is written is always a complete
   configuration, so it does not depend on the jar adding fields. Measured behaviour (v2.13.15, `-onlyCreateConfig`):
@@ -260,23 +259,24 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
   token, used by `/commandall` and `/show status`) and `bot_dir_entries_of_owner(owner_id)` (only one account, used by
   `/show mybots`). This joining of directories and sessions is implemented in exactly one place, `running_bots`.
 * Every command declares one permission requirement and there is only one place where it is evaluated: the requirement
-  is written as `utils::permission::RequiredPermission` (`Everyone`, `MustBeAdmin`, `OwnerOrAdmin(owner user ID)`),
+  is written as `utils::RequiredPermission` (`Everyone`, `MustBeAdmin`, `OwnerOrAdmin(owner user ID)`),
   the check always goes through `has_permission(caller_id, requirement)`, and the list comes from `[admins]`.
   * commands for everyone (`/help`, `/whoami`, `/show status`, `/ping`, `/checkserver`, `/show *`) declare `Everyone` and are
     checked once inside `lib::handle_*` (that layer is their only entry point);
   * bulk commands (`/startall` and friends) declare `MustBeAdmin` and are likewise checked once in
-    `lib::handle_all_bots_control`, so `all_bots_control/*` neither takes a `caller_id` nor checks anything itself;
+    `lib::handle_all_bots_control`, so `handlers/all_bots_control/*` neither takes a `caller_id` nor checks anything itself;
+  * `/sync-commands` checks administrator access through `lib::check_sync_commands_permission`; Discord API operations and the
+    synchronization report remain in the command layer;
   * single-bot commands and account-management commands declare `OwnerOrAdmin(<owner of the target bot>)`: the owner is
     only known after the target has been resolved, so the routing layer first finds the entry with
     `BotDirEntry::find_by_name` and then checks (an ordinary user can only touch their own directory, an admin can cross
     directories; a missing target and a missing permission produce the same sentence). The lower-level functions never
     validate and never take a `caller_id`.
 
-  The command layer only reads values and checks the number of arguments, and never looks at permissions. Every new
-  command follows this: the command layer has to hand the result to `lib::handle_*` and must not assemble its own reply
-  (`/whoami` included), because there is no registry or framework hook as a safety net - this convention plus review is
-  what holds it up.
-* Option candidates do not bring their own permission system: `src/commands/autocomplete.rs` queries the bot directories
+  The command layer does not check permissions itself. Ordinary business commands hand operations to `lib::handle_*`
+  and do not assemble business replies (`/whoami` included). There is no registry or framework hook as a safety net,
+  so the convention and review enforce this.
+* Option candidates do not bring their own permission system: `src/discord_commands/autocomplete.rs` queries the bot directories
   visible to the caller and filters bot-name options (`name`) by run state and command meaning (admins see every bot;
   everyone else sees only their own `bots/<user ID>/`, the same rule as `OwnerOrAdmin`). Discord interaction adaptation
   and conversion to `AutocompleteChoice` live there too. Candidates are only suggestions: a user can still type
@@ -286,16 +286,15 @@ English README; `docs/README/README-en_us.md` is a symlink to it, checked by an 
 * utils does not assemble reports, it only provides raw information: flow functions return details (for example a
   stop's `StopOutcome`, which brings its own `into_report()` and `to_failure_text()`), and assembling is a step the
   upper layer has to call explicitly. Bulk stopping is assembled explicitly by
-  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
+  `handlers::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
   `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs: "shutdown signal received, wrap-up"; that
   report reaches every server's notice channel as well as the log, within a 30-second overall limit past which the
   send is dropped and not retried, while the disconnect and permanent-failure wrap-ups only reach the log).
 * Visibility: the crate's external entry point is `lib.rs`, including `pub fn handle_*`, the public view types, and
   `pub mod config`, `pub mod text` and `pub mod utils`. The submodules of `utils` are private `mod`s and the parent
-  module's `pub use` block is the public tool surface; the five business modules likewise keep their submodules
-  private, with a `pub(crate) use` block at the top of each parent module as the crate-internal surface. `lib.rs`
-  therefore reaches business modules only through paths such as `crate::bot_control::start_bot`; whether something
-  can be called from outside the crate is determined by the export lists in `lib.rs` and `utils.rs`.
+  module's `pub use` block is the public tool surface; `handlers` keeps business modules private and groups routing
+  and permission checks in `handlers/routes`. Public routes are re-exported by `handlers` and `lib.rs`; external
+  visibility is determined by the export lists in `lib.rs` and `src/utils.rs`.
 * The gateway watchdog is the only place that decides a disconnect: the
   rules are in section 3, and the cleanup is the library side's private `stop_all_bots_on_disconnect` (stop the bots
   and record the reason and the moment): the judging side only calls `request_reconnect` to hand the reason to the
@@ -365,7 +364,7 @@ automatic reconnect competes with real players for the accounts), so the shutdow
 not exit, but waits one judgement window before rebuilding the connection (details are in
 [docs/mods/watchdog/watchdog-en_us.md section 4](../mods/watchdog/watchdog-en_us.md)).
 
-Both criteria are implemented in `src/watchdog/gateway.rs` (pure timing, independent of the framework, unit-testable):
+Both criteria are implemented in `src/runtime/watchdog/gateway.rs` (pure timing, independent of the framework, unit-testable):
 
 * Handshake: within `first_handshake_timeout` after this attempt started, a `Ready` or `Resume` must have been received
   at least once (the binary side's `event_handler` records it with `watchdog.record_handshake_success()`). When that is not met, a
@@ -376,7 +375,7 @@ Both criteria are implemented in `src/watchdog/gateway.rs` (pure timing, indepen
 
 Details:
 
-* The timings come from the judging window `timing.watchdog_window_ms` in the configuration; the probe interval (one
+* The timings come from the judging window `timing.watchdog_window` in the configuration; the probe interval (one
   third of the window) and the first-handshake timeout (twice the window) are derived from it
   (`TimingConfig::probe_interval` / `first_handshake_timeout`) instead of being separate keys, because those two only
   make sense as a ratio of the window. The entry point builds them into the `Watchdog` (they are three of its fields),
@@ -409,10 +408,10 @@ project's dedicated code for a deliberate failure, which a systemd unit can keep
 
 The start-up queue runs the pipeline in four stages; the command side only touches the first:
 
-1. `StartupQueue::start_bots(bots)`: the command-side entry, which creates the ledger, calls `add_bots_to_queue` and `wait_until_done()` until every entry has been launched once, then hands the results to `verify_batch`.
-2. The starter thread `run_starter`: wait for a non-empty queue, wait for `[startup_queue] batch_login_interval_ms` (counted from when the previous batch was popped), then `pop_bots_from_head(max_batch_size)`.
-3. `start_single_batch` calls `launch_one_bot` → `add_bot_for_login` per bot: create this run's log file (on failure no session is launched) → prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, with `raw/log0.log` pointing at `/dev/null`) → start the session with `screen -dmS` and a command shaped like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`; adjacent bots in a batch are separated by `bot_login_interval_ms`.
-4. `verify_batch`: take a `screen -list` snapshot immediately after launch, wait for `timing.check_grace_ms`, then take a second snapshot; only surviving the second one counts as started, and the log only states whether the bot is confirmed in-game.
+1. `StartupQueue::start_bots(bots)`: the command-side entry, which creates the ledger, calls `add_bots_to_queue` and `wait_until_done()` until every entry has been launched once, then hands the results to `verify_start_results`.
+2. The starter thread `run_starter`: wait for a non-empty queue, wait for `[startup_queue] batch_login_interval` (counted from when the previous batch was popped), then `pop_bots_from_head(max_batch_size)`.
+3. `start_single_batch` calls `launch_one_bot` → `create_logs_and_launch_bot_session` per bot: create this run's log file (on failure no session is launched) → prepare FishingBot's raw log directory (`<bot_dir>/<bot_logs_dir>/raw`, with `raw/log0.log` pointing at `/dev/null`) → start the session with `screen -dmS` and a command shaped like `java ... | grep -v -E '<filter_regex>' | tee -a '<log_path>'`; adjacent bots in a batch are separated by `bot_login_interval`.
+4. `verify_start_results`: take a `screen -list` snapshot immediately after launch, wait for `timing.check_grace`, then take a second snapshot; the session must still exist and not be dead. The log separately confirms whether the bot joined.
 
 Follow this style for new flows: one function per step, and every step readable on its own.
 
@@ -455,34 +454,41 @@ A few more rules:
 
 ```
 src/main.rs                 process entry: config -> program log -> build the watchdog singleton (WATCHDOG.get_or_init()) -> generate the game-side config -> REST probe task -> poise setup -> run -> reconnect after a disconnect / signal exit
-src/lib.rs                  command entry layer: the action enum + handle_* + the exit and reconnect entry points
-src/commands.rs             command layer: the poise commands (one file per business module, see below)
-src/commands/               bot_control / bot_manage / token / log / all_bots /
+src/lib.rs                  library entry: public route, model and runtime re-exports
+src/discord_commands.rs             command layer: the poise commands (one file per business module, see below)
+src/discord_commands/               bot_control / bot_manage / token / log / all_bots /
                             show / general (`/help` and `/whoami` are here) /
-                            registration (global registration and the leftover cleanup)
-src/watchdog.rs             the gateway watchdog itself: the timing fields, the handshake/probe/offline bookkeeping and the process-wide singleton WATCHDOG (section 3)
-src/watchdog/               gateway (handshake/probe judgement + probe task) / lifecycle (process teardown)
-src/process_log.rs          program log: terminal + <deployment dir>/logs/<timestamp>.log
-src/config.rs               external configuration: the runtime Config plus Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
-src/config/                 schema / parse / validate / template
+                            registration (administrator-triggered configured-scope registration and cleanup)
+src/runtime.rs + runtime/   runtime modules: configuration, watchdog, startup queue, process log and pause-state storage
+src/runtime/watchdog.rs             the gateway watchdog itself: the timing fields, the handshake/probe/offline bookkeeping and the process-wide singleton WATCHDOG (section 3)
+src/runtime/watchdog/               gateway (handshake/probe judgement + probe task) / lifecycle (process teardown)
+src/runtime/process_log.rs          program log: terminal + <deployment dir>/logs/<timestamp>.log
+src/runtime/bot_state.rs            in-process bot pause-state storage
+src/runtime/config.rs               external configuration: the runtime Config plus Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
+src/runtime/config/                 schema / parse / validate / template
+src/runtime/startup.rs + startup/   startup queue, dispatch, ledger and verification
+src/models.rs + models/     data types grouped by bot, status, permission, session, report and outcome
 src/text.rs                 text entry: one language per process (chosen once at start-up from `[i18n] language`)
 src/text/                   en_us (English) / zh_cn (the two correspond one to one, only literals differ)
                             + bootstrap (English during bootstrap) / log_text / requirement (data-style enum)
                             + setup_failure (setup failure: pick the text by cause + decide whether it is permanent)
                             + watchdog (internal watchdog mutex-poisoning notes; language-dependent)
-src/bot_control/            single-bot business (one file per command)
-src/bot_manage/             account management business (one file per command)
-src/all_bots_control/       bulk server-wide business (admins only, one file per command)
-src/show/                   read-only query business (one file per command)
-src/general/                general business (one file per command)
-src/utils/                  primitive layer: bot_command / bot_dirs / bot_name / bot_logs /
-                            bot_status / fs / fishingbot_config / permission / reply / restart /
-                            running_bots / screen / shutdown / startup / uptime
+src/handlers.rs + handlers/ business entry points: bot control, account management, bulk operations, queries and general commands
+src/handlers/routes.rs + routes/ command routing, permission checks and action dispatch
+src/handlers/bot_control/       single-bot business (one file per command)
+src/handlers/bot_manage/        account management business (one file per command)
+src/handlers/all_bots_control/  bulk server-wide business (admins only, one file per command)
+src/handlers/show/              read-only query business (one file per command)
+src/handlers/general/           general business (one file per command)
+src/utils.rs + utils/       primitive layer: bot_command / bot_dirs / bot_name / bot_logs /
+                            bot_status / fs / fishingbot_config / permission / reply /
+                            raw_logs / restart / running_bots / screen /
+                            shutdown / start_results / uptime
 ```
 
-The command layer is grouped by business module: the seven business files under `src/commands/` (`all_bots`,
+The command layer is grouped by business module: the seven business files under `src/discord_commands/` (`all_bots`,
 `bot_control`, `bot_manage`, `general`, `log`, `show`, `token`) align with the action enum in `lib.rs`, while
-`autocomplete.rs` adapts interaction candidates and `registration.rs` handles global command registration and leftover
+`autocomplete.rs` adapts interaction candidates and `registration.rs` handles administrator-triggered configured-scope command registration and leftover
 cleanup. File names still say which module and function they cover without spreading commands across many tiny files.
 The business layer remains one file per command.
 
@@ -493,9 +499,9 @@ The business layer remains one file per command.
    adopted because it costs extra disk (or tmpfs memory), needs extra cleanup and permission logic, and historically it
    was exactly the two logs landing in the same directory that made `/log` read the wrong file. To debug the filter
    rules, temporarily empty `keywords.filter_regex` and restart the process to see every line.
-2. Modules use the new style (`src/utils.rs` plus `src/utils/*.rs`), not `mod.rs`. The two are completely equivalent to
-   the compiler, but the new style shows the module name directly in editor tabs and search results, and the whole
-   project has zero `mod.rs` files, which keeps the style consistent.
+2. Runtime state lives under `runtime`, shared data types are defined in `models`, and utility functions live
+   under global `utils`. `utils` defines no structs or enums; public APIs remain re-exported by `lib.rs` and
+   `src/utils.rs`.
 3. Slash commands only, no `!prefix` commands: prefix commands have to read message content, which needs the privileged
    `MESSAGE_CONTENT` intent (an extra step in the developer panel, plus a review on large servers); slash commands need
    no privileged intent at all, one switch in the developer panel, and they come with parameter hints and completion.
@@ -527,11 +533,11 @@ Build prerequisite: the rustls crypto backend requires a C compiler, and a stati
 
 ### 8.1 Assessment of the batch-operation reply design (not implemented)
 
-Goal: send the final result of the four `*all` commands as an ordinary channel message, avoiding the 15-minute
+Goal: send final batch-command results as an ordinary channel message, avoiding the 15-minute
 interaction-token limit; the message should identify the caller, invocation time and command, and preferably use a
 native quoted reply.
 
-Current implementation: `all_bots_manage` calls `run_and_reply_with_progress`: `ctx.defer()` → progress followup →
+Current implementation: `all_bots_manage` receives an explicit action and caller: `ctx.defer()` → progress followup →
 business operation → `say_final_report`. `say_final_report` first attempts `ctx.say`; on failure it posts an ordinary
 channel message and records `LogText::ReportPostedToChannel`. Single-bot commands share the same path.
 
@@ -571,7 +577,7 @@ evaluate the native quotation card separately, after validating permissions and 
 2. Validate `/bot login`: confirm delivery of the login link and code, credential creation in the bot directory, and
    deletion of `refreshToken.renewing` after a successful refresh. See
    [section 4.6 of the command guide](../mods/commands/commands-en_us.md#46-bot-login).
-3. Validate the generated FishingBot `conf.json` and the bot connection against a real game server, including the
+3. Validate the generated FishingBot `config.json` and the bot connection against a real game server, including the
    language-specific `/pause` and `/unpause` echoes after changing `[i18n] language`. Template completeness has already
    been validated with a real JAR; see [section 3.2 of the config guide](../mods/config/config-en_us.md).
 

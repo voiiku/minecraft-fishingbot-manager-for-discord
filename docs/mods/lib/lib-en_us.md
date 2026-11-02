@@ -1,12 +1,12 @@
 # lib: the command entry layer (routing)
 [简体中文](lib-zh_cn.md) | **English**
 
-* Code: `src/lib.rs` (command entry points); the autocomplete candidate lookup `bot_name_candidate_states(caller_id)` lives in the command layer at `src/commands/autocomplete.rs`
+* Code: `src/lib.rs` (public exports) and `src/handlers/routes/` (command routing); autocomplete lives in `src/discord_commands/autocomplete.rs`.
 * Role: the layer that turns a Discord slash command into an action function (the architecture doc calls it the command
   entry layer, or routing layer for short - see the terminology note in
   [architecture-en_us.md](../architecture/architecture-en_us.md) section 1), plus one place for error text and reply shapes.
-* Above it sits the command layer (read arguments, check numbers, `defer` and send the result); below it sit the business
-  modules `bot_control`, `bot_manage`, `all_bots_control`, `show` and `general`.
+* Above it sits the command layer (read arguments, check numbers, `defer` and send the result); below it, `handlers`
+  groups bot control, account management, bulk operations, read-only queries and general commands.
 * Every permission check happens here, once (`has_permission`); the functions below never check. Each command
   declares a requirement (`utils::RequiredPermission`, see section 3); for a single-bot command that requirement is
   "the target bot belongs to the caller, or the caller is an admin", and ownership can only be read off the target
@@ -15,16 +15,13 @@
 * Reports are assembled by the caller: utils returns raw outcomes only (stopping gives a `StopOutcome`, for
   example, which carries `into_report()` and `to_failure_text()`), and `into_report()` has to be called explicitly -
   utils never hands you a finished `Report`. The batch stop is assembled explicitly in
-  `all_bots_control::stopall::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
+  `handlers::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
   `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs).
 * Visibility: each module exposes a single controlled interface. The crate's interface comes from `lib.rs` (`pub fn
   handle_*`; the view types `BotLogView`, `BotLoginPrompt` and `FishingbotConfigView`; primitives such as `ProcessLog`
-  and `StartupQueue`; `WATCHDOG` and `Watchdog`; plus `pub mod config`, `pub mod text` and `pub mod utils`). The five
-  business modules below have the same structure as `utils`: submodules are private `mod`s, and the `pub(crate) use`
-  list at the top of the parent module is the interface. So `lib.rs` only reaches them through paths such as
-  `crate::bot_control::start_bot`, and whether a function is externally visible has exactly one answer: the list at the
-  top of its parent module (six lists: `utils.rs`, `bot_control.rs`, `bot_manage.rs`, `general.rs`, `show.rs`,
-  `all_bots_control.rs`).
+  and `StartupQueue`; `WATCHDOG` and `Watchdog`; plus `pub mod config`, `pub mod text` and `pub mod utils`).
+  `handlers` keeps its business and routing modules private. The routing layer accesses crate-internal business entry
+  points; `lib.rs` re-exports the public `handle_*` functions, action enums and view types.
 * No cleaning happens here either: the command layer only splits values and passes them through (the action enums
   carry `raw_*`), and the layer that actually uses a value cleans it once (bot names in
   `utils::ToCleanBotName::to_clean_bot_name`, command fragments in `utils::ToCleanBotCommand`).
@@ -51,7 +48,7 @@ The four action enums and their entry points:
   `/show botconfig` does not use an action enum (it returns an attachment instead of text); it goes through
   `handle_fishingbot_config`.
 * `AllBotsControlAction`, handled by `handle_all_bots_control`: `/startall`, `/stopall`, `/restartall`,
-  `/commandall`.
+  `/pauseall`, `/unpauseall`, `/commandall`.
 
 The remaining commands have no action enum and each has a dedicated entry point: `handle_help`, `handle_whoami`,
 `handle_ping`, `handle_checkserver`, `handle_bot_log`, `handle_fishingbot_config`, plus the two-stage `/bot login`
@@ -78,8 +75,8 @@ Every command declares one requirement, and every check goes through `has_permis
 
 * `Everyone`: `/help`, `/whoami`, `/show status`, `/ping`, `/checkserver`, `/show *` (including `/show botconfig`),
   checked once by each `handle_*` here.
-* `MustBeAdmin`: `/startall`, `/stopall`, `/restartall`, `/commandall`, checked once by `handle_all_bots_control`
-  here (which is why nothing under `all_bots_control/*` takes a `caller_id`).
+* `MustBeAdmin`: `/startall`, `/stopall`, `/restartall`, `/pauseall`, `/unpauseall`, `/commandall`, checked once by `handle_all_bots_control`
+  here (which is why nothing under `handlers/all_bots_control/*` takes a `caller_id`).
 * `OwnerOrAdmin(owner user ID)`: single-bot commands (`/start`, `/stop`, `/log`, ...) and account commands
   (`/bot del`, `/bot rename`, `/token`, `/bot login`), checked once by `permitted_bot_dir_entry` here (it resolves the
   entry with `find_by_name` first, then checks ownership).
@@ -94,7 +91,7 @@ Three more rules:
 
 ## 4. Process-level lifecycle
 
-The process-level lifecycle lives in `src/watchdog/lifecycle.rs`, as methods on the `Watchdog` object (the routing
+The process-level lifecycle lives in `src/runtime/watchdog/lifecycle.rs`, as methods on the `Watchdog` object (the routing
 layer only re-exports them for `main.rs`):
 
 * `WATCHDOG.get_or_init()`: fetch the process-wide watchdog (the first call builds it from the config `[timing]`;

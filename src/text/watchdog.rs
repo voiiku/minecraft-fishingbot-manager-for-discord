@@ -62,10 +62,10 @@ mod tests {
     use super::*;
     use crate::text;
 
-    /// 每种语言都必须为全部 `WatchdogText` 变体提供非空文案。
     #[test]
-    fn every_watchdog_text_is_present_in_every_language() {
-        for language in text::all_languages() {
+    fn every_watchdog_text_is_present_and_localized() {
+        let languages = text::all_languages();
+        for language in languages {
             for message in WatchdogText::ALL {
                 assert!(
                     !language.watchdog_text(message).is_empty(),
@@ -73,12 +73,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// 同一 `WatchdogText` 变体在中文与英文实现中的文案必须不同。
-    #[test]
-    fn watchdog_texts_are_localized() {
-        let languages = text::all_languages();
         let (zh_cn, en_us) = (languages[0], languages[1]);
         for message in WatchdogText::ALL {
             assert_ne!(
@@ -86,6 +80,8 @@ mod tests {
                 en_us.watchdog_text(message),
                 "watchdog text was not localized: {message:?}"
             );
+            assert!(zh_cn.watchdog_text(message).contains("锁中毒"));
+            assert!(en_us.watchdog_text(message).contains("mutex poisoned"));
         }
     }
 }

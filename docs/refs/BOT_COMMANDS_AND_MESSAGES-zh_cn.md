@@ -260,7 +260,7 @@
 > 本节里有两条被本项目的 `/bot login` 使用：`auth-create-refresh-token`（从它那行解析出验证网址与设备码，
 > 转给调用者）与 `auth-could-not-get-refresh-token`（判定"微软拒绝了这次登录"）。授权到底成没成不看消息，
 > 只看 `refreshToken` 文件有没有出现，所以 `auth-authorization-succeeded` 不必解析。这两个关键字写在
-> `src/bot_manage/login.rs` 的常量里，有单测与这份清单逐字核对。
+> `src/handlers/bot_manage/login.rs` 的常量里，有单测与这份清单逐字核对。
 
 ### 3.5 Realms（领域服）消息（`realms-*`）
 

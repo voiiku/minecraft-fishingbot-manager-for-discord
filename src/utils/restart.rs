@@ -1,26 +1,13 @@
 //! 重启。
 
+use crate::models::RestartOutcome;
 use crate::text;
-
-use super::bot_dirs::BotDirEntry;
-use super::reply::Report;
-use super::running_bots::split_bot_entries_by_is_running;
-use super::shutdown::{StopOutcome, stop_bot_sessions};
-use super::startup::{BotStartResults, StartupQueue};
-
-/// 重启过程的结果明细：先停后起，所以它保留着停止与启动两边的明细。
-#[derive(Debug, Default)]
-pub(crate) struct RestartOutcome {
-    /// 因为缺 Token 而没参与重启的机器人（重启失败明细之一）。
-    pub(crate) missing_token_bot_names: Vec<String>,
-    /// 停止阶段的明细。
-    pub(crate) stop: StopOutcome,
-    /// 启动阶段的明细。
-    pub(crate) launch: BotStartResults,
-}
+use crate::utils::{
+    BotDirEntry, Report, StartupQueue, split_bot_entries_by_is_running, stop_bot_sessions,
+};
 
 impl RestartOutcome {
-    /// 失败明细：缺 Token、停止阶段报错、启动失败（顺序就是回复里的顺序）。
+    /// 按回复顺序汇总缺 Token、停止失败和启动失败。
     fn failure_lines(&self) -> Vec<String> {
         let i18n_text = text::get();
 
@@ -39,20 +26,6 @@ impl RestartOutcome {
         failure_lines.extend(self.launch.failure_lines());
 
         failure_lines
-    }
-
-    /// 有没有失败。被取消的启动不算失败（见 [`BotStartOutcome::Cancelled`]）。
-    pub(crate) fn has_failed_lines(&self) -> bool {
-        !self.missing_token_bot_names.is_empty()
-            || !self.stop.still_running_bot_names.is_empty()
-            || !self.stop.failure_lines.is_empty()
-            || self.launch.has_failed_lines()
-            || self.launch.has_skipped_running_bots()
-    }
-
-    /// 有没有被"停止全部机器人"撤下来的启动。
-    pub(crate) fn has_cancelled_bots(&self) -> bool {
-        self.launch.has_cancelled_bots()
     }
 
     /// 失败明细拼成单行错误提示。
@@ -92,7 +65,9 @@ impl RestartOutcome {
 /// 重启一批机器人：先停掉目标中正在运行的，再启动。
 /// 缺 Token 的目标直接写入失败明细。
 /// 停止阶段未能注销干净的会跳过，避免竞争同一个账号。
-pub(crate) fn restart_bot_sessions(bots_to_restart: &[BotDirEntry]) -> RestartOutcome {
+pub(crate) fn restart_bot_sessions(
+    bots_to_restart: &[BotDirEntry],
+) -> Result<RestartOutcome, String> {
     // 缺 Token 的先剔掉 —— 必须在停止之前算出来（见函数文档）。
     let (bot_entries_without_token, restartable_bot_entries): (Vec<BotDirEntry>, Vec<BotDirEntry>) =
         bots_to_restart
@@ -101,9 +76,9 @@ pub(crate) fn restart_bot_sessions(bots_to_restart: &[BotDirEntry]) -> RestartOu
             .partition(|bot_dir_entry| !bot_dir_entry.bot_token_status.is_ready());
 
     // 只执行一次 `screen -list`，把目标分成「原本在运行 / 原本未运行」。
-    let (running_bot_entries, _) = split_bot_entries_by_is_running(&restartable_bot_entries);
+    let (running_bot_entries, _) = split_bot_entries_by_is_running(&restartable_bot_entries)?;
 
-    let stop_outcome = stop_bot_sessions(&running_bot_entries);
+    let stop_outcome = stop_bot_sessions(&running_bot_entries)?;
 
     // 停止后仍在运行的跳过重启，其余（停成功的与原本未运行的）统一启动。
     let bots_to_start: Vec<BotDirEntry> = restartable_bot_entries
@@ -116,12 +91,12 @@ pub(crate) fn restart_bot_sessions(bots_to_restart: &[BotDirEntry]) -> RestartOu
         .cloned()
         .collect();
 
-    RestartOutcome {
+    Ok(RestartOutcome {
         missing_token_bot_names: bot_entries_without_token
             .iter()
             .map(|bot_dir_entry| bot_dir_entry.bot_name.clone())
             .collect(),
         stop: stop_outcome,
         launch: StartupQueue::get_or_init().start_bots(&bots_to_start),
-    }
+    })
 }

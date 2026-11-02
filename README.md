@@ -1,5 +1,3 @@
-<!-- The default README. docs/README/README-en_us.md is a symlink to this file, so the two cannot drift; tests/docs_links.rs checks the link. -->
-
 # Minecraft FishingBot Manager for Discord
 
 **English** | [简体中文](docs/README/README-zh_cn.md)
@@ -8,13 +6,15 @@
 >
 > This project is a third-party management tool and is not officially affiliated with the original FishingBot author. If you encounter any issue (bug) while using this project, please do not report it to the upstream author; report it through this project's [Issues](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues) instead.
 >
-> This project does not contain, modify, or distribute any FishingBot source code or binaries. Download the official JAR from the [FishingBot repository](https://github.com/MrKinau/FishingBot).
+> This project does not contain, modify, or distribute any FishingBot source code or binaries. Download the official JAR from the [FishingBot releases](https://github.com/MrKinau/FishingBot/releases).
 
 * **Offline-mode servers and single-player worlds are not supported yet.**
 * **This project runs only on 64-bit Linux for now.**
-* The official build of [FishingBot](https://github.com/MrKinau/FishingBot) does not support `/pause` and `/unpause` yet (the author plans to add them), so this project cannot handle the pause logic correctly for now; every other feature is unaffected.
+* The official build of FishingBot does not support `/pause` and `/unpause` yet ([plans to add them](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)). Single-bot and batch pause commands therefore cannot confirm a pause until a compatible JAR is used.
 
 ## 1. Project overview
+
+![demo1](/docs/assets/demo1.gif)
 
 This project manages multiple Minecraft auto-fishing bots through a Discord server. The bots themselves come from the separate [FishingBot](https://github.com/MrKinau/FishingBot) project, and running `FishingBot.jar` requires a Java JRE.
 
@@ -39,7 +39,7 @@ Available to everyone:
 * `/whoami`: show the caller's Discord user ID.
 * `/ping [host] [port]`: probe a game server; without arguments it uses the defaults in `[ping]`.
 * `/checkserver`: show the fishing server's own performance (CPU, memory, disk, uptime).
-* `/show status`: check the status of every running bot.
+* `/show status`: check running bots and anti-AFK thread status.
 * `/show botconfig`: view the config file shared by all fishing bots, sent as an attachment.
 * `/show mybots`, `/show allbots`, `/show admins`: view your own bots, all bots, or the administrator list.
 * `/bot add <name>`: add a bot (a token is still required before it can be used).
@@ -54,15 +54,22 @@ Available to a bot's creator or an administrator:
 * `/pause`, `/unpause`: pause fishing without disconnecting, or resume it (depends on whether `FishingBot.jar` supports it; other features are unaffected).
 * `/command <name> <command>`: send a command to the game server the bot is connected to.
 
+The pause status shown by `/show status` is held in the manager's memory. Pause and resume commands update it only after
+a matching command echo. It defaults to "fishing", which is not a live check of the JAR. A reconnect in the same session
+neither resets the recorded status nor resends `/pause`; the JAR's actual state may therefore differ. The manager clears
+the record when it successfully stops the session or starts a new one. Restarting the manager also clears the record.
+
 Available only to administrators:
 
+* `/sync-commands`: update commands in the configured global or server scope and clean up old scopes.
 * `/startall`, `/stopall`, `/restartall`, `/commandall <command>`: batch operations on all bots.
+* `/pauseall`, `/unpauseall`: attempt to pause or resume fishing for bots with tokens and screen sessions.
+* `/anti-afk <on|off>`: start or stop anti-AFK for matching screen sessions; check its status with `/show status`.
 
 ## 4. Project status
 
 * Maintained by one person and still in testing; config fields and command replies change with updates, and incompatible changes are announced in the release notes.
-* Upstream `FishingBot.jar` has not yet added the in-game `/pause` and `/unpause` commands; upstream support is planned. Until the JAR in use includes them, `/pause` and `/unpause` only report that the command was sent, and the pause status is not updated. Other features are unaffected.
-* Only `ENGLISH` and `CHINESE_SIMPLIFIED` are supported for now (the names the FishingBot project uses). All English text and English documentation are AI translations.
+* Only `ENGLISH` and `CHINESE_SIMPLIFIED` are supported for now (the names the FishingBot project uses).
 * Out of scope: a web panel and a built-in proxy service.
 * Future goals: support Windows, and a built-in fishing bot so you can choose between `FishingBot.jar` and the built-in one.
 
@@ -77,10 +84,6 @@ Third-party licenses are listed in [THIRD-PARTY-NOTICES.html](THIRD-PARTY-NOTICE
 ## 6. Contributing
 
 Contributions are welcome. To report a bug or suggest a feature, [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues). Pull requests are welcome too; for larger changes, please open an issue first to discuss the approach.
-
-### Translations
-
-User-facing text is defined in the `src/text/` module and loaded at startup. When changing or adding a translation, follow the existing locale modules, for example `src/text/zh_cn.rs`. Messages shown before the language is loaded use English.
 
 **A multilingual refactor is planned for the future.**
 

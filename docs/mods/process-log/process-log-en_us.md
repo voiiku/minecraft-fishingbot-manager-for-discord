@@ -1,7 +1,7 @@
 # process_log: the program log
 [简体中文](process-log-zh_cn.md) | **English**
 
-* Code: `src/process_log.rs` (`process_log/levels.rs` decides levels and `process_log/format.rs` renders records;
+* Code: `src/runtime/process_log.rs` (`src/runtime/process_log/levels.rs` decides levels and `src/runtime/process_log/format.rs` renders records;
   both are pure functions with their own tests)
 * Public API: `ProcessLog::get_or_init()` (`ProcessLog` is re-exported from the crate root). The first call tries to
   create this run's log file, installs the logger, and records the config path and process ID (plus the log path when
@@ -35,7 +35,7 @@ What gets recorded:
 * This project's own events: config load, startup, shutdown, watchdog, bot directories and sessions, the details of
   start/stop/restart/pause, warnings and errors.
 * Every reply (`LogText::CommandReplied`): who asked (Discord user ID), which command, and what was answered. All
-  command-layer replies go through `commands::say_and_log` and `log_reply` (see
+  command-layer replies go through `discord_commands::say_and_log` and `log_reply` (see
   [commands-en_us.md](../commands/commands-en_us.md)), so what a user reports receiving can be checked line by line
   against the log.
 * Third-party crates (serenity, poise) log only at `WARN` and above by default (next section), because they emit
@@ -43,7 +43,7 @@ What gets recorded:
 
 ## 3. Levels
 
-`LogLevels::from_config` in `process_log/levels.rs` derives two ceilings from `[log] debug` alone:
+`LogLevels::from_config` in `src/runtime/process_log/levels.rs` derives two ceilings from `[log] debug` alone:
 
 * This project (targets starting with `minecraft_fishingbot_manager_for_discord`, both lib and bin): `INFO` with
   `false`, `DEBUG` with `true`. Startup, status and report messages are already readable at `INFO`.
@@ -84,8 +84,8 @@ It must be called before the poise `Framework` and `Client` are assembled and be
 `client.start()`. It reads `[log] debug` from the config itself, which is why the entry point passes no argument.
 
 When config loading fails, the process has not created a log yet, so the related messages only appear in the terminal.
-Only a few direct writes remain from the earliest startup: the template/config-path notes from `src/config.rs` (stdout)
-and config errors (stderr), plus the two notes from `src/process_log.rs` (logger installation failure and a repeated
+Only a few direct writes remain from the earliest startup: the template/config-path notes from `src/runtime/config.rs` (stdout)
+and config errors (stderr), plus the two notes from `src/runtime/process_log.rs` (logger installation failure and a repeated
 initialization keeping the existing logger, both stdout).
 
 ## 6. File retention

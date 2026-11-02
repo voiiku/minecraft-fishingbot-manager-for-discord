@@ -385,7 +385,7 @@ The body of `/summary`:
 > and the device code are parsed out of that line and handed back to the caller) and
 > `auth-could-not-get-refresh-token` (which identifies "Microsoft refused this login"). Whether the authorization
 > actually succeeded is not decided by a message but by the presence of the `refreshToken` file, so
-> `auth-authorization-succeeded` needs no parsing. Both keywords live in constants in `src/bot_manage/login.rs`, and a
+> `auth-authorization-succeeded` needs no parsing. Both keywords live in constants in `src/handlers/bot_manage/login.rs`, and a
 > unit test compares them word by word against this list.
 
 ### 3.5 Realms messages (`realms-*`)

@@ -1,7 +1,4 @@
-//! 覆盖生成游戏侧配置（FishingBot 的 `conf.json`）
-//!
-//! 生成的是完整配置，在仓库的模板[`FISHINGBOT_CONFIG_TEMPLATE`]基础上覆盖 `[fishingbot]` 中的配置，其余键不变。
-//! FishingBot.jar 内置配置补全，但会在日志中发出警告，所以自动补全只是兜底方案。
+//! 基于完整模板生成 FishingBot 的 `config.json`，仅覆盖托管字段。
 
 use crate::config::{self, FishingBotConfig};
 use crate::text::{self, Language};
@@ -10,8 +7,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-/// 随仓库发布的游戏侧配置模板（`fishingbot-config.example.json`，完整的 FishingBot 配置）。
-/// 当新版本更改配置结构时，此模板应该随之更新（或依靠jar的自动配置补全兜底）。
+/// FishingBot 配置模板；上游配置结构变更时需同步更新。
 const FISHINGBOT_CONFIG_TEMPLATE: &str = include_str!("../../fishingbot-config.example.json");
 
 /// 按配置生成游戏侧配置（只在进程启动时调用一次）。
@@ -27,7 +23,6 @@ pub fn regenerate_fishingbot_config() -> Result<(), String> {
 }
 
 /// 生成要覆盖配置模板的键与取值。
-/// 生成流程使用它覆盖模板
 fn managed_values(fishingbot: &FishingBotConfig, language: Language) -> Vec<(&'static str, Value)> {
     let start_text = &fishingbot.start_text;
 
@@ -58,7 +53,6 @@ fn managed_values(fishingbot: &FishingBotConfig, language: Language) -> Vec<(&'s
 }
 
 /// 生成游戏侧配置文件：先删除已经存在的，再写入新的。
-/// 路径与取值全由调用方提供（实际上可以自行读取而不用提供，只是方便测试）。
 fn write_fishingbot_config(
     path: &Path,
     fishingbot: &FishingBotConfig,
@@ -107,24 +101,21 @@ fn remove_old_fishingbot_config(path: &Path) -> Result<(), String> {
     }
 }
 
-/// 生成即将写进 `conf.json` 的 JSON 文本，基于模板，只覆盖 `[fishingbot]` 中那些键（由managed_values生成）。
+/// 根据模板生成游戏侧配置，仅覆盖托管字段。
 fn fishingbot_config_json(
     fishingbot: &FishingBotConfig,
     language_name: &str,
 ) -> Result<String, String> {
     let language = Language::from_name(language_name)?;
-    // 将模板文本转化为可解析的结构体
     let mut fishingbot_config: Value =
         serde_json::from_str(FISHINGBOT_CONFIG_TEMPLATE).map_err(|e| {
             text::get().log_text(text::LogText::FishingbotConfigTemplateInvalid {
                 reason: &e.to_string(),
             })
         })?;
-    // 按字段写入值
     for (path, value) in managed_values(fishingbot, language) {
         set_json_path(&mut fishingbot_config, path, value)?;
     }
-    // 将修改完的文本返回
     serde_json::to_string_pretty(&fishingbot_config).map_err(|e| {
         text::get().log_text(text::LogText::FishingbotConfigSerializeFailed {
             reason: &e.to_string(),
@@ -132,9 +123,7 @@ fn fishingbot_config_json(
     })
 }
 
-/// 按点分路径向 JSON 中写值。
-/// 路径的每一层都必须已存在（模板是完整的，仅覆盖取值、不新增结构）
-/// 不存在就报错，（说明模板与代码不匹配，可能是上游改了键名）。
+/// 覆盖模板中已有的点分路径；路径不存在时返回错误。
 fn set_json_path(root: &mut Value, path: &str, value: Value) -> Result<(), String> {
     let Some((parent_path, key)) = path.rsplit_once('.') else {
         return Err(template_mismatch(path));
@@ -155,7 +144,7 @@ fn set_json_path(root: &mut Value, path: &str, value: Value) -> Result<(), Strin
     Ok(())
 }
 
-/// 模板里找不到某个托管路径时的报错（点名是哪条路径）。
+/// 模板缺少托管路径时的错误。
 fn template_mismatch(path: &str) -> String {
     text::get().log_text(text::LogText::FishingbotConfigTemplatePathMissing { path })
 }
@@ -182,7 +171,7 @@ mod tests {
 
     /// 模板必须是完整配置，并包含全部托管路径。
     ///
-    /// 上游增删或重命名键时，此测试会失败；此时需要用新 jar 生成的默认 `conf.json` 更新模板，
+    /// 上游增删或重命名键时，此测试会失败；此时需要用新 jar 生成的默认 `config.json` 更新模板，
     /// 并同步 `managed_values` 与生成代码。
     #[test]
     fn template_holds_every_managed_path() {
@@ -218,7 +207,7 @@ mod tests {
             );
         }
 
-        // 反过来：托管路径的取值来自配置表（这里用测试字面量，见 `sample_fishingbot_config`）。
+        // 托管字段使用配置值。
         assert_eq!(value_at(&generated, "server.ip").unwrap(), "127.0.0.1");
         assert_eq!(value_at(&generated, "server.port").unwrap(), 25565);
         assert_eq!(
@@ -235,12 +224,11 @@ mod tests {
             value_at(&generated, "start-text.text").unwrap(),
             &json!(["/home fishing"])
         );
-        // 模板中非本项目托管的键保持原样（取两个有代表性的：account.mail 与 logs.log-count）。
         assert_eq!(value_at(&generated, "account.mail").unwrap(), "");
         assert_eq!(value_at(&generated, "logs.log-count").unwrap(), 1);
     }
 
-    /// `[i18n] language` 的取值原样写进 `misc.language`（中文简体要写 `CHINESE_SIMPLIFIED`）。
+    /// `[i18n] language` 原样写入 `misc.language`。
     #[test]
     fn chinese_language_maps_to_the_upstream_constant() {
         let generated = serde_json::from_str(
@@ -255,7 +243,7 @@ mod tests {
         );
     }
 
-    /// `[fishingbot]` 改了什么，生成的文件里就跟着变；空 `start_text` 把 `enabled` 关掉。
+    /// 验证托管字段及空启动指令的生成结果。
     #[test]
     fn values_come_from_the_config_table() {
         let fishingbot = FishingBotConfig {
@@ -303,7 +291,7 @@ mod tests {
         let dir = temp_test_dir("remove-old-game-config");
         // `temp_test_dir` 仅返回路径，需要手动创建目录以写入文件。
         fs::create_dir_all(&dir).expect("建临时目录");
-        let path = dir.join("conf.json");
+        let path = dir.join("config.json");
 
         // 文件不存在：操作成功且无副作用。
         assert!(remove_old_fishingbot_config(&path).is_ok());
@@ -326,7 +314,7 @@ mod tests {
     fn write_step_replaces_the_old_file_with_a_complete_config() {
         let dir = temp_test_dir("write-game-config");
         fs::create_dir_all(&dir).expect("建临时目录");
-        let path = dir.join("conf.json");
+        let path = dir.join("config.json");
 
         // 旧文件包含模板之外的键；整份替换后该键必须消失。
         fs::write(&path, "{\"legacy\":{\"keep\":true}}").expect("写旧文件");

@@ -22,7 +22,7 @@
   FishingBot 不得打包：它是 GPL-3.0 独立程序，本项目仅通过 `java -jar` 启动，不修改、不链接；若将 JAR 与二进制
   放入同一分发包，该分发包中的 JAR 部分必须按 GPL-3.0 处理。
 * 上游（`MrKinau/FishingBot`，GPL-3.0）已计划支持 `/pause`、`/unpause` 两条游戏内指令。在所用 JAR 包含这两条指令之前，
-  `/pause`、`/unpause` 仅回复"命令已发送"，暂停状态不会更新。两条指令的回显仍由配置 `[command_echo]` 的
+  单台与批量暂停指令仅能报告"命令已发送"，暂停状态不会更新。回显仍由配置 `[command_echo]` 的
   `pause_echo`、`unpause_echo` 提供，因此换用包含它们的 JAR 时无需重新编译；这两个键暂时保留，待上游支持后可归入
   语言表并按 `[i18n] language` 派生。
 * 功能：通过 Discord 斜杠指令批量管理多个 Minecraft 账号的
@@ -58,7 +58,7 @@
    文档第 5 节）。
 
 5. 命名：函数使用动词短语（`start_bot`、`create_bot_log_file`）；取值函数使用名词且不加 `get_` 前缀
-   （`latest_log_path`、`all_running_bot_names`）；判断使用 `is_` 与 `has_`；转换使用 `to_`，可能失败的转换
+   （`latest_log_path`、`token_ready_bot_names_with_screen_sessions`）；判断使用 `is_` 与 `has_`；转换使用 `to_`，可能失败的转换
    返回 `Result`，其 `Err` 必须可直接作为用户回复（`raw_bot_name.to_clean_bot_name()`、
    `from_dir_name_to_owner_id`）；构造类型时，已知事实使用 `new`，需要查找使用 `find_*`
    （`BotDirEntry::new` 与 `BotDirEntry::find_by_name`）。变量名必须包含上下文与形态：列表使用 `*_names`、
@@ -72,11 +72,9 @@
    存疑或存在更优实现时就地标注，`?` 表示待定或存疑，`!` 表示需要修改。不得写成大段设计说明。示例配置
    `minecraft-fishingbot-manager-for-discord.conf.example.toml` 是唯一例外：其注释使用英文（面向按模板修改
    配置的部署者），仅"取值随语言变化、中文部署必须修改"的项额外增加一行 `# CHINESE_SIMPLIFIED:` 提示，见
-   [docs/mods/i18n/i18n-zh_cn.md 第 1 节](../mods/i18n/i18n-zh_cn.md)。会生成可见文案的行同样使用英文，即命令
-   `///` 第一段与选项的 `#[description]`；poise 宏将其作为发送给 Discord 的说明（宏仅接受字面量，无法在运行期
-   替换），因此这两处必须与 `en_us.rs` 表逐字一致（缺项时的英文副本，不是语言回落，见
-   [docs/mods/commands/commands-zh_cn.md 第 8.1 节](../mods/commands/commands-zh_cn.md)）；第一段之后的段落仍使用
-   中文，仅供维护者阅读，不发送给用户。涉及校验责任或职责归属时，必须明确到具体层级（命令层、指令入口层、
+   [docs/mods/i18n/i18n-zh_cn.md 第 1 节](../mods/i18n/i18n-zh_cn.md)。指令及选项说明只写在语言表中，
+   在注册前校验并填入，见 [命令文档](../mods/commands/commands-zh_cn.md#171-文案表校验)。
+   涉及校验责任或职责归属时，必须明确到具体层级（命令层、指令入口层、
    业务层、utils 原语），例如"权限由业务层校验：本函数由 [`crate::handle_all_bots_control`] 调用，后者先判定
    `has_permission(caller_id, RequiredPermission::MustBeAdmin)`"；仅写"由 X 统一校验"无法体现分层。
 7. 参数清洗的归属：Discord 提供结构化 option，但其值仍是用户输入的原始文本。命令层仅负责取值、数字校验与分发，
@@ -114,32 +112,33 @@
   * 日志文件名的唯一来源是 `bot_logs::create_timestamped_log_file`，不得在其他位置拼接时间戳文件名。
 * 机器人状态有两个来源：连接状态仅由日志确认（只有 JVM 知道是否连接或掉线），因此不跨调用保存，每次调用时重新读取
   （`BotDirEntry::connection_status`，调用者始终获得最新值）；暂停状态以本程序确认的命令回显为准，在进程内按机器人名
-  保存（`bot_status::BotPauseStatus`，`update_bot_pause_status` 是唯一写入口），会话开始与结束时重置
-  （`forget_bot_pause_status`）。因此 `/show status` 不必为查找从未出现的 pause 关键词而扫描到文件开头。暂停状态仅由
+  保存（`models::BotPauseStatus`，`update_bot_pause_status` 负责确认后的状态写入），由管理程序成功停止会话或启动新会话时清除
+  （`forget_bot_pause_status`）。同一 FishingBot 会话内的游戏服务器重连不会清除记录或重发暂停指令，记录可能与 JAR
+  实际状态不一致；初始“钓鱼中”仅为默认值。暂停状态仅由
   `/pause` 与 `/unpause` 的确认路径写入，其他位置只读。例外为"进程已结束"：该状态不读取日志，当会话仅剩
-  `(Dead ...)` 残壳时由 `running_bots` 直接给出（JVM 已不存在，日志最后一行可能仍为旧的"在线"）。
-* `/show status` 的表格没有专门类型：数据行由 `utils::running_bots::all_running_bot_status_rows()` 即时拼接
-  （四格 + `" | "`），表头由 `show/status.rs` 即时拼接；两处列顺序必须一致（列名位于 `text`，中英文各一份）。
+  `(Dead ...)` 残壳时由 `utils::running_bots` 直接给出（JVM 已不存在，日志最后一行可能仍为旧的"在线"）。
+* `/show status` 的表格没有专门类型：数据行由 `utils::running_bots::status_row()` 即时拼接
+  （四格 + `" | "`），表头由 `src/handlers/show/status.rs` 即时拼接；两处列顺序必须一致（列名位于 `text`，中英文各一份）。
   完整实现见 [docs/mods/commands/commands-zh_cn.md 第 6.2 节](../mods/commands/commands-zh_cn.md#62-show-status)。
 * 回复内容不得超出可验证范围：`/start` 使用启动复核结果，按"已确认进服"、"会话已存在但尚未确认状态"或"启动失败"
-  回答；`/restart` 的停止阶段可确认，启动阶段仍仅回复"已发送重启命令"；`/stop` 的停止流程当场复核，因此可以回复
-  "已成功停止"；`/pause` 与 `/unpause` 发送后等待配置中的 `command_echo.wait_ms`（默认 300 毫秒，
+  回答；`/restart` 停止旧会话后，同样按新会话和日志复核结果回复；`/stop` 的停止流程当场复核，因此可以回复
+  "已成功停止"；`/pause` 与 `/unpause` 发送后等待配置中的 `command_echo.wait`（默认 0.3 秒，
   `utils::bot_status::confirm_pause_command`）在日志末尾查找回显，确认回显后回复"已确认暂停"或"已恢复"，未确认时
   仅回复"已发送"。新增指令的措辞必须遵循同一原则：只陈述已验证的状态。
 * 交互必须在 3 秒内应答，否则用户会看到"交互失败"。本项目的操作（启动 JVM、等待批次冷却、执行 `screen -list`、
   按台数等待、读取日志）通常明显超过 3 秒，因此：
   * 会产生进程操作或外部探测的指令（`/start`、`/stop`、`/restart`、`/pause`、`/unpause`、`/command`、
-    四个 `*all`、`/ping`、`/checkserver`、`/log`）均先调用 `ctx.defer()`；其中 `/log` 使用
+    六个 `*all`、`/ping`、`/checkserver`、`/log`）均先调用 `ctx.defer()`；其中 `/log` 使用
     `ctx.defer_ephemeral()`，并且每条回复都显式设置 `.ephemeral(true)`（日志属于敏感内容，仅调用者可见；
     不能仅依赖 defer 的原因见 `docs/mods/commands/commands-zh_cn.md` 第 3 节）；
   * 纯本地文本指令（`/help`、`/whoami`）不调用 defer，直接回复；
   * defer 后的响应包含两条消息（Discord 的兼容行为，官方文档已说明）：第一条替换"正在思考"占位，第二条及以后
-    为新消息。因此长指令（四个 `*all` 与单机器人 `start`、`stop`、`restart`）分两条消息发送：启动类指令先确认
+    为新消息。因此长指令（六个 `*all` 与单机器人 `start`、`stop`、`restart`）分两条消息发送：启动类指令先确认
     请求已加入全局启动队列；其他长指令先报告已开始执行；任务完成后发送 `Report::render()` 的完整结果。第二条
     消息按 Discord defer 规则作为新消息发送；修改该行为后必须在真实部署中回归验证。
   * 交互令牌有效期为 15 分钟：所有 defer 后的回复必须在该窗口内发出。批量启动耗时超过该窗口时（台数多或
-    `[startup_queue] bot_login_interval_ms` 大），followup 必定失败，因此长指令的最终报告经
-    `commands::say_final_report` 处理：无法发送时改发普通频道消息（普通消息不受交互令牌约束），并记录一条
+    `[startup_queue] bot_login_interval` 大），followup 必定失败，因此长指令的最终报告经
+    `discord_commands::say_final_report` 处理：无法发送时改发普通频道消息（普通消息不受交互令牌约束），并记录一条
     `LogText::ReportPostedToChannel` 日志说明回退原因与失败原因。批量操作回复方式的评估见第 8.1 节；当前行为
     未改变。
 * 敏感输入必须通过 Modal 收集，不得作为指令参数：每次斜杠指令调用都会在频道生成一条消息（Discord 的
@@ -154,7 +153,7 @@
   在 UTF-16 中占 2 个，采用更严格的计数口径才能保证 2000 字符可发送。按 UTF-16 单元计数比按 Unicode 码点更
   严格；`/log` 不受该限制，使用附件发送。
 * 每次回复均记录一行程序日志：命令层不得直接调用 `ctx.say`，面向用户的回复一律通过
-  `commands::say_and_log`（业务层通过 `commands::log_reply`）写入 `LogText::CommandReplied`，日志格式为
+  `discord_commands::say_and_log`（业务层通过 `discord_commands::log_reply`）写入 `LogText::CommandReplied`，日志格式为
   `回复 /指令 (调用者 用户ID): 内容`。该记录固定了调用者、时间与回复内容，排查问题时以该日志为准。
 * `/log` 使用附件发送，不截断：读取最后 N 行并作为附件上传（文件名为日志文件名），正文包含标题、行数与文件名；
   使用 `defer_ephemeral()` 加带附件的回复，并显式设置 `.ephemeral(true)`，其他用户不可见。附件大小上限为
@@ -173,7 +172,7 @@
   已有凭据而不打印设备码，导致该指令没有任何可见动作。已观察到的两条 JAR 行为：**没有有效凭据时仅等待登录，不连接
   游戏服务器**；请求被微软频繁拒绝（返回空 token）时，JAR 会自行结束 JVM，因此第二段将"会话消失"直接报告为
   "启动后退出"。详见 [docs/mods/commands/commands-zh_cn.md 第 4.6 节](../mods/commands/commands-zh_cn.md#46-bot-login)。
-* 游戏侧配置（FishingBot 的 `conf.json`）是**生成物**：进程启动时先删除旧文件，再以随仓库发布的完整模板
+* 游戏侧配置（FishingBot 的 `config.json`）是**生成物**：进程启动时先删除旧文件，再以随仓库发布的完整模板
   （`fishingbot-config.example.json`）为基础，覆盖 `[fishingbot]` 中的对应键（`utils/fishingbot_config.rs`）。生成的
   文件必定是完整配置，因此不依赖 JAR 补齐字段。实测结果（v2.13.15，`-onlyCreateConfig`）：将生成文件提供给 JAR 后，
   JAR 既不打印 `Your configuration was incomplete...`（极简配置会打印），也不修改该文件的任何内容；语言按写入值生效
@@ -187,32 +186,32 @@
   收尾，缺少 Token 的孤儿进程也必须能被停止）、`token_ready_bot_dir_entries()`（仅包含已配置 Token 的机器人，用于
   `/commandall` 与 `/show status`）、`bot_dir_entries_of_owner(owner_id)`（仅包含指定账号的机器人，用于
   `/show mybots`）。目录与会话的关联只允许在 `running_bots` 一处实现。
-* 每条指令声明一个权限要求，判定仅有一个出口：要求写为 `utils::permission::RequiredPermission`
+* 每条指令声明一个权限要求，判定仅有一个出口：要求写为 `utils::RequiredPermission`
   （`Everyone`、`MustBeAdmin`、`OwnerOrAdmin(归属用户ID)`），校验统一调用
   `has_permission(caller_id, 要求)`，管理员名单来自 `[admins]`。
   * 所有用户可用的指令（`/help`、`/whoami`、`/show status`、`/ping`、`/checkserver`、`/show *`）声明 `Everyone`，
     在 `lib::handle_*` 中判定一次（该层是它们唯一的入口）；
   * 批量指令（`/startall` 等）声明 `MustBeAdmin`，同样由 `lib::handle_all_bots_control` 判定一次；
-    `all_bots_control/*` 因此不接收 `caller_id`，也不自行校验；
+    `handlers/all_bots_control/*` 因此不接收 `caller_id`，也不自行校验；
+  * `/sync-commands` 由 `lib::check_sync_commands_permission` 验证管理员权限，Discord API 操作与结果报告在命令层执行；
   * 单机器人指令与账号管理指令声明 `OwnerOrAdmin(目标机器人的归属)`：归属必须先解析目标才能确定，因此路由层先调用
     `BotDirEntry::find_by_name` 查找条目，再执行判定（普通用户仅能操作自己的目录，管理员可跨目录；找不到与无权限
     返回相同提示）。底层函数不校验，也不接收 `caller_id`。
-  命令层仅负责取值与参数个数校验，不检查权限。新增指令必须遵循此约定：命令层必须将结果交给 `lib::handle_*`，不得
-  自行组装回复（`/whoami` 同样如此）。不存在注册表或框架钩子提供保障，因此该约定与评审是唯一保障。
-  * 选项候选不单独定义权限：`src/commands/autocomplete.rs` 查询有权限查看的机器人目录，按运行状态与指令语义筛选
+  命令层不自行检查权限。普通业务指令必须将操作交给 `lib::handle_*`，不得自行组装业务回复（`/whoami` 同样如此）。
+  不存在注册表或框架钩子提供保障，因此该约定与评审是唯一保障。
+  * 选项候选不单独定义权限：`src/discord_commands/autocomplete.rs` 查询有权限查看的机器人目录，按运行状态与指令语义筛选
     机器人名候选（管理员为全部机器人，其他用户为 `bots/<用户ID>/` 下的机器人，与 `OwnerOrAdmin` 同一口径），并
     负责 Discord interaction 适配及 `AutocompleteChoice` 转换。候选仅为建议：用户仍可手动输入任意名称，归属与会话
     状态仍由各 `handle_*` 判定。
 * utils 不组装报告，只返回原始信息：流程函数返回明细（例如停止的 `StopOutcome`，自带 `into_report()` 与
-  `to_failure_text()`），组装必须由上层显式完成。批量停止由 `all_bots_control::stopall::stop_all_bots()` 显式组装；
+  `to_failure_text()`），组装必须由上层显式完成。批量停止由 `handlers::stop_all_bots()` 显式组装；
   进程收尾在 `watchdog::Watchdog::exit_on_shutdown_signal()` 中就地组装同一份明细（仅标题不同："收到退出信号，
   收尾结果"；该报告除写入日志外，还会发送到各服务器的通报频道（发送总时限为 30 秒，超时则跳过且不补发）；掉线与
   永久错误的收尾仅写入日志）。
 * 可见性：crate 的对外入口位于 `lib.rs`，包括 `pub fn handle_*`、公开视图类型，以及 `pub mod config`、
-  `pub mod text`、`pub mod utils`。`utils` 的子模块为私有 `mod`，父模块的 `pub use` 构成公开工具面；五个业务模块
-  同样保持子模块私有，父模块顶部的 `pub(crate) use` 构成 crate 内部面。因此 `lib.rs` 仅通过
-  `crate::bot_control::start_bot` 这类路径访问业务模块；是否可从 crate 外调用，以 `lib.rs` 与 `utils.rs` 的导出清单
-  为准。
+  `pub mod text`、`pub mod utils`。`utils` 的子模块为私有 `mod`，父模块的 `pub use` 构成公开工具面；
+  `handlers` 的业务模块保持私有，`handlers/routes` 集中路由与鉴权，并经 `handlers` 和 `lib.rs` 再导出；
+  是否可从 crate 外调用，以 `lib.rs` 与 `src/utils.rs` 的导出清单为准。
 * 网关看门狗是唯一判定掉线的位置：判定规则见第 3 节，收尾共用库侧的 `stop_all_bots_on_disconnect`（私有；停止
   机器人并记录原因与时刻）。判定侧仅调用 `request_reconnect` 将掉线原因交给入口并唤醒入口；停机与重建连接均在入口
   的 `wait_for_attempt()` 中完成。只有配置错误才走 `exit_on_permanent_failure`。不得依赖框架内部状态判定：serenity
@@ -242,7 +241,7 @@
   文案以中文为基准：修改文案时先修改 `zh_cn.rs`（内容与排版原稿），再将 `en_us.rs` 逐条对齐，最后同步
   `commands/*.rs` 中与英文表逐字一致的备用副本（顺序同时写在两个语言文件的模块头中）。
   排版约定：面向用户与部署者的文案符号随语言变化（中文全角、英文半角），句尾不留句号（叹号保留）；补充说明统一
-  使用圆括号 `()`；例外为配置表名（`[admins]`）、`Report` 的小节标签（`[成功明细]`、`[Success]`）与用法提示中的
+  使用圆括号 `()`；例外为配置表名（`[admins]`）、`Report` 的小节标签（`[完成明细]`、`[Completed]`）与用法提示中的
   参数记号（可选写 `[行数]`、必填写 `<机器人名>`）；错误回复统一以 `错误:`（英文 `Error: `）开头，见
   [docs/mods/i18n/i18n-zh_cn.md 第 5 节](../mods/i18n/i18n-zh_cn.md)。
 * 关键词的归属由决定字符串的一方确定（`[keywords]` 限定为两项的依据）：仅将各部署不同且必须自行填写的项放入配置，
@@ -259,7 +258,7 @@
 又仍占用游戏账号（FishingBot 的自动重连会与真人玩家争用账号），因此必须停止全部机器人；随后进程不退出，等待一个
 判定窗口后重建连接（细节见 [docs/mods/watchdog/watchdog-zh_cn.md 第 4 节](../mods/watchdog/watchdog-zh_cn.md)）。
 
-两条判据均位于 `src/watchdog/gateway.rs`（纯计时、不依赖框架、可单测）：
+两条判据均位于 `src/runtime/watchdog/gateway.rs`（纯计时、不依赖框架、可单测）：
 
 * 握手：本次尝试开始后 `first_handshake_timeout` 内必须至少收到一次 `Ready` 或 `Resume`（bin 侧
   `event_handler` 调用 `watchdog.record_handshake_success()`）。未满足时请求重建连接，原因为 `NeverReady`。
@@ -268,7 +267,7 @@
 
 细节：
 
-* 时序来自配置中的判定窗口 `timing.watchdog_window_ms`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
+* 时序来自配置中的判定窗口 `timing.watchdog_window`；探活间隔（窗口的 1/3）与首次握手超时（窗口的 2 倍）
   由该值派生（`TimingConfig::probe_interval` / `first_handshake_timeout`），不再作为配置项，因为仅按窗口比例取值
   才有意义。入口将三项写入 `Watchdog`，判定与探活共用同一份；派生规则同时排除了"探活间隔大于窗口、单次失败即判定
   掉线"的配置。
@@ -293,15 +292,15 @@
 启动由启动队列分四个阶段完成，命令侧仅涉及第一阶段：
 
 1. `StartupQueue::start_bots(bots)`：命令侧入口，创建账本 → `add_bots_to_queue` 入队 → `wait_until_done()` 等待这些
-   条目均被拉起一次，取回结果并交给 `verify_batch`。
-2. 启动线程 `run_starter`：等待队列非空 → 等待 `[startup_queue] batch_login_interval_ms`（从上一批出队时刻计算）→
+   条目均被拉起一次，取回结果并交给 `verify_start_results`。
+2. 启动线程 `run_starter`：等待队列非空 → 等待 `[startup_queue] batch_login_interval`（从上一批出队时刻计算）→
    `pop_bots_from_head(max_batch_size)` 取出一批。
-3. `start_single_batch` 逐台调用 `launch_one_bot` → `add_bot_for_login`：创建本次日志文件（失败则不拉起会话）→ 准备
+3. `start_single_batch` 逐台调用 `launch_one_bot` → `create_logs_and_launch_bot_session`：创建本次日志文件（失败则不拉起会话）→ 准备
    FishingBot 的原始日志目录（`<bot_dir>/<bot_logs_dir>/raw`，`raw/log0.log` 指向 `/dev/null`）→ 使用 `screen -dmS`
    拉起会话，命令形如 `java … | grep -v -E '<filter_regex>' | tee -a '<log_path>'`；相邻两台之间等待
-   `bot_login_interval_ms`。
-4. `verify_batch`：拉起后立即使用 `screen -list` 快照判定一次，等待 `timing.check_grace_ms` 后再次判定；仅第二次仍
-   存在时才算拉起成功，日志仅用于说明是否已确认进服。
+   `bot_login_interval`。
+4. `verify_start_results`：拉起后立即使用 `screen -list` 快照判定一次，等待 `timing.check_grace` 后再次判定；
+   会话在第二次复核时仍存在且不是死残壳才算拉起成功，日志用于确认是否进服。
 
 新增流程必须沿用该风格：每一步对应一个函数，且每一步均可独立理解。
 
@@ -338,33 +337,40 @@ cargo clippy --all-targets -- -D warnings
 
 ```
 src/main.rs                 进程入口：配置 → 程序日志 → 显式创建看门狗（WATCHDOG.get_or_init()） → 生成游戏侧配置 → REST 探活任务 → poise 装配 → 运行 → 掉线重连 / 信号退出
-src/lib.rs                  指令入口层：动作枚举 + handle_* + 退出与重连入口
-src/commands.rs             命令层：poise 指令（一个业务模块一个文件，见下）
-src/commands/               bot_control / bot_manage / token / log / all_bots /
-                            show / general（`/help`、`/whoami` 位于此处）/ registration（全局注册与残留清理）
-src/watchdog.rs             网关看门狗主体：时序字段 + 握手/探活/掉线记录 + 进程级单例 WATCHDOG（第 3 节）
-src/watchdog/               gateway（握手与探活判定 + 探活任务）/ lifecycle（进程收尾）
-src/process_log.rs          程序日志：终端 + <部署目录>/logs/时间戳.log
-src/config.rs               外置配置：运行时结构 Config 与 Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
-src/config/                 schema / parse / validate / template
+src/lib.rs                  库入口：公开路由、模型与运行时接口的再导出
+src/discord_commands.rs             命令层：poise 指令（一个业务模块一个文件，见下）
+src/discord_commands/               bot_control / bot_manage / token / log / all_bots /
+                            show / general（`/help`、`/whoami` 位于此处）/ registration（按配置手动注册与残留清理）
+src/runtime.rs + runtime/   运行时模块：配置、看门狗、启动队列、进程日志与暂停状态存储
+src/runtime/watchdog.rs             网关看门狗主体：时序字段 + 握手/探活/掉线记录 + 进程级单例 WATCHDOG（第 3 节）
+src/runtime/watchdog/               gateway（握手与探活判定 + 探活任务）/ lifecycle（进程收尾）
+src/runtime/process_log.rs          程序日志：终端 + <部署目录>/logs/时间戳.log
+src/runtime/bot_state.rs            机器人暂停状态的进程内存储
+src/runtime/config.rs               外置配置：运行时结构 Config 与 Config::get_or_init / Config::get / Config::config_file_path / Config::admins / Config::install_dir
+src/runtime/config/                 schema / parse / validate / template
+src/runtime/startup.rs + startup/   启动队列、调度、账本与复核
+src/models.rs + models/     按机器人、状态、权限、会话、报告和操作结果分类的数据类型
 src/text.rs                 文案入口：一个进程一种语言（`[i18n] language` 启动时选定一次）
 src/text/                   en_us（英语）/ zh_cn（两份一一对应，仅字面量不同）
                             + bootstrap（引导期英文）/ log_text / requirement（数据型枚举）
                             + setup_failure（装配失败：按成因选择文案 + 判定是否为永久错误）
                             + watchdog（看门狗互斥锁中毒的内部不变量文案；随语言切换）
-src/bot_control/            单机器人业务（一指令一文件）
-src/bot_manage/             账号管理业务（一指令一文件）
-src/all_bots_control/       全服批量业务（仅管理员，一指令一文件）
-src/show/                   只读查询业务（一指令一文件）
-src/general/                通用业务（一指令一文件）
-src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_logs /
-                            bot_status / fs / fishingbot_config / permission / reply / restart /
-                            running_bots / screen / shutdown / startup / uptime
+src/handlers.rs + handlers/ 指令业务入口：机器人控制、账号管理、批量操作、只读查询和通用指令
+src/handlers/routes.rs + routes/ 指令路由、权限检查与动作分发
+src/handlers/bot_control/       单机器人业务（一指令一文件）
+src/handlers/bot_manage/        账号管理业务（一指令一文件）
+src/handlers/all_bots_control/  全服批量业务（仅管理员，一指令一文件）
+src/handlers/show/              只读查询业务（一指令一文件）
+src/handlers/general/           通用业务（一指令一文件）
+src/utils.rs + utils/       原语层：bot_command / bot_dirs / bot_name / bot_logs /
+                            bot_status / fs / fishingbot_config / permission / reply /
+                            raw_logs / restart / running_bots / screen /
+                            shutdown / start_results / uptime
 ```
 
-命令层按业务模块分组：`src/commands/` 下的 7 个业务文件（`all_bots`、`bot_control`、`bot_manage`、`general`、
-`log`、`show`、`token`）与 `lib.rs` 的动作枚举对齐，另有 `autocomplete.rs`（交互候选适配）与 `registration.rs`
-（全局指令注册与残留清理）。该拆分使文件名同时说明模块与功能，并避免将每条指令拆成仅十余行的文件。业务层仍为
+命令层按业务模块分组：`src/discord_commands/` 下的 7 个业务文件（`all_bots`、`bot_control`、`bot_manage`、`general`、
+`log`、`show`、`token`）与路由层的动作枚举对齐，另有 `autocomplete.rs`（交互候选适配）与 `registration.rs`
+（管理员按配置手动注册指令与残留清理）。该拆分使文件名同时说明模块与功能，并避免将每条指令拆成仅十余行的文件。业务层仍为
 一指令一文件。
 
 ## 7. 已确定的技术选择（不再重复讨论）
@@ -373,8 +379,8 @@ src/utils/                  原语层：bot_command / bot_dirs / bot_name / bot_
    "原始日志写入 `/tmp`、过滤后写入机器人目录"的双份方案，因为该方案会增加磁盘（或 tmpfs 内存）占用以及清理与
    权限逻辑；历史上两份日志位于同一层目录，曾导致 `/log` 读取错误文件。排查过滤规则时，可临时清空
    `keywords.filter_regex` 并重启进程，以查看全部日志行。
-2. 模块采用新版风格（`src/utils.rs` 加 `src/utils/*.rs`），不使用 `mod.rs`。两种方式对编译器完全等价；新版风格可在
-   编辑器标签页与搜索结果中直接看到模块名，且全项目不含 `mod.rs`，风格统一。
+2. 运行时状态集中在 `runtime`，共享数据类型定义在 `models`，工具函数统一放在 `utils`。
+   `utils` 不定义结构体或枚举；现有公开接口仍由 `lib.rs` 和 `src/utils.rs` 再导出。
 3. 仅使用斜杠指令，不使用 `!前缀` 指令：前缀指令需要读取消息内容，因而需要 `MESSAGE_CONTENT` 特权意图（开发者面板
    需额外配置，大型服务器还需审核）；斜杠指令不需要任何特权意图，无需开启开发者面板开关，并提供参数提示与补全。
    该选择同时决定命令层不解析文本。
@@ -400,10 +406,10 @@ Ubuntu 安装 `musl-tools`）。安装完成后，`cargo build --release`（默�
 
 ### 8.1 批量操作回复方式评估（未实施）
 
-评估目标：将四个 `*all` 指令的最终结果改为普通频道消息，以规避交互令牌的 15 分钟限制；消息应说明回复对象
+评估目标：将批量指令的最终结果改为普通频道消息，以规避交互令牌的 15 分钟限制；消息应说明回复对象
 （调用者、调用时间、指令），并尽可能使用原生引用。
 
-当前实现：`all_bots_manage` 调用 `run_and_reply_with_progress`，流程为 `ctx.defer()` → 进度 followup → 业务执行 →
+当前实现：`all_bots_manage` 接收明确的动作与调用者，流程为 `ctx.defer()` → 进度 followup → 业务执行 →
 `say_final_report`。`say_final_report` 先尝试 `ctx.say`；失败时改发普通频道消息，并记录
 `LogText::ReportPostedToChannel`。单机器人指令共用同一入口。
 
@@ -432,7 +438,7 @@ Ubuntu 安装 `musl-tools`）。安装完成后，`cargo build --release`（默�
    followup。弹窗流程见[指令说明第 1.3 节](../mods/commands/commands-zh_cn.md#13-敏感内容ephemeral-与-modal)。
 2. 实际验证 `/bot login`：确认登录链接与代码送达、凭据写入机器人目录、已有凭据成功刷新后
    `refreshToken.renewing` 被删除。见[指令说明第 4.6 节](../mods/commands/commands-zh_cn.md#46-bot-login)。
-3. 在真实游戏服验证生成的 FishingBot `conf.json`、机器人连接，以及切换 `[i18n] language` 后 `/pause`、`/unpause`
+3. 在真实游戏服验证生成的 FishingBot `config.json`、机器人连接，以及切换 `[i18n] language` 后 `/pause`、`/unpause`
    的对应语言回显。模板完整性已用真实 JAR 验证；见[配置说明第 3.2 节](../mods/config/config-zh_cn.md)。
 
 ### 8.3 暂缓事项

@@ -1,14 +1,15 @@
 # commands：命令层与全部指令
 [English](commands-en_us.md) | **简体中文**
 
-* 代码：`src/commands.rs`、`src/commands/autocomplete.rs` 与 `src/commands/{general,show,bot_manage,token,log,bot_control,all_bots}.rs`
+* 代码：`src/discord_commands.rs`、`src/discord_commands/autocomplete.rs` 与 `src/discord_commands/{general,show,bot_manage,token,log,bot_control,all_bots}.rs`
 * 职责：取 option、校验数字、`defer`、把 `handle_*` 的结果发出去。权限、参数清洗、业务状态判断都在
   下一层（`src/lib.rs` 与各业务模块）。
-* 硬约定：每条指令都必须落到 `lib::handle_*`（那一层负责声明权限要求并判一次），不许在本层自己拼回复，
+* 硬约定：每条指令都必须落到 `lib::handle_*`（那一层负责声明权限要求并判一次），普通业务回复不在本层拼接，
   连 `/whoami` 这种只取作者信息的指令也走 `handle_whoami`。漏掉这一步就等于漏掉权限校验（没有注册表或
   框架钩子兜底，只能依赖这条约定与评审）。
-* 与业务层的关系：`commands/bot_control.rs`（命令层）只声明有哪些指令、参数长什么样、怎么回，真正的
-  动作在 `bot_control/start.rs`（业务层）。两边文件名刻意同名，便于对照。
+  `/sync-commands` 的 Discord API 操作和结果报告位于命令层，先由 `check_sync_commands_permission` 验证管理员权限。
+* 与业务层的关系：`src/discord_commands/bot_control.rs`（命令层）只声明有哪些指令、参数长什么样、怎么回，真正的
+  动作在 `src/handlers/bot_control/start.rs`（业务层）。两边文件名刻意同名，便于对照。
 
 ## 1. 命令层的规矩
 
@@ -26,7 +27,7 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 ### 1.2 长指令为什么发两条消息
 
 `defer` 之后 Discord 有个兼容行为：第一条回复会替换那条"正在思考"占位，第二条起才是新消息。所以长耗时
-指令（四个 `*all` 与单机器人的 `start`、`stop`、`restart`）按两条发：
+指令（六个 `*all` 与单机器人的 `start`、`stop`、`restart`）按两条发：
 
 1. 启动类指令（`/start`、`/restart`、`/startall`、`/restartall`）先
    `ctx.say("已接受 /startall 请求；本次启动 N 台，其中启动队列中已有 M 台在等待；按当前分批设置，预计最长耗时 X 分钟，等待启动结果的超时时间为 Y 分钟；完成后将返回完整结果")`
@@ -40,20 +41,18 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 
 #### 1.2.1 回复收口五个入口（按指令的逻辑分类命名，不按回复条数）
 
-每个指令文件只从下面五个入口里挑一个，挑哪个由指令属于哪一类决定。`defer`、进度回执、
-`spawn_blocking` 这些机制收在 `src/commands.rs` 的两个私有函数 `run_and_reply`（跑完回结果）与
-`run_and_reply_with_progress`（先回进度回执、再回完整结果）里，改一次就全线生效。有名字的是"哪类
-指令"，不是"发了几条"。每条回复都会记进程序日志（`say_and_log` 与 `log_reply` 走
+指令按类别调用 `src/discord_commands.rs` 中的入口，显式传入动作、调用者及所需参数。
+入口负责 `defer`、进度回执和阻塞线程池分发。每条回复都会记进程序日志（`say_and_log` 与 `log_reply` 走
 `LogText::CommandReplied`：谁调的、哪条指令、回了什么），排查"它到底回了什么"以日志为准，见
 [process-log.md](../process-log/process-log-zh_cn.md)。
 
 * `single_bot_control`：覆盖 `/start`、`/stop`、`/restart`、`/pause`、`/unpause`、`/command`。
   用户先收到进度回执，跑完再收到完整结果。
 * `single_bot_manage`：覆盖 `/bot add`、`/bot del`、`/bot rename`。用户只收到最终结果。
-* `all_bots_manage`：覆盖 `/startall`、`/stopall`、`/restartall`、`/commandall`。用户先收到进度
+* `all_bots_manage`：覆盖 `/startall`、`/stopall`、`/restartall`、`/pauseall`、`/unpauseall`、`/commandall`。用户先收到进度
   回执，跑完再收到完整结果。
-* `read_only_query`：覆盖 `/show status`、`/show *`。用户只收到最终结果。
-* `server_probe`：覆盖 `/ping`、`/checkserver`。用户只收到最终结果（异步探测，不进阻塞线程池）。
+* `read_only_query`：覆盖 `/show status`、`/show mybots`、`/show allbots`、`/show admins`。用户只收到最终结果。
+* `run_async_and_reply`：覆盖 `/ping`、`/checkserver`、`/anti-afk`。用户只收到最终结果；反 AFK 的阻塞线程操作由业务层放进阻塞线程池。
 
 三处不入这五类，各有各的理由：`/help` 与 `/whoami` 是纯本地文案（不 defer）；`/log` 与
 `/show botconfig` 要自己发附件；`/token` 的弹窗必须是交互的第一个响应。
@@ -84,20 +83,22 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 
 ### 1.4 为什么业务调用都包 spawn_blocking
 
-业务层全是同步阻塞（文件、`screen`、`sleep`），直接在 async 里跑会占住 tokio 的工作线程。命令层统一用
-`tokio::task::spawn_blocking(...)`，而闭包必须是 `Send + 'static`（不能借用 `ctx`），所以每个指令都是
-先把要用的值取出来（`caller_id`、`String` 参数），再 move 进闭包。
+同步业务操作涉及文件、`screen` 和 `sleep`，直接在 async 中执行会占用 Tokio 工作线程。命令层在线程池
+边界使用 `tokio::task::spawn_blocking(...)`，将所需的自有参数移入闭包；借用的游戏指令片段先复制，
+再在线程池中传给业务路由。登录、日志和配置附件保留独立的响应流程。
 
 ### 1.5 注册与上下文
 
-* 指令集合由 `commands::all_commands()` 给出；`setup` 里用 `poise::builtins::register_globally` 注册一次：
-  一律全局注册（Discord 端最长 1 小时才传播完）。注册成功后还会同时清理各服务器上遗留的 guild 指令——
-  以前注册到某个服务器的那份不会自己消失，客户端会把两份一起列出来（同一条指令出现两次）。清理有硬前提：
-  先确认这一套全局指令**在本轮启动之前就已经稳定存在满 1 小时**（名字一一对应，且最"年轻"的指令 Id 也
-  够老），否则会出现"两份都看不到"的空窗；判定靠指令 Id 里的创建时间，不落任何状态文件。
-* 指令描述来自函数的第一段文档注释（poise 的规矩：宏不接受 `description = "..."`，只认
-  `description_localized`）。第一段写英文（等于 `en_us.rs` 表里那句），细节放到后面的段落里。为什么、
-  长度怎么算、英文副本为什么必要，见第 1.7 节。
+* 指令集合由 `discord_commands::all_commands()` 给出。启动时仅在配置范围内补建缺失的 `/sync-commands`，
+  不覆盖同范围的其他命令；目标服务器的入口创建失败会记日志，不阻止其他服务器初始化。
+* `discord.guild_ids` 为空或省略时，管理员执行 `/sync-commands` 会注册全局指令，然后立即清理机器人所在服务器的
+  guild 指令；全局注册失败则不清理。传播最长约一小时，期间部分指令可能不可见。
+* `discord.guild_ids` 非空时，先逐个更新指定服务器的指令；只要有一个更新失败，保留旧全局与其他服务器指令。
+  全部成功后清理旧全局指令，再清理机器人所在的非目标服务器指令。清理失败逐项报告，需排除错误后手动重试。
+  服务器级指令通常立即可用，但旧全局指令删除后的缓存可能延迟。
+* 同步会整体替换目标范围内本应用的指令，并删除旧范围内本应用的全部指令，包括手动添加的指令；不影响其他应用。
+  不存在后台定时或自动重试。修改配置后须重启并执行同步；首次部署需先配置管理员 ID。
+* 指令及选项说明只写在中英文 `COMMAND_TEXTS` 表里，由 `all_commands()` 在注册前校验并填入，见第 1.7 节。
 * 上下文别名：`Context<'a>`（普通指令）与 `ApplicationContext<'a>`（要用 Modal 的指令，Modal 只存在
   于斜杠指令的上下文里）。
 * 只用 `slash_command`，不做 `!前缀` 指令，因为那需要 `MESSAGE_CONTENT` 特权意图，等于在开发者面板
@@ -117,50 +118,29 @@ Discord 要求交互在 3 秒内应答，否则用户看到的是"交互失败"�
 
 命令层里的文字分两拨，来路不同、时机也不同：
 
-* 指令说明与选项说明：来自 `text::get().command_texts()` 那张表（注册之前覆盖宏生成的那一份），生效
+* 指令说明与选项说明：来自 `text::get().command_texts()` 那张表（注册前校验并填入），生效
   于启动与注册期。
 * 进度回执、用法提示、附件正文、回复记账：同一条 `text::get()`（`command_started_notice`、
   `command_ping_port_usage`、`command_log_attachment_body` 等），每次调用时取。
 * 弹窗标题、字段标签、占位提示：在 `TokenModal` 的 `create()` 里现取（手写 `impl poise::Modal`），
   每次弹窗时取。
 
-为什么说明文字不能直接写在 `src/commands/*.rs` 里：poise 的 `#[poise::command]` 与
-`#[derive(Modal)]` 宏只认字面量，会把说明在编译期烘进二进制，运行期读配置换不掉。所以在注册之前把
-文字改一遍（只做一次）：
+poise 宏中的字面量无法随配置语言切换，因此指令定义不写说明，由文案表提供：
 
-* 指令说明与选项说明：`commands::all_commands()` 建完指令树后，按
-  [`minecraft_fishingbot_manager_for_discord::text`] 的 `command_texts()` 表逐条覆盖 `Command.description`
+* 指令说明与选项说明：`discord_commands::all_commands()` 建完指令树后，按
+  [`minecraft_fishingbot_manager_for_discord::text`] 的 `command_texts()` 表逐条填充 `Command.description`
   与 `CommandParameter.description`（这两个字段在 poise 里是公开的，可以直接改写）。
 * `/token` 弹窗的标题、字段标签与占位提示：不用 `#[derive(Modal)]`，改成手写 `impl poise::Modal`
   （`create()` 里现取文案，`parse()` 按 `custom_id` 取值；形状与 derive 生成的完全一致）。
 
 文字本体在语言文件里（`src/text/zh_cn.rs` 与 `src/text/en_us.rs` 的 `COMMAND_TEXTS`），`name_path`
-必须与这里指令名逐字一致（子指令写 `"bot add"` 这种形式）。加改指令时要同步两种语言，下面的覆盖测试
-会把漏掉的那条列出来。
+必须与这里指令名逐字一致（子指令写 `"bot add"` 这种形式）。加改指令时要同步两种语言。
 
-#### 1.7.1 宏里那一份算什么：英文副本
+#### 1.7.1 文案表校验
 
-`///` 的第一段与选项的 `#[description = "..."]` 是表里缺项时才会露出来的文案副本（宏只认字面量，换不
-掉）。规矩是一律写英文，并与 `en_us.rs` 表里那句逐字相同，于是缺项时不可能出现另一种语言，而且不必
-多维护一份文案（那份英文就是 `en_us.rs` 表里的那一句）。
-
-* 为什么是英文：宏副本必须与 `en_us.rs` 表一致；测试进程未安装语言时 `text::get()` 也返回英语实现
-  （见 [i18n.md 第 4 节](../i18n/i18n-zh_cn.md)），漏一条不会出现中英混排。
-* 第一段之后的段落仍是中文：那是给维护者的说明，不会发给用户（poise 只把第一段当 `description`，
-  其余段落成为本地 `Command::help_text`）。
-* 三条测试把这件事钉住（都在 `src/commands.rs`）：
-  * `every_command_and_option_has_text_in_every_language`：表齐备（缺哪条就列出来）。
-  * `macro_texts_match_the_english_table`：宏里的文案副本等于 `en_us.rs` 表里那句（逐字）。
-  * `every_description_fits_discords_100_character_limit`：说明不超过 100 字符（Discord 上限；选项
-    说明没有编译期检查）。
-
-poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到的，不是猜的）：
-
-* 文档注释按空行切段，第一段进 `description`（段内换行拼成一个空格），其余段落进 `help_text`。
-* 命令描述超过 100 字符是编译错误（`slash command description too long`）；选项描述没有编译期检查，
-  poise 源码那行注释写着留给 fluent 之类的翻译框架在运行期补，本项目正是这么用的，所以长度得自己数
-  （`/command` 与 `/commandall` 的选项说明曾涨到 103 字符，就是被上面第三条测试逼回 100 以内的）。
-* 描述里写 `[...]` 这类补充说明没问题（两种语言统一用 `[]`），只要别超长。
+命令树与当前语言的表必须一一对应：缺项、重复、未知命令或选项、全空白说明，以及超出 1–100 个 UTF-16
+码元的说明都会在框架创建时报告错误并退出，不注册占位文案。测试还会对两种语言检查完整性、实际注册结构与长度。
+命令宏不再保存英文说明；`autocomplete`、`rename` 和选项取值仍由命令定义。
 
 不用 Discord 的 `description_localized`：那是让 Discord 按客户端语言挑显示哪一份，与本项目"一个进程
 一种语言"是两套机制，混用会出现说明英文、回复中文。
@@ -180,6 +160,7 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 * `/command`：选项 `name`、`command`，`defer`，回两条。
 * `/startall`、`/stopall`、`/restartall`：没有选项，`defer`，回两条。
 * `/commandall`：选项 `command`，`defer`，回两条。
+* `/anti-afk`：必选 `command`（`on` 或 `off`），`defer`，回一条，仅管理员可用。
 
 数字是命令层唯一的转换：Discord 的整数 option 只有有符号 64 位，所以 `/log` 的行数与 `/ping` 的端口
 都声明成 `i64`，在本层校验（大于 0，或 1 到 65535）之后再交给业务层（`usize`、`u16`）；校验不过当场
@@ -210,20 +191,20 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 细节：权限口径与服务端一致（管理员是全部机器人，其他人是自己 `bots/<用户ID>/` 下的）；状态取一次
 `screen -list` 快照与一次启动队列查询（每次按键都会收到一次 autocomplete 交互，不能按台数反复查）；最多
-`runtime.max_autocomplete_choices` 条（默认 25，Discord 硬上限，由 `src/commands/autocomplete.rs` 中的候选逻辑
+`runtime.max_autocomplete_choices` 条（默认 25，Discord 硬上限，由 `src/discord_commands/autocomplete.rs` 中的候选逻辑
 限制），在跑的排前面、其次是排队中的。候选只是建议：用户仍可手打任意名字，归属与会话是否在跑照旧由各
 `handle_*` 判。
 
 ## 3. 单机器人控制：`/start`、`/stop`、`/restart`、`/pause`、`/unpause`、`/command`、`/log`
 
-* 代码：`src/bot_control.rs`（模块文档）与 `src/bot_control/*.rs`（一条指令一个文件）
+* 代码：`src/handlers/bot_control.rs`（模块文档）与 `src/handlers/bot_control/*.rs`（一条指令一个文件）
 * 入口：`lib::handle_bot_control`（动作枚举 `BotControlAction`）
 * 会话操作全部复用 `utils` 里的原语，本层只做校验、结果转换与回复。
 * 权限不在本模块：`/start` 这类单机器人指令的要求是
   `RequiredPermission::OwnerOrAdmin(目标机器人的归属)`，由路由层 `handle_bot_control` 与
   `handle_bot_log` 先解析目标条目（`BotDirEntry::find_by_name`）再判一次。批量的 `/startall` 那批的
   要求是 `RequiredPermission::MustBeAdmin`，同样在路由层判。
-* `name` 选项的候选（autocomplete）属于命令层，不在本业务模块：`src/commands/autocomplete.rs` 按指令语义挑一批
+* `name` 选项的候选（autocomplete）属于命令层，不在本业务模块：`src/discord_commands/autocomplete.rs` 按指令语义挑一批
   （`/start`、`/bot del`、`/bot rename` 只看未运行的；`/stop`、`/pause`、`/unpause`、`/command`、
   `/restart` 只看运行中的；`/log` 给全部），见 [第 2 节](#2-指令清单与选项)。
 
@@ -233,10 +214,10 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
   才算起来，见第 3.2 节），按复核结果回复"已确认进服"、"会话已存在但尚未确认状态"或"启动失败"。
 * `/stop <机器人名>`：`stop::stop_bot(&bot_dir_entry)`。停止会话（释放游戏账号）；停止当场
   复核，回复"已成功停止"。
-* `/restart <机器人名>`：`restart::restart_bot(&bot_dir_entry)`。停止加拉起；不在运行的会被
-  拒绝（要启动请用 `/start`），回复"已发送重启命令"。
+* `/restart <机器人名>`：`restart::restart_bot(&bot_dir_entry)`。停止并重新启动；旧会话不存在时拒绝。
+  重启后按日志和会话复核结果回复“已确认进服”、“会话存在但进服状态未确认”或失败原因。
 * `/pause <机器人名>`：`pause::pause_fishing(&bot_dir_entry)`。游戏内 `/pause`，不下线；发完
-  等 `command_echo.wait_ms`（默认 300 毫秒）确认日志回显，回复"已确认暂停"或"已发送"。
+  等 `command_echo.wait`（默认 0.3 秒）确认日志回显，回复"已确认暂停"或"已发送"。
 * `/unpause <机器人名>`：`unpause::unpause_fishing(&bot_dir_entry)`。游戏内 `/unpause`；
   确认与措辞同上。
 * `/command <机器人名> <指令>`：`command::send_command_to_bot(&bot_dir_entry, raw_bot_command_args)`。
@@ -255,8 +236,10 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
 
 确认生效的步骤：
 
-1. 等配置里 `command_echo.wait_ms`（默认 300 毫秒）。JAR 收到指令会同步打一行回显，得等它落进日志。
-2. 在最新一份日志的最后 `command_echo.scan_lines`（默认 50）行里找回显关键词。只看末尾，不整份往回
+发送前记录最新日志的文件标识和长度；只检查发送后追加的内容。日志被替换或截短时从新内容开头读取，避免旧回显被误认为本次结果。
+
+1. 等配置里 `command_echo.wait`（默认 0.3 秒）。JAR 收到指令会同步打一行回显，得等它落进日志。
+2. 在发送后日志内容的最后 `command_echo.scan_lines`（默认 50）行里找回显关键词。只看末尾，不整份往回
    扫，因为长跑日志整份扫很贵。
 3. 看到回显才说"已确认暂停"或"已恢复钓鱼"，没看到就只按"已发送"说：能验证到哪一步就只说到哪一步
    （见 [docs/CONTEXTS/CONTEXT-zh_cn.md](../../CONTEXTS/CONTEXT-zh_cn.md) 的"回复口径不许夸大"）。最新一份日志都找不到（会话在跑但日志被
@@ -268,6 +251,10 @@ poise 的具体规矩（读 `poise_macros` 0.7 的 `src/command/mod.rs` 得到�
    值，下一次 `/pause` 或 `/unpause` 会把它纠正回来。
 
 前提是这份 JAR 支持 `/pause`、`/unpause`。上游已计划加入这两条指令；在包含它们的构建中，回显由 JAR 打印。若所用 JAR 尚未支持，这两条指令只会回复“命令已发送”，`/show status` 的暂停状态不会改变。
+
+暂停状态是管理程序的内存记录，不是对 JAR 的实时查询；初始“钓鱼中”仅为默认值。游戏服务器断线后，
+若 FishingBot 在同一会话内重连，记录保持不变，管理程序也不会重发暂停指令；JAR 的实际状态取决于其实现，
+可能与显示不一致。管理程序成功停止会话或启动新会话时会清除记录；重启管理程序进程也会清除记录。
 
 要找的回显关键词是配置 `[command_echo]` 里的 `pause_echo` 与 `unpause_echo`（上游消息
 `command-pause-executed` 与 `command-unpause-executed`），不由调用方传：`PauseCommand::echo_keyword`
@@ -297,8 +284,8 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
    三个流程函数中，`/start` 与 `/restart` 吃 `&[BotDirEntry]`（单机就是单元素切片），`/stop` 吃单个条目 ——
    切片口径也是"以后要支持一次多台"不用重写启动与重启流程的原因（见 [CONTEXT 第 8 节](../../CONTEXTS/CONTEXT-zh_cn.md)）。
 
-   拉起相邻两台之间等 `[startup_queue] bot_login_interval_ms`；拉起后先判定一次，等满 `timing.check_grace_ms` 再判定一次
-   （每次启动请求只等一次）。第二遍还在才算起来，因为 JVM 可能在启动后一两秒就自己退，只查一遍会把"起来就没了"报成成功；
+   拉起相邻两台之间等 `[startup_queue] bot_login_interval`；拉起后先判定一次，等满 `timing.check_grace` 再判定一次
+   （每次启动请求只等一次）。第二次复核时会话存在且不是死残壳才算启动成功；
    见 [utils-zh_cn.md 第 4 节](../utils/utils-zh_cn.md#4-启动与停止中的等待)。
 4. 失败判定都看 utils 返回的明细自己的方法（`outcome.has_failed_lines()` 为真就把
    `outcome.to_failure_text()` 当错误返回；停止明细用的是同形的 `has_failed_lines()`）。明细由
@@ -308,8 +295,8 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
      "会话已存在但尚未确认状态"；会话在宽限期前消失时回"启动失败"。不再固定回"已发送启动命令"。
    * `/stop` 回 `已成功停止机器人 'X'`。停止流程当场复核会话已消失（见 `utils::stop_bot_sessions`），
      所以这里说得起成功。
-   * `/restart` 回 `已发送机器人 'X' 的重启命令(已确认成功停止，启动状态请用 /show status 确认)`。停止
-     阶段可确认；启动阶段目前仍只回已发送，尚未采用 `/start` 的复核结论。
+   * `/restart` 确认旧会话已结束后启动新会话，并按日志回复“重启后已确认进服”或“进服状态未确认”。
+     停止失败、启动失败、取消或复核错误均返回相应原因。
 
 ### 3.3 `/command` 的细节
 
@@ -339,7 +326,7 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 ## 4. 账号管理：`/bot add`、`/bot del`、`/bot rename`、`/bot login`、`/token`
 
-* 代码：`src/bot_manage.rs` 与 `src/bot_manage/*.rs`
+* 代码：`src/handlers/bot_manage.rs` 与 `src/handlers/bot_manage/*.rs`
 * 入口：`lib::handle_bot_manage`（动作枚举 `BotManageAction`）；`/bot login` 另有两个入口
   `lib::handle_bot_login`（第一段）与 `lib::handle_bot_login_await`（第二段），见第 4.6 节
 * 权限不在命令层、也不在本模块：`/bot add` 落在调用者自己的用户目录下（要求 `Everyone`）；`del`、
@@ -448,6 +435,8 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 一直问微软要授权；停完再看一次凭据（JAR 可能在收到 Ctrl+C 时刚好把它写完），仍没有才回超时，并把旧凭据放
 回去。
 
+登录期间若 screen 查询失败，直接返回错误并尝试停止会话；无法确认停止时保留 `.renewing` 旧凭据备份，避免覆盖仍可能运行的登录会话。停止失败会记录到程序日志。
+
 #### 4.6.2 几个刻意的选择
 
 * 两条回复：第一条（链接 + 代码）必须**马上**给用户，而凭据要等他授权完才落盘，所以命令层不能像其它指令
@@ -460,21 +449,25 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 * 并发登录**不设上限**：同时登录多台会同时启动多个 JVM，微软可能限流（症状可能是"启动后一两秒就退出"）。
   目前由使用者错开登录时间；如果实际部署频繁遇到限流，再评估加入全局并发上限。
 
-## 5. 批量指令：`/startall`、`/stopall`、`/restartall`、`/commandall`
+## 5. 批量指令：`/startall`、`/stopall`、`/restartall`、`/pauseall`、`/unpauseall`、`/commandall`
 
-* 代码：`src/all_bots_control.rs` 与 `src/all_bots_control/*.rs`
+* 代码：`src/handlers/all_bots_control.rs` 与 `src/handlers/all_bots_control/*.rs`
 * 入口：`lib::handle_all_bots_control`（动作枚举 `AllBotsControlAction`），它同时是这批指令的路由层。
 * 权限只在路由层校验一次（`handle_all_bots_control` 里的
   `has_permission(.., RequiredPermission::MustBeAdmin)`）：本模块的函数一律不接 `caller_id`、也不
-  自查，避免四份重复文案与口径不一致。本模块只做调批量流程与拼报告。
+  自查。本模块只调度批量流程与生成报告。
 
 ### 5.1 指令一览
 
 * `/startall`：`startall::start_all_bots()`，作用范围是所有已配 Token 且未运行的机器人。
 * `/stopall`：`stopall::stop_all_bots()`，作用范围是所有运行中的机器人（含 Token 已失效的残留进程）。
 * `/restartall`：`restartall::restart_all_bots()`，作用范围是所有已配 Token 且正在运行的机器人。
+* `/pauseall`、`/unpauseall`：`pauseall::set_all_bots_fishing_pause()`，使用与 `/commandall` 相同的目标范围，
+  逐台发送并按配置回显确认暂停状态；失败与未确认分别报告。
 * `/commandall <指令>`：`commandall::send_command_to_all_bots(raw_bot_command_args)`，作用范围是所有运行中的
   机器人。
+
+`/anti-afk <on|off>` 使用独立入口 `lib::handle_anti_afk`，同样仅管理员可用：`on` 启动，已运行时提示无需重复启动；`off` 停止并等待线程退出，未运行时提示无需停止。它使用 `[anti_afk]` 输入与间隔，匹配名称包含 `runtime.screen_prefix` 的所有 screen 会话（可能包含本项目以外的会话）。启动成功只代表线程已创建，不保证存在匹配会话或输入送达；`/show status` 可查看线程是否存活。程序重启后不自动开启。
 
 这些函数都不接 `caller_id` 参数：权限在路由层 `handle_all_bots_control` 就拦下了，能进到这里的一定
 是管理员。标题也由它们自己取（`/stopall` 用指令标题；进程收到退出信号时收尾在
@@ -493,7 +486,7 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
   `/startall` 的事）；缺 Token 的由重启流程在停止之前剔掉。
 * `/stopall` 与进程退出收尾：用 `all_bot_dir_entries()`。Token 被删掉之后，之前拉起的进程可能还在跑
   并占着游戏账号，收尾时必须能扫到它们。
-* `/commandall`：用 `token_ready_bot_dir_entries()`，只要名字。发指令不需要目录，口径与 `/show status`
+* `/commandall`、`/pauseall`、`/unpauseall`：用 `token_ready_bot_dir_entries()`，口径与 `/show status`
   一致（只发给配好 Token 且在跑的）。
 
 `/restartall` 刻意不按 Token 过滤：重启是先停再起，而缺 Token 的目标起不来（登录必然失败），白停一次
@@ -502,11 +495,11 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 ### 5.3 各指令的流程
 
-* `/startall`：先按 Token 就绪拆成两组（`split_bot_entries_by_token_status`），有效账号再按运行状态
-  拆开（`split_bot_entries_by_is_running`）。一个有效账号都没有时回 `未配置任何有效账号，未启动。`
-  （若还有缺 Token 的账号，会追一句提示）；全部在运行时回 `全部有效机器人均已运行`；否则调
+* `/startall`：先按 Token 就绪拆成两组（`split_bot_entries_by_token_status`），已配置 Token 的账号再按会话状态
+  拆开（`split_bot_entries_by_is_running`）。没有可启动的机器人时回复该结果及缺 Token 数量；
+  所有已配置 Token 的机器人均存在会话时直接回复；否则调
   `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)`，之后用 `Report::set_counts` 覆盖计数行
-  （有效账号总数、已发送启动命令、跳过（已在运行）、跳过（缺少 Token）、已取消、启动失败）。未启动原因
+  （已配置 Token、启动后会话存在、跳过（会话已存在）、跳过（缺少 Token）、已取消、启动异常）。未启动原因
   只体现在这些计数行：`/startall` 会清空 `Report::skipped`，不再逐台列出已在运行、缺 Token 或被取消的账号，
   避免账号多时把回复撑满；被取消的那些是"停止全部机器人"（`/stopall`、掉线收尾、退出收尾）撤下来的
   （`BotStartOutcome::Cancelled`）。
@@ -519,44 +512,43 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
   报告先写程序日志，再发到各服务器的通报频道（发送有 30 秒总时限，超时就跳过并退出，下次启动不补发）。
 * `/restartall`：`all_bot_dir_entries()` 里只取在运行的那一组（未运行的不算重启对象）；没有时直接回
   `没有运行的机器人实例，无需重启`；否则调 `utils::restart_bot_sessions`，再用 `Report::set_counts`
-  写运行中账号、已发送重启命令、重启失败（缺 Token 的目标会在重启失败明细里说明原因）。
+  写目标机器人、重启后会话存在、重启异常（缺 Token 的目标会在异常明细里说明原因）。
   报告只报成功与失败：重启目标是它自己选定的，没有"跳过"这一类；`Report::skipped` 只放被取消的启动
   （"停止全部机器人"撤下来的那几条）。
 * `/commandall`：指令片段由命令层原样透传，这里用 `to_clean_bot_command` 拼成一条指令（与 `/command`
-  同一口径），再逐条注入。`utils::all_running_bot_names()` 来自一次 `screen -list` 快照，命中即运行
-  中，因此这里直接逐条注入，不再逐个机器人重复鉴权与探测会话；逐条统计成功数，失败的原文放进
+  同一口径），再逐条注入。`utils::token_ready_bot_names_with_screen_sessions()` 来自一次 `screen -list` 快照，包含死残壳；
+  这里直接逐条注入，不再逐个机器人重复鉴权与探测会话；逐条统计成功数，失败的原文放进
   `Report::failed`。
+* `/pauseall`、`/unpauseall`：复用相同的 Token 与会话筛选，逐台调用单机器人暂停或恢复逻辑。
+  每台独立等待 `command_echo.wait` 并检查配置回显；已确认、仅已发送和失败均在报告中区分。
 
 ### 5.4 报告约定
 
-* 四条指令都输出 `Report`：固定为标题、计数行、明细行，计数行统一由 `Report::set_counts` 生成，格式
+* 批量指令输出 `Report`：固定为标题、计数行、明细行，计数行统一由 `Report::set_counts` 生成，格式
   是 `标签: N 个`。
 * 回复长度有上限：`Report::render()` 会按 `runtime.max_reply_chars` 从末尾按行截断并注明省略行数。
   账号多时批量明细最容易触到上限（Discord 单条消息超长会直接发送失败）。
-* 计数标签不许夸大：启动类标签是"已发送启动命令"与"已发送重启命令"，不是"成功启动"，因为批量启动只
-  能确认命令发出与会话出现（与 `/start` 同一条口径，见
-  [第 3.2 节](#32-三个动作函数的固定步骤)）；停止类才用"成功停止"（停止流程
-  当场复核）。
+* 启动和重启计数表示复核时会话存在，不表示已进服；超时和失败统一计为异常。完成明细逐台区分已确认与未确认，
+  异常明细保留错误原因。停止结果则以会话退出复核为准。
 * 基础信息要等流程跑完才知道的指令（`/startall`、`/restartall`）先跑流程，再用 `Report::set_counts(..)`
   覆盖计数行。这是显式覆盖，不会与流程写入的行叠加。
 
 ### 5.5 失败排查
 
-批量启动的瞬时内存峰值常高于云服务器可用内存，被 OOM 杀掉的进程不会出现在 `screen -list` 里，因此
-结果里会写"启动失败(常见原因是微软拒绝频繁登录或内存不足)"。处理方式：调小 `runtime.java_opts` 的
-内存配额、调大 `timing.check_grace_ms` 或 `[startup_queue] bot_login_interval_ms`（等得更久或登录更慢），或稍后重复
-一次命令（JVM 内存占用会随时间优化）。
+进程在启动期间退出时，结果会显示“启动失败”；具体原因需结合日志判断。若内存不足，可调小
+`runtime.java_opts` 的堆上限；若登录频率受限，可增大 `[startup_queue] bot_login_interval`。
+需要更长复核窗口时可增大 `timing.check_grace`。
 
 ## 6. 查询：`/show status` 与 `/show botconfig|mybots|allbots|admins`
 
-* 代码：`src/show.rs` 与 `src/show/*.rs`
+* 代码：`src/handlers/show.rs` 与 `src/handlers/show/*.rs`
 * 入口：`lib::handle_show`（动作枚举 `ShowAction::{MyBots, AllBots, Admins}`）与
   `lib::handle_fishingbot_config`（`/show botconfig` 单独一条，它返回的是附件而不是文本）。
 * 全部是只读操作：不碰会话、也不改磁盘，因此不需要运行中检查。
 
 ### 6.1 指令一览
 
-* `/show status`：`status::all_running_bots_status()`（内部走 `utils::running_bots::all_running_bot_status_rows()`）。
+* `/show status`：`status::bot_and_anti_afk_status_report()`（复用 `utils::running_bots::status_row()`）。
   数据来自 `screen -list`、各机器人最新一份过滤后的日志，以及一次启动队列查询（排队中的在报告下方
   `[排队中]` 一栏），回复形式是文本（一张表）。
 * `/show botconfig`：`botconfig::fishingbot_config_view()`。数据来自 `paths.fishingbot_config_file_name`（所有
@@ -567,8 +559,9 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 ### 6.2 `/show status`
 
-* 名单是已配 Token 与会话存在的交集：先取 `utils::token_ready_bot_dir_entries()`（与 `/commandall`
-  同一口径），再由 `utils::running_bots::all_running_bot_status_rows()` 用一次 `screen -list` 快照把不在跑
+* 报告首先显示反 AFK 线程是否运行，即使没有运行中或排队中的机器人也会显示；这不是输入送达状态。
+* 名单是已配 Token 与会话存在的交集：读取一次机器人目录并按 Token 分组（与 `/commandall`
+  同一口径），再由 `utils::running_bots::status_row()` 用一次 `screen -list` 快照把不在跑
   的剔掉。所以出现在表里的都是配好 Token 且会话存在的机器人；Token 文件被删掉但进程还在跑的那种不在
   表里（`/stopall` 仍能收掉它）。
 * 排队与否由 `/show status` 自己问一次启动队列（`StartupQueue::bots_in_queue`，与 `/start`、`/stop`
@@ -585,7 +578,7 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
   运行里不会出现，所以直接在这一格里显示报错原因；钓鱼状态是"钓鱼中"与"已暂停"。
 * 运行时长由 `utils::format_uptime` 统一格式化成"天-时-分"，避免每个调用点各写一套。
 * 输出逐台一行，方便肉眼扫。这张表没有专门的类型：数据行由 `utils::running_bots::status_row()` 当场拼
-  成一行文本，表头由 `show/status.rs` 当场拼成一行文本，两处都是"四格数组 + `join(" | ")`"，列序要对齐：
+  成一行文本，表头由 `src/handlers/show/status.rs` 当场拼成一行文本，两处都是"四格数组 + `join(" | ")`"，列序要对齐：
   * 列名（中英各一份）在 `text` 里：`status_column_bot_name()`、`status_column_connection()`、
     `status_column_pause()`、`status_column_uptime()`；
   * 加列、删列、调序要同时改这两处；列序没有类型层面的强制，对齐靠两边读同一组列名、用同一个分隔符
@@ -597,13 +590,13 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 ### 6.3 `/show botconfig`
 
-* 发出去的是 `paths.fishingbot_config_file_name` 指向的钓鱼配置原文（FishingBot 自己的 `conf.json`），
+* 发出去的是 `paths.fishingbot_config_file_name` 指向的钓鱼配置原文（FishingBot 自己的 `config.json`），
   不是本项目的 `minecraft-fishingbot-manager-for-discord.conf.toml`：要看的是钓鱼参数现在是什么。这份文件由本程序
   在启动时按 `[fishingbot]` 生成（先删旧文件再写，见
-  [config.md 第 3.2 节](../config/config-zh_cn.md#32-游戏侧配置confjson是生成物)），所以它既是"配置里写的"、
+  [config.md 第 3.2 节](../config/config-zh_cn.md#32-游戏侧配置configjson是生成物)），所以它既是"配置里写的"、
   也是"FishingBot 实际在读的"。
-* 为什么用附件：`conf.json` 很容易超过 Discord 单条消息的 2000 字符上限，正文会被截断；附件既能
-  给出全文，又天然带上文件名（就是 `conf.json`）。
+* 为什么用附件：`config.json` 很容易超过 Discord 单条消息的 2000 字符上限，正文会被截断；附件既能
+  给出全文，又天然带上文件名（就是 `config.json`）。
 * 内容不做截断：它是结构化文件，切一半反而会让人误读；超过附件上限（`utils::MAX_ATTACHMENT_BYTES`，
   8 MiB）时如实报错，让人直接上服务器看。
 * 文件缺失或读不出来时回一条说明原因的错误文案（这份文件由本程序在启动时生成，所以先查 `base_dir`
@@ -629,9 +622,9 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 
 ## 7. 通用：`/help`、`/whoami`、`/ping`、`/checkserver`
 
-* 代码：`src/general.rs` 与 `src/general/*.rs`
+* 代码：`src/handlers/general.rs` 与 `src/handlers/general/*.rs`
 * 与本项目其它模块没有耦合：不读机器人目录、不碰 `screen` 会话，因此可以单独取用、单独测试。
-* 四条指令的权限要求都是 `RequiredPermission::Everyone`（谁都能用），在 `lib.rs` 的 `handle_*` 里各判
+* 四条指令的权限要求都是 `RequiredPermission::Everyone`（谁都能用），在路由层的 `handle_*` 里各判
   一次。
 
 ### 7.1 指令一览
@@ -661,18 +654,21 @@ JAR，中文 JAR 填 `已暂停钓鱼` / `已恢复钓鱼`。两条不能相同�
 ### 7.4 `/ping`
 
 * 不带参数时用 `[ping]` 表的默认目标（`default_ping_host` 与 `default_ping_port`）；带参数时以聊天里
-  给的为准（端口解析失败就退回默认逻辑）。
+  给的为准（端口非法时返回用法错误）。
+* 显式指定的主机必须全部解析为公网地址；配置中的默认主机视为可信目标。代理 Fake-IP 可能造成误判，
+  处理方法见[故障排查](../../troubleshooting/troubleshooting-zh_cn.md#ping-拒绝探测本地或私网地址)。
 * 走 Minecraft 服务器列表握手（`craftping`），因此拿到的是游戏层的响应：在线人数与最大人数，以及
   "钓鱼服务器到游戏服务器"这一跳的延迟，而不是简单的 TCP 连通性。
 * 输出固定三行：`状态: 在线`、`人数: 当前人数/上限`、`延迟: N ms(钓鱼服务器到游戏服务器的延迟)`；
   连不上、超时、协议解析失败各给一条可读文案。
-* 连接超时取 `ping.timeout_ms`（配置校验保证它不为 0，否则永远等不到响应）。
+* 解析、连接及握手共用 `ping.timeout` 超时（配置校验保证它不为 0）。
 * 地址或端口非法、连不上、超时都会各自给出可读文案，不 panic。
 
 ### 7.5 `/checkserver`
 
 * 报告的是跑本程序的这台机器（钓鱼进程所在机器）的资源，不是游戏服务器。
 * 数据来自 `sysinfo`：CPU 使用率、已用与总内存（按总量自动用 MB 或 GB）、内存占用率、磁盘、系统运行时长；本次运行时长读 `/proc`，系统时间与时区取自本机的 `chrono::Local`。
+* 系统信息初始化、磁盘信息或系统运行时长查询失败时，返回相应错误及原因。
 * CPU 使用率取两次采样（间隔很短）再计算差值：单次采样拿到的是相对开机以来的平均值，会长时间停留在
   高位、看起来像是满载。
 * 输出是固定字段的多行文本，方便直接截图，不依赖日志文件。

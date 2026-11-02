@@ -1,44 +1,20 @@
-//! 从日志文本推断机器人状态（连接状态与暂停状态）。
-//! 两类状态的维护方式不同（见 [`BotPauseStatus`]）：
-//! *连接状态只能由日志确认，获取的时候实时读日志，不存储；
-//! *暂停状态是相关指令触发时 `/pause`、`/unpause` ，立即读取日志并根据返回结果修改为最新状态。
-//!
-//! 要匹配的关键词分两处来源：只能自己确定的（进服提示）来自配置 `[keywords]`；
-//! 断线重连提示的前后缀**由 JAR 按自己的语言资源打印，所以按当前语言取自 [`crate::text`]
-//! （`jar_reconnect_*` 方法）。`/pause`、`/unpause` 的回显也是关键词，但归配置 `[command_echo]`，
-//! 只由 [`PauseCommand`] 使用，不参与这里的状态判定。
-//!
-//! "进程结束"不在这里判断：它看会话状态（见 [`ConnectionStatus::Stopped`]），与日志无关。
+//! 从日志实时判断连接状态；暂停状态根据指令回显保存在内存中。
 
-use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::config;
+use crate::runtime::bot_state::PAUSE_STATUSES;
 use crate::text;
 
 use super::bot_dirs::BotDirEntry;
 use super::bot_logs::latest_log_path;
-use super::fs::{read_last_lines, read_lines_backwards_until};
-
-/// 机器人到游戏服务器的连接状态：正常运行时只可能是这四种。
-/// 其他情况（日志读取错误等）在正常运行里不会出现（日志由启动流程建好、建不出来就不拉会话）。
-/// 所以 [`BotDirEntry::connection_status`] 把其他情况当错误报给调用者。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionStatus {
-    /// 日志里还没有出现任何能判断状态的关键词（刚启动）。
-    Initializing,
-    /// 已经进入游戏服务器。
-    Online,
-    /// 正在重连：进程还在，但此刻机器人不在服务器（可能是玩家本人在线或是网络波动掉线），正在尝试重连。
-    Reconnecting,
-    /// 进程已结束：会话只剩 `(Dead ...)` 残壳（JVM 已被杀，screen 的空壳还挂着）。
-    /// 由 `utils::running_bots` 按会话状态给出，不来自日志（因为日志最后一条可能还停在"在线"）。
-    Stopped,
-}
+use super::fs::{read_last_lines_after, read_lines_backwards_until};
+pub use crate::models::{BotPauseStatus, ConnectionStatus, PauseCommand, PauseStatus};
 
 impl Display for ConnectionStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -55,11 +31,7 @@ impl Display for ConnectionStatus {
 }
 
 impl ConnectionStatus {
-    /// 检查一行文本中是否包含了状态关键词。只可能得出"在线"与"重连"两种结论：
-    /// "进程已结束"看会话状态（见 [`Self::Stopped`]），与日志无关。
-    /// * 在线关键词来自配置（各部署不同：那是游戏服自己的进服提示）；
-    /// * 重连提示要用前缀 + 后缀共同确认，避免把日志里凑巧出现的单个词当成状态，
-    ///   这两句来自 JAR 自己（按当前语言取），所以不经过配置。
+    /// 从日志行判断在线或重连状态；重连提示须同时匹配 JAR 文案的前缀和后缀。
     fn from_line(line: &str, online_keyword: &str) -> Option<Self> {
         let i18n_text = text::get();
 
@@ -77,21 +49,15 @@ impl ConnectionStatus {
 }
 
 impl BotDirEntry {
-    /// 获取某个机器人最新的连接状态：读它最新日志。
-    /// 实现在本模块而不是 `bot_dirs`，因为这是对机器人状态判定的逻辑，`bot_dirs` 只负责文件夹与文件名。
-    /// 只会得出"在线 / 重连 / 初始中"（或三种读不到日志的报错）；"进程已结束"看会话状态，
-    /// 由 `utils::running_bots` 直接给出（见 `ConnectionStatus::Stopped`）。
+    /// 根据最新日志判断连接状态；进程结束由 screen 会话状态判断。
     pub fn connection_status(&self) -> Result<ConnectionStatus, String> {
-        // 挑最新那份日志
         let log_path = latest_log_path(&self.bot_dir_path);
 
         connection_status_of_log(&self.bot_name, log_path.as_deref())
     }
 }
 
-/// [`BotDirEntry::connection_status`] 的实现：从最新日志末尾往回读，读到第一个能下结论的关键词就停。
-/// `log_path` 是那一份日志（`None` = 这个机器人还没有日志文件）；
-/// 拆出来是为了能不吃配置地单测（拼路径那一步在它上面）。
+/// 从日志末尾读取最新的状态关键词。
 fn connection_status_of_log(
     bot_name: &str,
     log_path: Option<&Path>,
@@ -101,39 +67,24 @@ fn connection_status_of_log(
     };
 
     let online_keyword = &config::Config::get().keywords.online;
-    // 记下最新的结论，初始为无结论。
     let mut connection: Option<ConnectionStatus> = None;
 
     match read_lines_backwards_until(log_path, |line| {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            // 空行不给出任何结论。
             return false;
         }
 
         connection = ConnectionStatus::from_line(trimmed, online_keyword);
 
-        // 当连接状态有结论了就立刻停止。
         connection.is_some()
     }) {
-        // 一行都没扫到代表日志是空文件（正常运行时不会出现：建日志文件时就写了首行）。
         Ok(scanned_lines) if scanned_lines.is_empty() => {
             Err(text::get().bot_status_empty_log(bot_name))
         }
-        // 没有能判断状态的关键词代表机器人刚启动。
         Ok(_) => Ok(connection.unwrap_or(ConnectionStatus::Initializing)),
-        // 读取出现问题（打不开、读取失败）。
         Err(_) => Err(text::get().bot_status_unreadable_log(bot_name)),
     }
-}
-
-/// 机器人的暂停状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseStatus {
-    /// 正在钓鱼。
-    Fishing,
-    /// 收到 `/pause` 后暂停钓鱼（但没下线）。
-    Paused,
 }
 
 impl Display for PauseStatus {
@@ -148,129 +99,45 @@ impl Display for PauseStatus {
     }
 }
 
-/// 机器人的暂停状态， 由 [`BotPauseStatus`] 记忆，其他信息由上层调用方保管。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BotPauseStatus {
-    /// 暂停状态：只由 [`BotPauseStatus::set_paused`] / [`BotPauseStatus::set_fishing`] 改，由 [`BotPauseStatus::pause_status`] 读。
-    pause: PauseStatus,
-}
-
-impl Default for BotPauseStatus {
-    /// 初始状态：钓鱼中（新拉起的 JVM 一定没被暂停）。
-    fn default() -> Self {
-        Self {
-            pause: PauseStatus::Fishing,
-        }
-    }
-}
-
-impl BotPauseStatus {
-    /// 读当前的暂停状态的方法
-    pub fn pause_status(&self) -> PauseStatus {
-        self.pause
-    }
-
-    /// 上层调用者确认到 `/pause` 成功执行，将当前的暂停状态改为暂停。
-    pub fn set_paused(&mut self) {
-        self.pause = PauseStatus::Paused;
-    }
-
-    /// 上层调用者确认到 `/unpause` 成功执行，将当前的暂停状态改为钓鱼中。
-    pub fn set_fishing(&mut self) {
-        self.pause = PauseStatus::Fishing;
-    }
-}
-
-/// 进程内保存的"所有在跑的机器人的状态"，按机器人名存，惰性存储，只在调用时更新。
-/// 这是本项目唯一的进程级可变状态
-/// 约定：只有能确认到命令成功执行的函数会改它（`/pause`、`/unpause` 里的 [`BotPauseStatusMemory::update_bot_pause_status`]），别处只读。
-/// 手动操作（如/command bot /pause）不会更新它，因为自由指令是不可预测的。
-/// 同一台机器人的 `/pause` 与 `/unpause` 同时到达时，状态按最新回显记录。
-static ALL_RUNNING_BOTS_PAUSE_STATUSES: LazyLock<Mutex<HashMap<String, BotPauseStatus>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// 按机器人名存储的暂停状态的入口：操作都实现在机器人名上
-/// （`bot_dir_entry.bot_name.to_bot_pause_status()`）。
+/// 按机器人名查询和更新暂停状态。
 pub trait BotPauseStatusMemory {
-    /// 取某个机器人的状态；若没有条目就是初始值，否则复制已经存在的状态。
+    /// 返回机器人暂停状态；无记录时使用初始状态。
     fn to_bot_pause_status(&self) -> BotPauseStatus;
 
-    /// 改某个机器人的状态：`bot_name.update_bot_pause_status(BotPauseStatus::set_paused)`。
+    /// 更新机器人暂停状态。
     fn update_bot_pause_status(&self, change: impl FnOnce(&mut BotPauseStatus));
 
-    /// 忘掉某个机器人的状态：会话开始时与会话结束时都要调用。
+    /// 清除机器人暂停状态；会话开始和结束时调用。
     fn forget_bot_pause_status(&self);
 }
 
 impl BotPauseStatusMemory for str {
     fn to_bot_pause_status(&self) -> BotPauseStatus {
-        ALL_RUNNING_BOTS_PAUSE_STATUSES
+        PAUSE_STATUSES
             .lock()
-            .expect("尝试读取某个机器人的暂停状态时，暂停状态记忆的互斥锁被占用")
+            .expect("机器人暂停状态锁中毒：读取失败")
             .get(self)
             .copied()
             .unwrap_or_default()
     }
 
     fn update_bot_pause_status(&self, change: impl FnOnce(&mut BotPauseStatus)) {
-        let mut bot_pause_statuses = ALL_RUNNING_BOTS_PAUSE_STATUSES
+        let mut bot_pause_statuses = PAUSE_STATUSES
             .lock()
-            .expect("尝试更新某个机器人的暂停状态时，暂停状态记忆的互斥锁被占用");
+            .expect("机器人暂停状态锁中毒：更新失败");
         change(bot_pause_statuses.entry(self.to_string()).or_default());
     }
 
     fn forget_bot_pause_status(&self) {
-        let mut bot_pause_statuses = ALL_RUNNING_BOTS_PAUSE_STATUSES
+        let mut bot_pause_statuses = PAUSE_STATUSES
             .lock()
-            .expect("尝试忘掉某个机器人的暂停状态时，暂停状态记忆的互斥锁被占用");
+            .expect("机器人暂停状态锁中毒：清除失败");
         bot_pause_statuses.remove(self);
     }
 }
 
-/// 需要确认回显的两条指令：`/pause` 与 `/unpause`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseCommand {
-    /// 暂停钓鱼但保持在线（`/pause`）。
-    SetPause,
-    /// 取消暂停、恢复钓鱼（`/unpause`）。
-    SetUnpause,
-}
-
 impl PauseCommand {
-    /// 要注入游戏里的指令。
-    pub fn command(self) -> &'static str {
-        match self {
-            Self::SetPause => "/pause",
-            Self::SetUnpause => "/unpause",
-        }
-    }
-
-    /// 另一条命令：`/pause` ↔ `/unpause`（判断"最后那条回显是谁的"时要用它）。
-    fn other(self) -> Self {
-        match self {
-            Self::SetPause => Self::SetUnpause,
-            Self::SetUnpause => Self::SetPause,
-        }
-    }
-
-    /// 这条命令生效之后应该是什么状态（把"当前状态"报给用户时要用）。
-    fn target_pause_status(self) -> PauseStatus {
-        match self {
-            Self::SetPause => PauseStatus::Paused,
-            Self::SetUnpause => PauseStatus::Fishing,
-        }
-    }
-
-    /// 确认到回显之后，把进程内记忆的暂停状态改成对应值（调 [`BotPauseStatus`] 自己的方法）。
-    fn apply(self, status: &mut BotPauseStatus) {
-        match self {
-            Self::SetPause => status.set_paused(),
-            Self::SetUnpause => status.set_fishing(),
-        }
-    }
-
-    /// 这条命令的回显关键词：来自配置 `[command_echo]`（所用 JAR 支持 `/pause`、`/unpause` 时才会打印这两句）。
-    /// 吃 `&CommandEchoConfig` 而不是自己调 `config::Config::get()`，是为了让"最后一条回显是谁的"能单测。
+    /// 返回配置中的指令回显关键词。
     fn echo_keyword(self, command_echo: &config::CommandEchoConfig) -> &str {
         match self {
             Self::SetPause => &command_echo.pause_echo,
@@ -278,8 +145,7 @@ impl PauseCommand {
         }
     }
 
-    /// 判断日志窗口里最后出现的那条 pause/unpause 回显属于哪条指令（两条都不在窗口里就 `None`）。
-    /// 当两条指令被同时执行时，只有最新的返回是现在的真正状态。
+    /// 返回日志窗口中最新的暂停或恢复指令回显；无回显时返回 `None`。
     fn last_confirmed_pause_command(
         recent_lines: &[String],
         pause_command: Self,
@@ -303,39 +169,44 @@ impl PauseCommand {
     }
 }
 
-/// 发一条需要确认回显的指令，确认它是否生效，并记下这一次的暂停状态。
-/// 只有 `/pause`、`/unpause` 用它：它们的成功回显写在配置 `[command_echo]` 里
-/// （`PauseCommand::echo_keyword`）；其他指令无法预测回显。
-/// 1. 先 `inject()`：失败直接返回；
-/// 2. 等配置里 `command_echo.wait_ms`（JAR 收到指令会同步打一行回显，等它写入日志）；
-/// 3. 看最新日志最后 `command_echo.scan_lines` 行里最新的一条 pause/unpause 回显是谁的
-///    （`PauseCommand::last_confirmed_pause_command`）；
-/// 4. 是本次执行预期的回显 → 记下状态、返回 `Ok(true)`；是另一条指令的回显 → 状态按它记（它才是真的），
-///    返回 `Err`（带上"现在的状态是哪个"，让调用方如实回一句）；两条都不在 → 不下结论、`Ok(false)`。
-///
-/// 返回true = 本条命令生效；返回false = 指令已发送但没回显（关键词不对 / 等待时间太短，
-/// 来不及写入 / 日志名被更换等），此时调用方只能照实说"发了但没确认到"；`Err` = 注入失败、
-/// 找不到合法日志、读日志失败。最新的回显是另一条（指令已发出，但结果被后到的指令覆盖）时
-/// 也返回 `Err`，调用方照实回一句即可。
+/// 注入暂停或恢复指令，并根据发送后的日志回显更新状态。
+/// 本次回显已确认返回 `Ok(true)`；无回显返回 `Ok(false)`。
+/// 注入或日志读取失败，以及指令被较新的相反指令回显取代时返回 `Err`。
 pub fn confirm_pause_command(
     bot_dir_entry: &BotDirEntry,
     inject: impl FnOnce() -> Result<(), String>,
     pause_command: PauseCommand,
 ) -> Result<bool, String> {
+    let previous_log = latest_log_path(&bot_dir_entry.bot_dir_path)
+        .map(|path| fs::metadata(&path).map(|metadata| (path, metadata)))
+        .transpose()
+        .map_err(|_| text::get().bot_status_unreadable_log(&bot_dir_entry.bot_name))?;
     inject()?;
 
     thread::sleep(Duration::from_millis(
         config::Config::get().command_echo.wait_ms,
     ));
 
-    // 回显一定落在最新一份日志的末尾；没有合法日志就是错误
-    //（这时指令已经发出去了，调用方只能说"发了但没确认到"）。
     let Some(log_path) = latest_log_path(&bot_dir_entry.bot_dir_path) else {
         return Err(text::get().bot_status_log_not_found(&bot_dir_entry.bot_name));
     };
-    let recent_lines = read_last_lines(&log_path, config::Config::get().command_echo.scan_lines)?;
+    let metadata = fs::metadata(&log_path)
+        .map_err(|_| text::get().bot_status_unreadable_log(&bot_dir_entry.bot_name))?;
+    let start = previous_log
+        .filter(|(path, previous)| {
+            *path == log_path
+                && previous.dev() == metadata.dev()
+                && previous.ino() == metadata.ino()
+                && previous.len() <= metadata.len()
+        })
+        .map_or(0, |(_, previous)| previous.len());
+    let recent_lines = read_last_lines_after(
+        &log_path,
+        start,
+        config::Config::get().command_echo.scan_lines,
+    )
+    .map_err(|message| text::get().bot_line(&bot_dir_entry.bot_name, &message))?;
 
-    // 最新的回显决定这次调用的结果
     let command_echo = &config::Config::get().command_echo;
     match PauseCommand::last_confirmed_pause_command(&recent_lines, pause_command, command_echo) {
         Some(confirmed_pause_command) if confirmed_pause_command == pause_command => {
@@ -348,10 +219,11 @@ pub fn confirm_pause_command(
             bot_dir_entry
                 .bot_name
                 .update_bot_pause_status(|status| latest_pause_command.apply(status));
-            Err(text::get().bot_pause_superseded(
+            let message = text::get().bot_pause_superseded(
                 pause_command.command(),
                 &latest_pause_command.target_pause_status().to_string(),
-            ))
+            );
+            Err(text::get().bot_line(&bot_dir_entry.bot_name, &message))
         }
         None => Ok(false),
     }
@@ -394,6 +266,16 @@ mod tests {
         assert_eq!(of_line(">>> 机器人进程已结束或被手动中止 <<<"), None);
         // 不包含关键词的行不产生连接状态。
         assert_eq!(of_line("正在加载配置"), None);
+    }
+
+    #[test]
+    fn online_keyword_must_match_a_contiguous_log_substring() {
+        let line = "[INFO] 欢迎 duck 回到示例服，很高兴认识你";
+        assert_eq!(ConnectionStatus::from_line(line, "欢迎回到示例服"), None);
+        assert_eq!(
+            ConnectionStatus::from_line(line, "回到示例服"),
+            Some(ConnectionStatus::Online)
+        );
     }
 
     /// 重连提示必须同时包含前缀与后缀；只出现其中一个不足以确认重连。

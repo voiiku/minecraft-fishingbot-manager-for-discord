@@ -18,7 +18,7 @@ Tip: if any step is unclear, send this document's link to an AI assistant and as
   - [6. Put the project files in place and start once to generate the config template](#6-put-the-project-files-in-place-and-start-once-to-generate-the-config-template)
   - [7. Edit the config for your setup](#7-edit-the-config-for-your-setup)
   - [8. Start again and confirm the Discord connection](#8-start-again-and-confirm-the-discord-connection)
-  - [9. Make yourself an admin (skip if you already did this in step 7)](#9-make-yourself-an-admin-skip-if-you-already-did-this-in-step-7)
+  - [9. Configure an administrator and register commands](#9-configure-an-administrator-and-register-commands)
   - [10. Look at the help in Discord and add your first bot](#10-look-at-the-help-in-discord-and-add-your-first-bot)
     - [10.1 Create the first bot](#101-create-the-first-bot)
     - [10.2 Log in to the first bot](#102-log-in-to-the-first-bot)
@@ -120,7 +120,8 @@ Edit it to match your setup.
 
 Two things to remember:
 
-* To change how the fishing bots behave, edit the fields under `[fishingbot]` in this config. Do not edit the `conf.json` file itself — your changes would be overwritten at startup.
+* To change how the fishing bots behave, edit the fields under `[fishingbot]` in this config. Do not edit the `config.json` file itself — your changes would be overwritten at startup.
+* Leave `[discord] guild_ids` empty for global registration, or set it to an array of server ID strings such as `["123456789012345678"]` to register only in those servers, normally immediately. The bot must already belong to each target server.
 * After every config change you must restart this program for it to take effect.
 
 ## 8. Start again and confirm the Discord connection
@@ -142,10 +143,12 @@ gateway watchdog ready: judging window 30 s, probe every 10 s, first handshake t
 
 If the bot's avatar in Discord turns from grey to online, or the terminal says "connected to Discord", the bot is online.
 
-## 9. Make yourself an admin (skip if you already did this in step 7)
+## 9. Configure an administrator and register commands
 
-1. Press `Ctrl+C` to stop the process, then edit `minecraft-fishingbot-manager-for-discord.conf.toml`.
-2. In a Discord channel, send `/whoami`. It replies with your user ID (for example `123456789012345678`).
+1. Enable Developer Mode in Discord's advanced settings, right-click your account and copy your user ID
+   (for example `123456789012345678`).
+2. If you did not configure an administrator in step 7, press `Ctrl+C` to stop the process and edit
+   `minecraft-fishingbot-manager-for-discord.conf.toml`.
 3. Add it to the config:
    ```toml
    [admins]
@@ -153,10 +156,16 @@ If the bot's avatar in Discord turns from grey to online, or the terminal says "
    ```
    * The nickname is only used by `/show admins`.
    * You can add several admins.
-4. Start the program again
+4. After changing the config, start the program again:
    ```bash
    ./minecraft-fishingbot-manager-for-discord
    ```
+5. Startup only creates a missing `/sync-commands` in the configured scope. Wait for it to appear: up to about an hour
+   globally, normally immediately in a server. Run it as a configured administrator to update the full set and clear
+   old scopes. If any target server update fails, old scopes are retained; fix the error and retry.
+   This replaces this application's target-scope commands and removes its old-scope commands, including manually added
+   ones, without affecting other applications. Global mode clears old server commands immediately, so some commands may
+   be unavailable while global changes propagate. Restart and run the command again after upgrades or list changes.
 
 ## 10. Look at the help in Discord and add your first bot
 
@@ -168,10 +177,7 @@ If the bot does not answer, look at the newest file under `logs`, and check [Tro
 In Discord, send `/bot add` with the bot name `duck` (just an example name).
 The reply should look like this:
 ```
-Bot 'duck' added!
-Note: configure its token before it can start.
-Use /bot login to log in online
-Only if /bot login fails should you set the token by hand with /token
+Bot 'duck' added. Configure credentials with /bot login, or use /token if login fails.
 ```
 
 This creates a directory on the Linux server: `/fishingbots/bots/<your Discord ID>/duck/`.
@@ -200,16 +206,21 @@ If you logged in successfully with `/bot login`, the bot should already be runni
 2. A result reply (one of three):
    * the log confirms it joined: `Bot duck: start command sent, the session is up and the log confirms it joined`
    * the session survives the grace period but the log is not confirmed: `Bot duck: start command sent, the session is up but the state is not confirmed yet`
-   * the session disappears before the grace period: `Bot duck: failed to start (usually because Microsoft throttles frequent logins, or because it ran out of memory)`
+   * the session disappears before the grace period: `Bot duck: failed to start`
 
-* `/start` waits for `timing.check_grace_ms` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
+* `/start` waits for `timing.check_grace` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
 
 To check the status, send `/show status`. It returns a table of the running bots:
 
 ```
+Anti-AFK: not running
 bot | server status | pause status | uptime
 Your bot name | server online | fishing | 3 minutes
 ```
+The pause status is an in-memory record of confirmed command echoes; the initial "fishing" value is not a live query.
+When FishingBot reconnects to the game server within the same session, the record is retained and may differ from the
+JAR's actual state. A successful bot restart through the manager clears the record.
+
 **Common problems**
 * The status stays at "ready" or "initializing": the log keywords may not match your game server. Check `keywords.online` first; if only "reconnecting" is not recognised, check that `[i18n] language` is correct.
 

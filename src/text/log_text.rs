@@ -1,18 +1,20 @@
 //! 程序日志、启动提示与配置错误使用的文案类型。
 
+use std::time::Duration;
+
 use super::ConfigRequirement;
 
 /// 一条日志或控制台文案及其参数。
 #[derive(Debug, Clone, Copy)]
 pub enum LogText<'a> {
     // ============ 程序日志（`process_log.rs`） ============
-    /// 新日志文件的第一行（"页首"）。
+    /// 新日志文件的首行。
     ProcessLogFirstLine,
     /// 程序日志文件的位置。
     ProcessLogPath { path: &'a str },
-    /// 装 logger 失败，本次只能输出到终端。
+    /// 日志记录器安装失败，仅输出到终端。
     ProcessLogInstallFailed { reason: &'a str },
-    /// 日志已经装过一次，本次保留已装的 logger。
+    /// 日志记录器已安装，保留原实例。
     ProcessLogAlreadyInstalled,
 
     // ============ 进程入口与看门狗（`main.rs` / `watchdog.rs`） ============
@@ -20,35 +22,39 @@ pub enum LogText<'a> {
     ConfigLoaded { path: &'a str },
     /// 进程 PID。
     ProcessId { pid: u32 },
-    /// 已连上 Discord。
+    /// 已连接 Discord。
     DiscordConnected { application_id: u64 },
     /// 邀请链接。
     InviteUrl { url: &'a str },
     /// 收到退出信号。
     ShutdownSignal,
-    /// REST 探活失败（还在重试）。
+    /// REST 探活失败，等待重试。
     ProbeFailed { reason: &'a str },
-    /// 网关看门狗就绪：把在用的三个时序参数一起报出来（排查时以这一行为准）。
+    /// 网关看门狗就绪及其实际时序参数。
     WatchdogReady {
-        window_secs: u64,
-        probe_interval_secs: u64,
-        first_handshake_timeout_secs: u64,
+        window: Duration,
+        probe_interval: Duration,
+        first_handshake_timeout: Duration,
     },
     /// 指令回调返回了 `Err`。
     CommandRunFailed { error: &'a str },
-    /// 每次回复用户都记一条：谁调的、哪条指令、回了什么。
-    ///
-    /// 记录回复内容，供排查问题时核对。
-    /// `command_path` 是 poise 的 `qualified_name`（如 `start`、`bot add`，不带斜杠）。
+    /// 发送指令失败提示时出错。
+    CommandFallbackReplyFailed {
+        caller_id: u64,
+        command_path: &'a str,
+        reason: &'a str,
+    },
+    /// 自动候选查询失败。
+    AutocompleteLookupFailed { reason: &'a str },
+    /// 自动候选查询任务失败。
+    AutocompleteTaskFailed { reason: &'a str },
+    /// 指令回复日志；`command_path` 是不带斜杠的 poise `qualified_name`。
     CommandReplied {
         caller_id: u64,
         command_path: &'a str,
         reply: &'a str,
     },
-    /// 最终报告没能作为交互回复发出，改发普通频道消息。
-    ///
-    /// 交互令牌只有 15 分钟（见 `docs/CONTEXTS/CONTEXT-zh_cn.md` 第 3 节）：批量启动跑得比它久时
-    /// followup 一定失败，报告改走普通频道消息，用户至少能看到结果。
+    /// 交互回复失败，最终报告改发频道消息；交互令牌的有效期为 15 分钟。
     ReportPostedToChannel {
         caller_id: u64,
         command_path: &'a str,
@@ -58,25 +64,25 @@ pub enum LogText<'a> {
     FrameworkError { detail: &'a str },
     /// 注册 SIGTERM 处理失败。
     SigtermRegisterFailed { reason: &'a str },
-    /// 看门狗判定"启动后从未握手"：正在停机器人，随后重建连接。
+    /// 看门狗判定首次握手超时，停止机器人后重连。
     GatewayLostNeverReady,
-    /// 看门狗判定"探活持续失败"：正在停机器人，随后重建连接。
+    /// 看门狗判定探活持续失败，停止机器人后重连。
     GatewayLostUnreachable,
-    /// 掉线后开始重建连接（第 N 次尝试，等 M 秒）。
-    ReconnectScheduled { attempt: u32, seconds: u64 },
-    /// 重建连接失败（建连或装配出错），等 M 秒再试。
+    /// 计划在指定延迟后重连。
+    ReconnectScheduled { attempt: u32, delay: Duration },
+    /// 重连失败，将在指定延迟后重试。
     ReconnectFailed {
         attempt: u32,
-        seconds: u64,
+        delay: Duration,
         reason: &'a str,
     },
-    /// 掉线之后重新连上了：通知已发往各服务器。
+    /// 掉线后重新连接，报告通知发送结果。
     ReconnectedAfterOffline {
         offline_secs: u64,
         notified_guilds: usize,
         failed_guilds: usize,
     },
-    /// 给某个服务器发恢复通知失败。
+    /// 发送恢复通知失败。
     ReconnectNoticeFailed {
         guild_name: &'a str,
         reason: &'a str,
@@ -88,33 +94,28 @@ pub enum LogText<'a> {
         offline_since: &'a str,
         offline_secs: u64,
     },
-    /// 装配阶段就失败了（例如 token 被拒），还没跑到任何事情。
+    /// Discord 客户端初始化失败。
     DiscordInitFailed { error: &'a str },
-    /// 同上，但成因多半是机器人还没被邀请进服务器，或邀请时缺少 `applications.commands` 权限
-    ///（Discord 对注册斜杠指令回 `50001 Missing Access`）。
+    /// 初始化失败：机器人未被邀请，或缺少 `applications.commands` 权限。
     DiscordInitFailedNotInvited { error: &'a str },
-    /// 同上，但成因多半是 `discord.token` 不对或已被 Reset（Discord 回 401）。
+    /// 初始化失败：Discord Token 无效或已重置。
     DiscordInitFailedBadToken { error: &'a str },
-    /// 清掉了某个服务器上遗留的 guild 指令（以前注册到该服务器的那些）。
+    /// 已清理服务器遗留的 guild 指令。
     GuildCommandsCleared { guild_name: &'a str, count: usize },
-    /// 清理某个服务器上遗留的 guild 指令失败；只影响这次清理，下次启动会再试一次。
+    /// 清理某个服务器上遗留的 guild 指令失败；需手动再次执行同步。
     GuildCommandsClearFailed {
         guild_name: &'a str,
         reason: &'a str,
     },
-    /// 读不到现有的全局指令，于是跳过 guild 指令残留清理（注册本身不受影响）。
-    GlobalCommandsReadFailed { reason: &'a str },
-    /// 这套全局指令还不满 1 小时（或本轮刚改过），本轮不动 guild 指令残留。
-    GuildCommandsCleanupWaiting { minutes: u64 },
     /// 与 Discord 的连接正常结束（客户端返回 `Ok`）。
     DiscordClientEnded,
     /// 与 Discord 的连接出错。
     DiscordClientError { error: &'a str },
-    /// 进程退出收尾报告的标题（掉线、永久错误这类收尾用）。
+    /// 掉线或永久错误导致进程退出时的收尾报告标题。
     ShutdownReportTitle,
     /// 收到退出信号后收尾报告的标题（正常退出，与 `/stopall` 同一份明细）。
     ShutdownSignalReportTitle,
-    /// 给某个服务器发收到退出信号时的收尾报告失败。
+    /// 发送退出信号收尾报告失败。
     ShutdownReportNoticeFailed {
         guild_name: &'a str,
         reason: &'a str,
@@ -124,12 +125,12 @@ pub enum LogText<'a> {
         notified_guilds: usize,
         failed_guilds: usize,
     },
-    /// 收到退出信号时还没有可用的 Discord 上下文（本次连接没握手成功），收尾报告只能写日志。
+    /// 无可用 Discord 上下文，退出收尾报告仅写入日志。
     ShutdownReportNoContext,
-    /// 收到退出信号时的收尾报告没能在时限内发完：跳过发送，直接退出。
+    /// 退出收尾报告发送超时，跳过剩余消息。
     ShutdownReportTimeout { seconds: u64 },
 
-    // ============ 机器人目录与房间（`bot_manage/*`、`utils/*`） ============
+    // ============ 机器人目录与房间（`handlers/bot_manage/*`、`utils/*`） ============
     /// 收到单机器人重启指令。
     BotRestartRequested { bot_name: &'a str },
     /// 机器人已停止。
@@ -147,81 +148,84 @@ pub enum LogText<'a> {
     BotDeleted { bot_name: &'a str },
     /// 机器人日志文件的第一行。
     BotLogFirstLine,
-    /// 建机器人日志文件失败（带原因）。
+    /// 创建机器人日志文件失败。
     StartLogFileFailed { bot_name: &'a str, reason: &'a str },
-    /// 正在拉起会话。
+    /// 正在启动会话。
     StartSessionLaunched {
         bot_name: &'a str,
         session_name: &'a str,
         log_path: &'a str,
     },
-    /// 批量启动完的复核没过（账本只复核一次）：带上没过的那条明细。
+    /// 启动结果复核失败。
     StartVerificationFailed { bot_name: &'a str, reason: &'a str },
-    /// 拉起单台机器人时发生内部错误（panic）：这台的失败明细已经写回账本。
+    /// 单机器人启动发生 panic，失败明细已写入账本。
     StartLaunchPanicked { bot_name: &'a str, reason: &'a str },
     /// 等待启动结果超时：该机器人的"未确认"明细已写回账本。
-    StartResultTimeout { bot_name: &'a str, seconds: u64 },
-    /// 启动线程异常退出（panic），准备重启它。
+    StartResultTimeout {
+        bot_name: &'a str,
+        timeout: Duration,
+    },
+    /// 启动线程发生 panic，准备重启。
     StarterRestarting { reason: &'a str },
-    /// FishingBot 日志目录里有意料之外的文件。
+    /// FishingBot 日志目录包含意外文件。
     UnexpectedGameLogFile { dir: &'a str, file_name: &'a str },
     /// 清空 FishingBot 日志目录失败。
     GameLogsDirRemoveFailed { dir: &'a str, reason: &'a str },
     /// 创建 FishingBot 日志目录失败。
     GameLogsDirCreateFailed { dir: &'a str, reason: &'a str },
-    /// 把 FishingBot 的日志文件指向丢弃设备失败。
+    /// 将 FishingBot 日志文件指向丢弃设备失败。
     GameLogDiscardFailed {
         file: &'a str,
         device: &'a str,
         reason: &'a str,
     },
 
-    // ============ 登录流程（`bot_manage/login.rs`） ============
-    /// 登录被微软拒绝（凭据没建出来），会话已停。
+    // ============ 登录流程（`handlers/bot_manage/login.rs`） ============
+    /// 登录被微软拒绝，会话已停止。
     BotLoginRejected { bot_name: &'a str },
-    /// 登录超时后停会话没停干净。
+    /// 登录结束后停止会话失败。
     BotLoginStopFailed { bot_name: &'a str, reason: &'a str },
-    /// 清掉残留的旧凭据失败。
+    /// 删除旧凭据失败。
     BotLoginOldTokenRemoveFailed { path: &'a str, reason: &'a str },
-    /// 把挪开的旧凭据放回原位失败。
+    /// 恢复旧凭据失败。
     BotLoginOldTokenRestoreFailed { path: &'a str, reason: &'a str },
-    /// 把凭据文件权限收紧到 0600 失败。
+    /// 将凭据文件权限设为 0600 失败。
     BotLoginChmodFailed { path: &'a str, reason: &'a str },
 
     // ============ 游戏侧配置的生成（`utils/fishingbot_config.rs`） ============
-    /// 生成前删掉了旧的游戏侧配置文件。
+    /// 已删除旧游戏侧配置文件。
     FishingbotConfigRemoved { path: &'a str },
     /// 已生成游戏侧配置文件。
     FishingbotConfigWritten { path: &'a str },
-    /// 删旧的游戏侧配置文件失败。
+    /// 删除旧游戏侧配置文件失败。
     FishingbotConfigRemoveFailed { path: &'a str, reason: &'a str },
-    /// 写游戏侧配置文件失败。
+    /// 写入游戏侧配置文件失败。
     FishingbotConfigWriteFailed { path: &'a str, reason: &'a str },
-    /// 把游戏侧配置序列化成 JSON 失败（理论上不会发生，理由写进调用点）。
+    /// 游戏侧配置序列化为 JSON 失败。
     FishingbotConfigSerializeFailed { reason: &'a str },
-    /// 仓库里那份游戏侧配置模板用不了：不是合法 JSON。
+    /// 游戏侧配置模板不是有效 JSON。
     FishingbotConfigTemplateInvalid { reason: &'a str },
-    /// 模板里找不到某个托管路径（上游改了键名或删了键）。
+    /// 游戏侧配置模板缺少托管路径。
     FishingbotConfigTemplatePathMissing { path: &'a str },
 
     // ============ 日志文件读写（`utils/bot_logs.rs`） ============
-    /// 建日志目录失败。
+    /// 创建日志目录失败。
     CreateLogDirFailed { dir: &'a str, reason: &'a str },
-    /// 建日志文件失败。
+    /// 创建日志文件失败。
     CreateLogFileFailed { path: &'a str, reason: &'a str },
-    /// 写日志首行失败。
+    /// 写入日志首行失败。
     WriteLogFirstLineFailed { path: &'a str, reason: &'a str },
-    /// 打开日志文件失败（`/log` 与状态判定都会碰到）。
+    /// 打开日志文件失败。
     OpenLogFileFailed { reason: &'a str },
-    /// 读日志文件信息（长度）失败。
+    /// 读取日志文件元数据失败。
     ReadLogMetadataFailed { reason: &'a str },
-    /// 在日志文件里定位失败。
+    /// 定位日志文件失败。
     SeekLogFileFailed { reason: &'a str },
-    /// 读日志内容失败。
+    /// 读取日志内容失败。
     ReadLogContentFailed { reason: &'a str },
 
     // ============ 配置层（`config.rs` 与 `config/*`） ============
-    // "配置还没读成功"的那几条提示不在这里：它们属于引导期文案，走 [`crate::text::bootstrap`]（固定英文）。
+    // 配置加载前的引导期文案由 [`crate::text::bootstrap`] 提供。
     /// 字段级报错：`配置项 <字段> <要求>`。
     ConfigFieldInvalid {
         field: &'a str,

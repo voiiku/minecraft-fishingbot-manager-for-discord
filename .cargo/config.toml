@@ -1,6 +1,5 @@
 [build]
 target = "x86_64-unknown-linux-musl"
 
-# 重新生成 THIRD-PARTY-NOTICES.html。
 [alias]
 notices = "about generate about.hbs -o THIRD-PARTY-NOTICES.html"

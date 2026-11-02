@@ -1,13 +1,17 @@
 //! 简体中文文案。
 
-use super::{CommandText, ConfigRequirement, LogText, Text, WatchdogText};
+use std::time::Duration;
 
-/// 简体中文的实现（不需要实例状态）。
+use super::{
+    CommandText, CommandTextProblem, ConfigRequirement, LogText, Text, WatchdogText, format_seconds,
+};
+
+/// 简体中文文案实现。
 pub(super) struct ZhCn;
 
 pub(super) static ZH_CN: ZhCn = ZhCn;
 
-/// 全部指令与子指令的说明（把命令注册到 Discord 时用，表结构见 [`super::CommandText`]）。
+/// Discord 指令与子指令说明。
 pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     CommandText {
         name_path: "help",
@@ -21,7 +25,7 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     },
     CommandText {
         name_path: "show status",
-        description: "查看全部正在运行的机器人及状态",
+        description: "查看运行中的机器人与反 AFK 状态",
         options: &[],
     },
     CommandText {
@@ -35,6 +39,11 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
     CommandText {
         name_path: "checkserver",
         description: "查看钓鱼服务器自身的性能状态",
+        options: &[],
+    },
+    CommandText {
+        name_path: "sync-commands",
+        description: "按配置更新指令并清理旧范围 (仅管理员)",
         options: &[],
     },
     CommandText {
@@ -149,6 +158,16 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
         options: &[],
     },
     CommandText {
+        name_path: "pauseall",
+        description: "暂停全部运行中机器人的钓鱼 (仅管理员)",
+        options: &[],
+    },
+    CommandText {
+        name_path: "unpauseall",
+        description: "恢复全部运行中机器人的钓鱼 (仅管理员)",
+        options: &[],
+    },
+    CommandText {
         name_path: "commandall",
         description: "向全部运行中的机器人发送同一条游戏内指令 (仅管理员)",
         options: &[(
@@ -156,58 +175,51 @@ pub(super) const COMMAND_TEXTS: &[CommandText] = &[
             "游戏内指令 (带斜杠为指令，不带为聊天；直接写入，含空格时无需加引号)",
         )],
     },
+    CommandText {
+        name_path: "anti-afk",
+        description: "启动或停止反 AFK (仅管理员)",
+        options: &[("command", "选择 on 启动或 off 停止")],
+    },
 ];
 
 impl Text for ZhCn {
     fn watchdog_text(&self, message: WatchdogText) -> &'static str {
         match message {
-            WatchdogText::StartedLockReset => {
-                "尝试重置本次连接尝试的起始状态时，看门狗的 started 字段的互斥锁被占用"
-            }
+            WatchdogText::StartedLockReset => "看门狗 started 锁中毒：重置连接起始时间失败",
             WatchdogText::LastHandshakeLockClear => {
-                "尝试清除上一次握手状态时，看门狗的 last_handshake 字段的互斥锁被占用"
+                "看门狗 last_handshake 锁中毒：清除握手状态失败"
             }
             WatchdogText::LastHandshakeLockRecord => {
-                "尝试记录握手状态时，看门狗的 last_handshake 字段的互斥锁被占用"
+                "看门狗 last_handshake 锁中毒：记录握手状态失败"
             }
-            WatchdogText::LastHandshakeLockRead => {
-                "尝试判定网络状态时，看门狗的 last_handshake 字段的互斥锁被占用"
-            }
+            WatchdogText::LastHandshakeLockRead => "看门狗 last_handshake 锁中毒：读取握手状态失败",
             WatchdogText::UnhealthySinceLockClear => {
-                "尝试清除探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+                "看门狗 unhealthy_since 锁中毒：清除探活失败状态失败"
             }
             WatchdogText::UnhealthySinceLockRecord => {
-                "尝试记录探活失败状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+                "看门狗 unhealthy_since 锁中毒：记录探活失败状态失败"
             }
             WatchdogText::UnhealthySinceLockRead => {
-                "尝试判定网络状态时，看门狗的 unhealthy_since 字段的互斥锁被占用"
+                "看门狗 unhealthy_since 锁中毒：读取探活失败状态失败"
             }
-            WatchdogText::StartedLockRead => {
-                "尝试判定网络状态时，看门狗的 started 字段的互斥锁被占用"
-            }
-            WatchdogText::OfflineSinceLockRecord => {
-                "尝试记录掉线状态时，看门狗的 offline_since 字段的互斥锁被占用"
-            }
-            WatchdogText::OfflineSinceLockRead => {
-                "尝试读取掉线状态时，看门狗的 offline_since 字段的互斥锁被占用"
-            }
+            WatchdogText::StartedLockRead => "看门狗 started 锁中毒：读取连接起始时间失败",
+            WatchdogText::OfflineSinceLockRecord => "看门狗 offline_since 锁中毒：记录掉线状态失败",
+            WatchdogText::OfflineSinceLockRead => "看门狗 offline_since 锁中毒：读取掉线状态失败",
             WatchdogText::PendingDisconnectReasonLockRecord => {
-                "尝试记录掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用"
+                "看门狗 pending_disconnect_reason 锁中毒：记录掉线原因失败"
             }
             WatchdogText::PendingDisconnectReasonLockRead => {
-                "尝试读取掉线原因时，看门狗的 pending_disconnect_reason 字段的互斥锁被占用"
+                "看门狗 pending_disconnect_reason 锁中毒：读取掉线原因失败"
             }
             WatchdogText::NoticeCtxLockSendReport => {
-                "发送收尾报告时，看门狗的 notice_ctx 字段的互斥锁被占用"
+                "看门狗 notice_ctx 锁中毒：读取收尾通知上下文失败"
             }
-            WatchdogText::NoticeCtxLockRecord => {
-                "记录 Discord 上下文时，看门狗的 notice_ctx 字段的互斥锁被占用"
-            }
+            WatchdogText::NoticeCtxLockRecord => "看门狗 notice_ctx 锁中毒：记录通知上下文失败",
         }
     }
 
     fn report_succeeded_label(&self) -> &'static str {
-        "[成功明细]"
+        "[完成明细]"
     }
 
     fn report_skipped_label(&self) -> &'static str {
@@ -219,7 +231,7 @@ impl Text for ZhCn {
     }
 
     fn report_failed_label(&self) -> &'static str {
-        "[失败明细]"
+        "[异常明细]"
     }
 
     fn report_content_label(&self) -> &'static str {
@@ -266,12 +278,7 @@ impl Text for ZhCn {
         "已暂停"
     }
 
-    // ===== FishingBot.jar 自己打印的固定文案（`utils/bot_status.rs` 拿它们在日志里认重连）=====
-    // 这两句不是 JAR 的可调项：它按自己的语言资源打印，所以"中文日志 ↔ 这里的中文"、
-    // "英文日志 ↔ `en_us.rs` 里的英文"是一对；换 JAR 的语言时把 `[i18n] language` 一起换掉，
-    // 两边就对齐了。
-    // 来源：`docs/refs/BOT_COMMANDS_AND_MESSAGES-zh_cn.md` 的 `bot-automatic-reconnect`。
-    // `/pause` 与 `/unpause` 的回显同属 JAR 打印，但已挪到配置 `[command_echo]`（要配 jar 的构建）。
+    // FishingBot 的重连提示，用于识别日志状态；指令回显由 `[command_echo]` 配置。
 
     fn jar_reconnect_prefix(&self) -> &'static str {
         "钓鱼机器人将在"
@@ -282,7 +289,7 @@ impl Text for ZhCn {
     }
 
     fn bot_name_empty(&self) -> &'static str {
-        "机器人名不能为空(只允许字母、数字、下划线与连字符)"
+        "机器人名不能为空"
     }
 
     fn bot_name_illegal_char(&self, raw_bot_name: &str, illegal_char: char) -> String {
@@ -291,13 +298,13 @@ impl Text for ZhCn {
         )
     }
 
-    // ============ 单机器人指令（`bot_control/*`） ============
+    // ============ 单机器人指令（`handlers/bot_control/*`） ============
     fn bot_start_missing_token(&self, bot_name: &str) -> String {
         format!("错误: 机器人 '{bot_name}' 缺少 Token 文件，无法启动！")
     }
 
     fn bot_start_already_running(&self, bot_name: &str) -> String {
-        format!("错误: 机器人 '{bot_name}' 已在运行中，无需启动！")
+        format!("机器人 '{bot_name}' 的 screen 会话已存在，无法启动")
     }
 
     fn bot_start_already_queued(&self, bot_name: &str) -> String {
@@ -305,7 +312,7 @@ impl Text for ZhCn {
     }
 
     fn bot_stop_not_running(&self, bot_name: &str) -> String {
-        format!("错误: 机器人 '{bot_name}' 未在运行，无需停止")
+        format!("机器人 '{bot_name}' 没有 screen 会话，无需停止")
     }
 
     fn bot_stop_succeeded(&self, bot_name: &str) -> String {
@@ -322,12 +329,22 @@ impl Text for ZhCn {
         )
     }
 
+    fn bot_restart_online_confirmed(&self, bot_name: &str) -> String {
+        format!("机器人 {bot_name}: 重启后已确认进服")
+    }
+
+    fn bot_restart_session_unconfirmed(&self, bot_name: &str) -> String {
+        format!(
+            "机器人 {bot_name}: 重启后会话已存在，进服状态未确认（可稍后使用 /show status 查看）"
+        )
+    }
+
     fn bot_command_empty(&self) -> &'static str {
         "错误: 发送的指令不能为空！"
     }
 
     fn bot_command_not_running(&self, bot_name: &str) -> String {
-        format!("错误: 机器人 '{bot_name}' 未运行，无法发送指令！")
+        format!("机器人 '{bot_name}' 没有 screen 会话，无法发送指令")
     }
 
     fn bot_command_sent(&self, bot_name: &str, bot_command: &str) -> String {
@@ -342,6 +359,10 @@ impl Text for ZhCn {
         format!("已确认机器人 '{bot_name}' 恢复钓鱼")
     }
 
+    fn bot_pause_unconfirmed(&self, bot_name: &str, bot_command: &str) -> String {
+        format!("机器人 '{bot_name}': 已发送 {bot_command}，状态未确认")
+    }
+
     fn bot_pause_superseded(&self, my_command: &str, current_pause_status: &str) -> String {
         format!("发送 {my_command}，但最新状态是 {current_pause_status}")
     }
@@ -354,14 +375,9 @@ impl Text for ZhCn {
         format!("错误: 机器人 '{bot_name}' 日志文件不存在")
     }
 
-    // ============ 账号管理指令（`bot_manage/*`） ============
+    // ============ 账号管理指令（`handlers/bot_manage/*`） ============
     fn bot_add_succeeded(&self, bot_name: &str) -> String {
-        format!(
-            "添加机器人 '{bot_name}' 成功！\n\
-             注意：还需为其配置 Token 后才可启动。\n\
-             建议使用 /bot login 在线登录\n\
-             只有 /bot login 登录失败时，才应当使用 /token 命令手动设置 token"
-        )
+        format!("已添加机器人 '{bot_name}'；请使用 /bot login 配置凭据，失败时可使用 /token。")
     }
 
     fn bot_add_failed(&self, raw_bot_name: &str, reason: &str) -> String {
@@ -408,9 +424,7 @@ impl Text for ZhCn {
 
     fn bot_login_prompt(&self, bot_name: &str, verification_url: &str, user_code: &str) -> String {
         format!(
-            "尝试登录机器人 {bot_name}：请在浏览器打开 {verification_url} 并输入代码 \
-             {user_code}（此代码约 10 分钟内有效）。\n\
-             授权成功后会再次回复结果。"
+            "机器人 {bot_name}: 请在 10 分钟内打开 {verification_url} 并输入代码 {user_code}；授权结果将另行通知。"
         )
     }
 
@@ -419,15 +433,11 @@ impl Text for ZhCn {
     }
 
     fn bot_login_succeeded(&self, bot_name: &str) -> String {
-        format!(
-            "机器人 {bot_name} 的登录凭据已保存（若存在旧凭据会被删除），正在启动（可用 /show status 查看状态）"
-        )
+        format!("机器人 {bot_name}: 登录凭据已保存；可使用 /show status 查看状态")
     }
 
     fn bot_login_already_running(&self, bot_name: &str) -> String {
-        format!(
-            "机器人 {bot_name} 正在尝试登录：若它正在执行/bot login，请等待结果消息；若希望重新登录请先 /stop"
-        )
+        format!("机器人 {bot_name} 已存在会话且缺少 Token；若正在登录，请等待结果或停止会话后重试")
     }
 
     fn bot_login_rejected(&self, bot_name: &str) -> String {
@@ -435,28 +445,26 @@ impl Text for ZhCn {
     }
 
     fn bot_login_prompt_missing(&self, bot_name: &str) -> String {
-        format!(
-            "错误: 机器人 {bot_name} 的会话已启动，但没有显示设备码。请用 /log {bot_name} 查看输出。常见原因：JAR 参数不正确、内存不足，或该构建不支持设备码登录"
-        )
+        format!("机器人 {bot_name}: 未找到设备码，请使用 /log {bot_name} 查看日志")
     }
 
     fn bot_login_timed_out(&self, bot_name: &str, waited_minutes: u64) -> String {
         format!(
-            "错误: 获取机器人 {bot_name} 凭据超时（{waited_minutes} 分钟），已取消登录会话。请重试或用 /token"
+            "机器人 {bot_name}: 等待凭据超时（{waited_minutes} 分钟）；请检查会话状态后重试或使用 /token"
         )
     }
 
-    // ============ 批量指令（`all_bots_control/*`） ============
+    // ============ 批量指令（`handlers/all_bots_control/*`） ============
     fn count_valid_accounts(&self) -> &'static str {
-        "有效账号总数"
+        "已配置 Token"
     }
 
     fn count_start_command_sent(&self) -> &'static str {
-        "已发送启动命令"
+        "启动后会话存在"
     }
 
     fn count_skipped_running(&self) -> &'static str {
-        "跳过（已在运行）"
+        "跳过（会话已存在）"
     }
 
     fn count_skipped_missing_token(&self) -> &'static str {
@@ -468,41 +476,55 @@ impl Text for ZhCn {
     }
 
     fn count_start_failed(&self) -> &'static str {
-        "启动失败"
+        "启动异常"
     }
 
     fn count_running_accounts(&self) -> &'static str {
-        "运行中账号"
+        "目标机器人"
     }
 
     fn count_restart_command_sent(&self) -> &'static str {
-        "已发送重启命令"
+        "重启后会话存在"
     }
 
     fn count_restart_failed(&self) -> &'static str {
-        "重启失败"
+        "重启异常"
     }
 
     fn count_sent_ok(&self) -> &'static str {
-        "成功发送"
+        "已发送"
     }
 
     fn count_send_failed(&self) -> &'static str {
         "发送失败"
     }
 
+    fn count_processed_successfully(&self) -> &'static str {
+        "处理完成"
+    }
+
+    fn count_processing_failed(&self) -> &'static str {
+        "处理异常"
+    }
+
+    fn pauseall_title(&self) -> &'static str {
+        "批量暂停钓鱼结果"
+    }
+
+    fn unpauseall_title(&self) -> &'static str {
+        "批量恢复钓鱼结果"
+    }
+
     fn startall_no_valid_accounts(&self) -> &'static str {
-        "全部启动执行结果: 未配置任何有效账号，未启动"
+        "没有可启动的机器人"
     }
 
     fn startall_no_valid_accounts_with_missing(&self, missing_token_count: usize) -> String {
-        format!(
-            "全部启动执行结果: 无有效机器人，未启动。\n(另有 {missing_token_count} 个账号缺少 Token 文件)"
-        )
+        format!("没有可启动的机器人（{missing_token_count} 个缺少 Token）")
     }
 
     fn startall_all_running(&self) -> &'static str {
-        "全部启动执行结果: 全部有效机器人均已运行，无需重复启动"
+        "已配置 Token 的机器人均存在会话"
     }
 
     fn startall_title(&self) -> &'static str {
@@ -510,11 +532,59 @@ impl Text for ZhCn {
     }
 
     fn startall_skipped_running(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 已在运行")
+        format!("机器人 {bot_name}: 会话已存在")
     }
 
     fn stopall_title(&self) -> &'static str {
         "全服机器人停止结果"
+    }
+
+    fn anti_afk_started(&self) -> &'static str {
+        "反 AFK 已启动（不保证已有匹配会话或输入已送达）"
+    }
+
+    fn anti_afk_already_running(&self) -> &'static str {
+        "反 AFK 已在运行，无需重复启动"
+    }
+
+    fn anti_afk_stopped(&self) -> &'static str {
+        "反 AFK 已停止"
+    }
+
+    fn anti_afk_status(&self, running: bool) -> &'static str {
+        if running {
+            "反 AFK: 运行中"
+        } else {
+            "反 AFK: 未运行"
+        }
+    }
+
+    fn anti_afk_stop_not_running(&self) -> &'static str {
+        "错误: 反 AFK 功能未在运行，无需停止"
+    }
+
+    fn anti_afk_lock_failed(&self, reason: &str) -> String {
+        format!("获取反 AFK 状态锁失败: {reason}")
+    }
+
+    fn anti_afk_config_failed(&self, reason: &str) -> String {
+        format!("构建反 AFK 配置失败: {reason}")
+    }
+
+    fn anti_afk_worker_failed(&self, reason: &str) -> String {
+        format!("反 AFK 线程运行失败: {reason}")
+    }
+
+    fn anti_afk_start_failed(&self, reason: &str) -> String {
+        format!("启动反 AFK 失败: {reason}")
+    }
+
+    fn anti_afk_stop_failed(&self, reason: &str) -> String {
+        format!("停止反 AFK 失败: {reason}")
+    }
+
+    fn anti_afk_status_failed(&self, reason: &str) -> String {
+        format!("查询反 AFK 状态失败: {reason}")
     }
 
     fn restartall_nothing_running(&self) -> &'static str {
@@ -539,7 +609,7 @@ impl Text for ZhCn {
     }
 
     fn status_no_running_bots(&self) -> &'static str {
-        "目前没有正在运行的机器人"
+        "没有已配置 Token 且存在会话或排队的机器人"
     }
 
     fn status_column_bot_name(&self) -> &'static str {
@@ -599,7 +669,7 @@ impl Text for ZhCn {
     }
 
     fn admins_empty(&self) -> &'static str {
-        "未配置管理员：请服务器管理员在配置文件中的 [admins] 项内添加"
+        "未配置管理员，请在配置文件的 [admins] 中添加"
     }
 
     fn admins_row(&self, name: &str, user_id: &str) -> String {
@@ -607,7 +677,7 @@ impl Text for ZhCn {
     }
 
     fn botconfig_read_failed(&self, path: &str, reason: &str) -> String {
-        format!("错误: 读取钓鱼配置 {path} 失败: {reason}(它由本程序在启动时按 [fishingbot] 生成)")
+        format!("读取游戏配置 {path} 失败: {reason}")
     }
 
     fn botconfig_too_large(&self, bytes: usize, max_bytes: usize) -> String {
@@ -639,8 +709,17 @@ impl Text for ZhCn {
         format!("服务器 ({host}:{port}) 连接失败：\n{reason}")
     }
 
-    fn ping_timeout(&self, host: &str, port: u16, timeout_ms: u64) -> String {
-        format!("连接服务器 ({host}:{port}) 超时({timeout_ms} 毫秒无响应)")
+    fn ping_no_address_reason(&self) -> &'static str {
+        "域名解析未返回地址"
+    }
+
+    fn ping_connection_failed_reason(&self) -> &'static str {
+        "连接失败"
+    }
+
+    fn ping_timeout(&self, host: &str, port: u16, timeout: Duration) -> String {
+        let seconds = format_seconds(timeout);
+        format!("连接服务器 ({host}:{port}) 超时({seconds} 秒无响应)")
     }
 
     fn ping_local_target(&self, host: &str, port: u16) -> String {
@@ -653,6 +732,18 @@ impl Text for ZhCn {
 
     fn checkserver_title(&self) -> &'static str {
         "钓鱼服务器状态"
+    }
+
+    fn checkserver_system_failed(&self, reason: &str) -> String {
+        format!("获取系统信息失败: {reason}")
+    }
+
+    fn checkserver_disks_failed(&self, reason: &str) -> String {
+        format!("获取磁盘信息失败: {reason}")
+    }
+
+    fn checkserver_uptime_failed(&self, reason: &str) -> String {
+        format!("获取系统运行时间失败: {reason}")
     }
 
     fn checkserver_cpu_usage(&self, cpu_usage: f32) -> String {
@@ -691,9 +782,57 @@ impl Text for ZhCn {
         format!("当前系统时间: {time_text}")
     }
 
-    // ============ 命令层的固定话术（`commands/*`） ============
+    // ============ Discord 指令文案 ============
+    fn command_sync_title(&self) -> &'static str {
+        "Discord 指令同步结果"
+    }
+
+    fn command_sync_registered(&self) -> &'static str {
+        "全局指令已更新；新指令传播可能需要最多一小时，服务器旧指令已立即尝试清理"
+    }
+
+    fn command_sync_summary(&self, guilds: usize, cleared: usize, failed: usize) -> String {
+        format!("已检查 {guilds} 个服务器；清理成功 {cleared} 个，失败 {failed} 个")
+    }
+
+    fn command_sync_guild_updated(&self, guild_name: &str) -> String {
+        format!("服务器 {guild_name} 的指令已更新")
+    }
+
+    fn command_sync_guild_failed(&self, guild_name: &str, reason: &str) -> String {
+        format!("服务器 {guild_name} 的指令更新失败: {reason}")
+    }
+
+    fn command_sync_bootstrap_failed(&self, guild_name: &str, reason: &str) -> String {
+        format!("服务器 {guild_name} 的 /sync-commands 入口注册失败: {reason}")
+    }
+
+    fn command_sync_guild_summary(&self, guilds: usize, updated: usize, failures: usize) -> String {
+        format!("目标服务器 {guilds} 个；更新成功 {updated} 个，更新失败 {failures} 个")
+    }
+
+    fn command_sync_cleanup_skipped(&self) -> &'static str {
+        "同步未完成，未继续清理旧范围；修复后重新执行 /sync-commands"
+    }
+
+    fn command_sync_global_cleared(&self, count: usize) -> String {
+        format!("已清除 {count} 条旧全局指令")
+    }
+
+    fn command_sync_global_clear_failed(&self, reason: &str) -> String {
+        format!("清除旧全局指令失败: {reason}")
+    }
+
+    fn command_sync_failed(&self, reason: &str) -> String {
+        format!("全局指令更新失败，未清理服务器旧指令: {reason}")
+    }
+
+    fn command_sync_in_progress(&self) -> &'static str {
+        "已有指令同步正在执行，请稍后重试"
+    }
+
     fn command_started_notice(&self, command_tag: &str) -> String {
-        format!("已开始执行 {command_tag}，执行完毕后会返回完整结果")
+        format!("已开始 {command_tag}，完成后将返回结果")
     }
 
     fn command_unexpected_failure(&self) -> &'static str {
@@ -714,9 +853,8 @@ impl Text for ZhCn {
         timeout_minutes: u64,
     ) -> String {
         format!(
-            "已接受 /startall 请求；本次启动 {bot_count} 台，其中启动队列中已有 {queued_bot_count} 台在等待；\
-             按当前分批设置，预计最长耗时 {estimated_minutes} 分钟，等待启动结果的超时时间为 {timeout_minutes} 分钟；\
-             完成后将返回完整结果"
+            "已接受 /startall 请求 : 本次请求启动 {bot_count} 台，其中启动队列中已有 {queued_bot_count} 台在等待；\
+             预计耗时 {estimated_minutes} 分钟，超时时间为 {timeout_minutes} 分钟，完成后将返回完整结果"
         )
     }
 
@@ -724,14 +862,20 @@ impl Text for ZhCn {
         "内部错误（见程序日志）"
     }
 
+    fn start_queue_full_reason(&self) -> &'static str {
+        "启动队列已满"
+    }
+
     fn command_start_queue_summary(
         &self,
         batch_size: usize,
-        bot_login_interval_ms: u64,
-        batch_login_interval_ms: u64,
+        bot_login_interval: Duration,
+        batch_login_interval: Duration,
     ) -> String {
+        let bot_login_interval = format_seconds(bot_login_interval);
+        let batch_login_interval = format_seconds(batch_login_interval);
         format!(
-            "启动队列: 每批最多启动 {batch_size} 台，批内间隔 {bot_login_interval_ms} 毫秒，批间隔 {batch_login_interval_ms} 毫秒"
+            "启动队列设置: 每批最多启动 {batch_size} 台，批内间隔 {bot_login_interval} 秒，批间隔 {batch_login_interval} 秒"
         )
     }
 
@@ -801,8 +945,16 @@ impl Text for ZhCn {
         format!("错误: 读取机器人根目录失败: {reason}")
     }
 
+    fn screen_list_failed(&self, reason: &str) -> String {
+        format!("查询 screen 会话失败: {reason}")
+    }
+
+    fn screen_unrecognized_output(&self, output: &str) -> String {
+        format!("无法识别的输出: {output}")
+    }
+
     fn refusal_bot_running(&self, bot_name: &str) -> String {
-        format!("错误: 机器人 '{bot_name}' 正在运行，请先停止它")
+        format!("机器人 '{bot_name}' 存在 screen 会话，请先停止")
     }
 
     fn refusal_bot_queued(&self, bot_name: &str) -> String {
@@ -854,31 +1006,30 @@ impl Text for ZhCn {
     }
 
     fn start_command_sent_unconfirmed(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 会话已存在但尚未确认状态（可稍后用/show status 确认）")
+        format!("机器人 {bot_name}: 会话已存在但尚未确认状态（稍后用/show status 确认）")
     }
 
     fn start_failed(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name}: 启动失败 (常见原因是微软对频繁登录限流，或内存不足)")
+        format!("机器人 {bot_name}: 启动失败")
     }
 
     fn start_cancelled(&self, bot_name: &str) -> String {
         format!("机器人 {bot_name}: 启动被取消")
     }
 
-    fn start_result_timeout(&self, bot_name: &str, seconds: u64) -> String {
+    fn start_result_timeout(&self, bot_name: &str, timeout: Duration) -> String {
+        let seconds = format_seconds(timeout);
         format!(
-            "机器人 {bot_name}: 等待启动结果超时 ({seconds} 秒)，已按未确认处理 (请查看日志或用 /show status 确认)"
+            "机器人 {bot_name}: 等待启动结果超时（{seconds} 秒），状态未确认；请检查日志或 /show status"
         )
     }
 
     fn restart_skipped_missing_token(&self, bot_name: &str) -> String {
-        format!(
-            "机器人 {bot_name}: 缺少 Token 文件，重启会登录失败，因此不作改动 (如需停止请使用 /stop)"
-        )
+        format!("机器人 {bot_name}: 缺少 Token，已跳过重启（如需停止请使用 /stop）")
     }
 
     fn restart_not_running(&self, bot_name: &str) -> String {
-        format!("机器人 {bot_name} 未在运行，无需重启")
+        format!("机器人 {bot_name} 没有 screen 会话，无需重启")
     }
 
     fn bot_candidate_running_note(&self) -> &'static str {
@@ -908,6 +1059,18 @@ impl Text for ZhCn {
     // ============ 指令元数据（注册到 Discord 的说明文字） ============
     fn command_texts(&self) -> &'static [CommandText] {
         COMMAND_TEXTS
+    }
+
+    fn command_text_invalid(&self, path: &str, problem: CommandTextProblem) -> String {
+        let reason = match problem {
+            CommandTextProblem::Missing => "缺少说明".to_string(),
+            CommandTextProblem::Duplicate => "说明重复".to_string(),
+            CommandTextProblem::Unknown => "不存在对应的指令或选项".to_string(),
+            CommandTextProblem::InvalidLength { length } => {
+                format!("说明必须为 1-100 个 UTF-16 码元且不能全为空白，当前长度为 {length}")
+            }
+        };
+        format!("指令文案 {path} 无效: {reason}")
     }
 
     fn token_modal_title(&self) -> &'static str {
@@ -957,14 +1120,27 @@ impl Text for ZhCn {
             }
             LogText::ProbeFailed { reason } => format!("REST 探活失败: {reason}"),
             LogText::WatchdogReady {
-                window_secs,
-                probe_interval_secs,
-                first_handshake_timeout_secs,
+                window,
+                probe_interval,
+                first_handshake_timeout,
             } => format!(
-                "网关看门狗已就绪：判定窗口 {window_secs} 秒、探活间隔 {probe_interval_secs} 秒、\
-                 首次握手超时 {first_handshake_timeout_secs} 秒"
+                "网关看门狗已就绪：判定窗口 {} 秒、探活间隔 {} 秒、首次握手超时 {} 秒",
+                format_seconds(window),
+                format_seconds(probe_interval),
+                format_seconds(first_handshake_timeout)
             ),
             LogText::CommandRunFailed { error } => format!("指令执行出错: {error}"),
+            LogText::CommandFallbackReplyFailed {
+                caller_id,
+                command_path,
+                reason,
+            } => format!("向 Discord 用户 {caller_id} 发送 /{command_path} 兜底回复失败: {reason}"),
+            LogText::AutocompleteLookupFailed { reason } => {
+                format!("自动候选查询失败: {reason}")
+            }
+            LogText::AutocompleteTaskFailed { reason } => {
+                format!("自动候选查询任务失败: {reason}")
+            }
             LogText::CommandReplied {
                 caller_id,
                 command_path,
@@ -988,14 +1164,17 @@ impl Text for ZhCn {
                 "已经连续一个判定窗口无法访问 Discord，正在停止全部机器人，随后尝试重建连接……"
                     .to_string()
             }
-            LogText::ReconnectScheduled { attempt, seconds } => {
-                format!("第 {attempt} 次重建连接将于 {seconds} 秒后开始")
+            LogText::ReconnectScheduled { attempt, delay } => {
+                format!("第 {attempt} 次重建连接将于 {} 秒后开始", format_seconds(delay))
             }
             LogText::ReconnectFailed {
                 attempt,
-                seconds,
+                delay,
                 reason,
-            } => format!("第 {attempt} 次重建连接失败: {reason}，将于 {seconds} 秒后重试"),
+            } => format!(
+                "第 {attempt} 次重建连接失败: {reason}，将于 {} 秒后重试",
+                format_seconds(delay)
+            ),
             LogText::ReconnectedAfterOffline {
                 offline_secs,
                 notified_guilds,
@@ -1030,14 +1209,7 @@ impl Text for ZhCn {
                 "已清除服务器 {guild_name} 上遗留的 {count} 条 guild 指令"
             ),
             LogText::GuildCommandsClearFailed { guild_name, reason } => format!(
-                "清除服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (不影响全局注册，下次启动会重试)"
-            ),
-            LogText::GlobalCommandsReadFailed { reason } => {
-                format!("读不到现有的全局指令，本轮跳过 guild 指令残留清理: {reason}")
-            }
-            LogText::GuildCommandsCleanupWaiting { minutes } => format!(
-                "这套全局指令在 Discord 侧还没满 1 小时 (还差约 {minutes} 分钟)，本轮不清各服务器上\
-                 遗留的 guild 指令；满 1 小时后的下一次启动会自动清理"
+                "清除服务器 {guild_name} 上遗留的 guild 指令失败: {reason} (请再次执行 /sync-commands)"
             ),
             LogText::DiscordClientEnded => "与 Discord 的连接已结束 (客户端正常返回)".to_string(),
             LogText::DiscordClientError { error } => format!("与 Discord 的连接发送错误: {error}"),
@@ -1087,8 +1259,9 @@ impl Text for ZhCn {
             LogText::StartLaunchPanicked { bot_name, reason } => format!(
                 "拉起机器人 {bot_name} 时发生内部错误：{reason}"
             ),
-            LogText::StartResultTimeout { bot_name, seconds } => format!(
-                "等待机器人 {bot_name} 的启动结果超时（{seconds} 秒），已按未确认处理"
+            LogText::StartResultTimeout { bot_name, timeout } => format!(
+                "等待机器人 {bot_name} 的启动结果超时（{} 秒），已按未确认处理",
+                format_seconds(timeout)
             ),
             LogText::StarterRestarting { reason } => {
                 format!("启动线程异常退出（{reason}），正在重启它")
@@ -1163,7 +1336,7 @@ impl Text for ZhCn {
             LogText::SeekLogFileFailed { reason } => format!("定位日志文件失败: {reason}"),
             LogText::ReadLogContentFailed { reason } => format!("读取日志内容失败: {reason}"),
 
-            // 配置层（"配置还没读成功"的那几条提示走 `text::bootstrap`，固定英文，不在这张表里）
+            // 配置加载前的文案由 `text::bootstrap` 提供。
             LogText::ConfigFieldInvalid { field, requirement } => {
                 format!("配置项 {field} {}", requirement_text(requirement))
             }
@@ -1176,15 +1349,17 @@ impl Text for ZhCn {
     }
 }
 
-/// 配置校验里那一句"要求"（`ConfigFieldInvalid` / `ConfigFieldValueInvalid` 用）。
-///
-/// 单独一个函数是为了让"多条规则共用同一句话"只翻一次；`match` 穷尽，漏一条编译不过。
+/// 配置校验要求文案，供字段错误复用。
 fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
     match requirement {
         ConfigRequirement::NonEmpty => "不能为空".to_string(),
         ConfigRequirement::PlainName => "不能包含空格或斜杠，也不能写成 . 或 ..".to_string(),
         ConfigRequirement::PortRange => "必须是 1-65535 之间的端口号".to_string(),
         ConfigRequirement::GreaterThanZero => "必须大于 0".to_string(),
+        ConfigRequirement::NonNegativeDuration => "必须是可表示的非负有限秒数".to_string(),
+        ConfigRequirement::InputPulseCommand { reason } => {
+            format!("必须是 screen 模式支持的 input-pulse 输入: {reason}")
+        }
         ConfigRequirement::DiscordTokenEmpty => {
             "不能为空 (在Discord开发者面板 → 你的应用 → Bot → Reset Token 中获取)".to_string()
         }
@@ -1214,7 +1389,7 @@ fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
             format!("必须是以下之一: {}", allowed.join(", "))
         }
         ConfigRequirement::McVersionOrAutomatic => {
-            "必须写 AUTOMATIC (自动探测) 或版本号 (例如 1.20.4)".to_string()
+            "必须是 AUTOMATIC 或具体版本号（如1.20.4）".to_string()
         }
     }
 }
