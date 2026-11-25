@@ -1,10 +1,10 @@
 //! 反 AFK 指令的权限、运行状态与停止流程。
 
+use minecraft_fishingbot_manager_for_discord::operations;
+use minecraft_fishingbot_manager_for_discord::text::report::IntoReplyText;
 mod common;
 
-use minecraft_fishingbot_manager_for_discord::{
-    AntiAfkAction, ShowAction, config, handle_anti_afk, handle_help, handle_show, text,
-};
+use minecraft_fishingbot_manager_for_discord::config;
 
 #[test]
 #[ignore = "requires GNU screen"]
@@ -14,40 +14,52 @@ fn anti_afk_commands_and_status() {
     const USER: u64 = 987_654_321;
 
     if std::env::var_os(CHILD).is_some() {
-        config::Config::get_or_init();
+        config::Config::load().expect("load test configuration");
         let runtime = tokio::runtime::Runtime::new().expect("create runtime");
         runtime.block_on(async {
-            let i18n = text::get();
-            let help = handle_help(USER);
+            let i18n = minecraft_fishingbot_manager_for_discord::config::Config::get().text();
+            let help = operations::queries::help();
             assert!(help.contains("/anti-afk"), "{help}");
             assert!(help.contains("/commandall"), "{help}");
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::On, USER).await,
+                operations::set_anti_afk(true, USER).await.to_reply_text(),
                 i18n.admin_required(USER)
             );
-            assert!(handle_show(ShowAction::Status, USER).contains(i18n.anti_afk_status(false)));
+            assert!(
+                operations::queries::show_status()
+                    .to_reply_text()
+                    .contains(i18n.anti_afk_status(false))
+            );
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::On, ADMIN).await,
+                operations::set_anti_afk(true, ADMIN).await.to_reply_text(),
                 i18n.anti_afk_started()
             );
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::On, ADMIN).await,
+                operations::set_anti_afk(true, ADMIN).await.to_reply_text(),
                 i18n.anti_afk_already_running()
             );
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::Off, USER).await,
+                operations::set_anti_afk(false, USER).await.to_reply_text(),
                 i18n.admin_required(USER)
             );
-            assert!(handle_show(ShowAction::Status, USER).contains(i18n.anti_afk_status(true)));
+            assert!(
+                operations::queries::show_status()
+                    .to_reply_text()
+                    .contains(i18n.anti_afk_status(true))
+            );
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::Off, ADMIN).await,
+                operations::set_anti_afk(false, ADMIN).await.to_reply_text(),
                 i18n.anti_afk_stopped()
             );
             assert_eq!(
-                handle_anti_afk(AntiAfkAction::Off, ADMIN).await,
+                operations::set_anti_afk(false, ADMIN).await.to_reply_text(),
                 i18n.anti_afk_stop_not_running()
             );
-            assert!(handle_show(ShowAction::Status, USER).contains(i18n.anti_afk_status(false)));
+            assert!(
+                operations::queries::show_status()
+                    .to_reply_text()
+                    .contains(i18n.anti_afk_status(false))
+            );
         });
         return;
     }
@@ -99,7 +111,7 @@ fn anti_afk_commands_and_status() {
     );
     let jar = value["paths"]["jar"].as_str().expect("jar file name");
     std::fs::write(data.join(jar), b"test jar").expect("create test jar");
-    std::fs::write(root.join(config::CONFIG_FILE_NAME), config_text).expect("write config");
+    std::fs::write(root.join(common::TEST_CONFIG_FILE_NAME), config_text).expect("write config");
 
     let executable = root.join("anti-afk-command-test");
     std::fs::copy(

@@ -5,8 +5,7 @@ mod common;
 use std::time::Duration;
 
 use minecraft_fishingbot_manager_for_discord::text::{
-    self, CommandTextProblem, ConfigRequirement, Language, LogText, bootstrap,
-    failure_is_permanent, setup_failure_log_text,
+    self, CommandTextProblem, Language, bootstrap,
 };
 
 #[test]
@@ -32,28 +31,18 @@ fn configured_durations_are_reported_in_seconds_without_losing_precision() {
     );
 
     for language in languages {
-        let watchdog = language.log_text(LogText::WatchdogReady {
-            window: Duration::from_millis(1_001),
-            probe_interval: Duration::from_millis(333),
-            first_handshake_timeout: Duration::from_millis(2_002),
-        });
+        let watchdog = language.watchdog_ready(
+            Duration::from_millis(1_001),
+            Duration::from_millis(333),
+            Duration::from_millis(2_002),
+        );
         for value in ["1.001", "0.333", "2.002"] {
             assert!(watchdog.contains(value), "{watchdog}");
         }
-        let scheduled = language.log_text(LogText::ReconnectScheduled {
-            attempt: 1,
-            delay: bot_interval,
-        });
-        let failed = language.log_text(LogText::ReconnectFailed {
-            attempt: 1,
-            delay: bot_interval,
-            reason: "test",
-        });
+        let scheduled = language.reconnect_scheduled(1, bot_interval);
+        let failed = language.reconnect_failed(1, bot_interval, "test");
         let result = language.start_result_timeout("duck", batch_interval);
-        let result_log = language.log_text(LogText::StartResultTimeout {
-            bot_name: "duck",
-            timeout: batch_interval,
-        });
+        let result_log = language.start_result_timeout_log_message("duck", batch_interval);
         assert!(scheduled.contains("0.001"), "{scheduled}");
         assert!(failed.contains("0.001"), "{failed}");
         assert!(result.contains("1.25"), "{result}");
@@ -80,23 +69,23 @@ fn configured_durations_are_reported_in_seconds_without_losing_precision() {
 }
 
 #[test]
-fn restart_messages_distinguish_confirmed_and_unconfirmed_status() {
+fn restart_messages_distinguish_joined_and_not_joined() {
     let languages = text::all_languages();
     assert_eq!(
         languages[0].bot_restart_online_confirmed("duck"),
         "机器人 duck: 重启后已确认进服"
     );
     assert_eq!(
-        languages[0].bot_restart_session_unconfirmed("duck"),
-        "机器人 duck: 重启后会话已存在，进服状态未确认（可稍后使用 /show status 查看）"
+        languages[0].bot_restart_not_joined("duck"),
+        "机器人 duck: 重启后会话已存在，当前未进服（可稍后使用 /show status 查看）"
     );
     assert_eq!(
         languages[1].bot_restart_online_confirmed("duck"),
         "Bot duck: server join confirmed after restart"
     );
     assert_eq!(
-        languages[1].bot_restart_session_unconfirmed("duck"),
-        "Bot duck: session exists after restart; server status unconfirmed (check /show status later)"
+        languages[1].bot_restart_not_joined("duck"),
+        "Bot duck: session exists after restart; not currently joined (check /show status later)"
     );
 }
 
@@ -110,8 +99,8 @@ fn batch_pause_reports_do_not_claim_unconfirmed_pauses() {
     assert_eq!(chinese.report_succeeded_label(), "[完成明细]");
     assert_eq!(chinese.report_failed_label(), "[异常明细]");
     assert_eq!(
-        chinese.bot_pause_unconfirmed("duck", "/pause"),
-        "机器人 'duck': 已发送 /pause，状态未确认"
+        chinese.bot_pause_query_unavailable("duck", "/pause"),
+        "机器人 'duck': 已发送 /pause，状态不可用（会话异常）"
     );
     assert_eq!(english.pauseall_title(), "Pause-all result");
     assert_eq!(english.unpauseall_title(), "Unpause-all result");
@@ -119,8 +108,8 @@ fn batch_pause_reports_do_not_claim_unconfirmed_pauses() {
     assert_eq!(english.report_succeeded_label(), "[Completed]");
     assert_eq!(english.report_failed_label(), "[Issues]");
     assert_eq!(
-        english.bot_pause_unconfirmed("duck", "/pause"),
-        "Bot 'duck': /pause sent; status unconfirmed"
+        english.bot_pause_query_unavailable("duck", "/pause"),
+        "Bot 'duck': /pause sent; status unavailable (session abnormal)"
     );
 }
 
@@ -128,8 +117,8 @@ fn batch_pause_reports_do_not_claim_unconfirmed_pauses() {
 fn login_and_timeout_messages_do_not_assert_unverified_outcomes() {
     let languages = text::all_languages();
     for language in languages {
-        let prompt = language.bot_login_prompt("duck", "https://example.test", "ABCD");
-        assert!(prompt.contains("10"), "{prompt}");
+        let prompt = language.bot_login_prompt("duck", "https://example.test", "ABCD", 7);
+        assert!(prompt.contains("7"), "{prompt}");
         assert!(prompt.contains("ABCD"), "{prompt}");
         assert!(prompt.contains("https://example.test"), "{prompt}");
         assert!(
@@ -157,7 +146,7 @@ fn login_and_timeout_messages_do_not_assert_unverified_outcomes() {
 fn startup_and_sync_labels_match_the_reported_outcomes() {
     let languages = text::all_languages();
     assert_eq!(languages[0].count_valid_accounts(), "已配置 Token");
-    assert_eq!(languages[0].count_start_command_sent(), "启动后会话存在");
+    assert_eq!(languages[0].count_start_verified(), "启动复核通过");
     assert_eq!(languages[0].count_start_failed(), "启动异常");
     assert_eq!(languages[0].count_running_accounts(), "目标机器人");
     assert_eq!(languages[0].count_skipped_running(), "跳过（会话已存在）");
@@ -219,7 +208,10 @@ fn command_text_validation_errors_are_localized() {
     for language in languages {
         let error = language.command_text_invalid(
             "start name",
-            CommandTextProblem::InvalidLength { length: 102 },
+            CommandTextProblem::InvalidLength {
+                length: 102,
+                max: 100,
+            },
         );
         assert!(error.contains("start name"), "{error}");
         assert!(error.contains("102"), "{error}");
@@ -288,34 +280,26 @@ fn runtime_reasons_and_command_logs_are_localized() {
     );
 
     for language in languages {
-        let lookup = language.log_text(LogText::AutocompleteLookupFailed { reason: "detail" });
-        let task = language.log_text(LogText::AutocompleteTaskFailed { reason: "detail" });
+        let lookup = language.autocomplete_lookup_failed("detail");
+        let task = language.autocomplete_task_failed("detail");
         assert_ne!(lookup, task);
         assert!(lookup.contains("detail"));
         assert!(task.contains("detail"));
-        let fallback = language.log_text(LogText::CommandFallbackReplyFailed {
-            caller_id: 123,
-            command_path: "start",
-            reason: "detail",
-        });
+        let fallback = language.command_fallback_reply_failed(123, "start", "detail");
         assert!(fallback.contains("123"), "{fallback}");
         assert!(fallback.contains("/start"), "{fallback}");
         assert!(fallback.contains("detail"), "{fallback}");
     }
     assert_eq!(
-        languages[1].log_text(LogText::AutocompleteLookupFailed { reason: "detail" }),
+        languages[1].autocomplete_lookup_failed("detail"),
         "Autocomplete candidate lookup failed: detail"
     );
     assert_eq!(
-        languages[1].log_text(LogText::AutocompleteTaskFailed { reason: "detail" }),
+        languages[1].autocomplete_task_failed("detail"),
         "Autocomplete candidate lookup task failed: detail"
     );
     assert_eq!(
-        languages[1].log_text(LogText::CommandFallbackReplyFailed {
-            caller_id: 123,
-            command_path: "start",
-            reason: "detail",
-        }),
+        languages[1].command_fallback_reply_failed(123, "start", "detail"),
         "Failed to send the fallback response for /start to Discord user 123: detail"
     );
 }
@@ -355,7 +339,6 @@ fn anti_afk_messages_are_localized_and_preserve_error_details() {
             language.anti_afk_worker_failed("test reason"),
             language.anti_afk_start_failed("test reason"),
             language.anti_afk_stop_failed("test reason"),
-            language.anti_afk_status_failed("test reason"),
         ] {
             assert!(message.contains("test reason"), "{message}");
             assert!(
@@ -364,30 +347,6 @@ fn anti_afk_messages_are_localized_and_preserve_error_details() {
                     || message.contains("anti-AFK")
             );
         }
-    }
-}
-
-#[test]
-fn anti_afk_validation_errors_are_localized() {
-    let languages = text::all_languages();
-    for (language, expected) in [(languages[0], "非负"), (languages[1], "non-negative")] {
-        let message = language.log_text(LogText::ConfigFieldInvalid {
-            field: "anti_afk.input_delay",
-            requirement: ConfigRequirement::NonNegativeDuration,
-        });
-        assert!(message.contains("anti_afk.input_delay"), "{message}");
-        assert!(message.contains(expected), "{message}");
-    }
-
-    for language in languages {
-        let message = language.log_text(LogText::ConfigFieldInvalid {
-            field: "anti_afk.command",
-            requirement: ConfigRequirement::InputPulseCommand {
-                reason: "invalid token",
-            },
-        });
-        assert!(message.contains("anti_afk.command"), "{message}");
-        assert!(message.contains("invalid token"), "{message}");
     }
 }
 
@@ -439,58 +398,6 @@ fn every_language_exposes_unique_command_texts() {
     }
 }
 
-/// 初始化错误按成因分类：缺少邀请、Token 无效与普通连接失败。
-#[test]
-fn setup_failures_are_classified_by_cause() {
-    for message in ["Missing Access", "Unknown Guild"] {
-        assert!(
-            matches!(
-                setup_failure_log_text(message),
-                LogText::DiscordInitFailedNotInvited { .. }
-            ),
-            "{message} must be classified as a missing invitation"
-        );
-    }
-
-    for message in ["Unauthorized", "Invalid Token", "HTTP 401"] {
-        assert!(
-            matches!(
-                setup_failure_log_text(message),
-                LogText::DiscordInitFailedBadToken { .. }
-            ),
-            "{message} must be classified as a bad token"
-        );
-    }
-
-    assert!(matches!(
-        setup_failure_log_text("connection refused"),
-        LogText::DiscordInitFailed { .. }
-    ));
-}
-
-/// 缺少邀请与 Token 无效属于永久错误；普通初始化失败允许重试。
-#[test]
-fn only_configuration_failures_are_permanent() {
-    assert!(failure_is_permanent(
-        &LogText::DiscordInitFailedNotInvited {
-            error: "Missing Access"
-        }
-    ));
-    assert!(failure_is_permanent(&LogText::DiscordInitFailedBadToken {
-        error: "HTTP 401"
-    }));
-    assert!(!failure_is_permanent(&LogText::DiscordInitFailed {
-        error: "connection refused"
-    }));
-
-    assert!(failure_is_permanent(&setup_failure_log_text(
-        "Unknown Guild"
-    )));
-    assert!(!failure_is_permanent(&setup_failure_log_text(
-        "connection refused"
-    )));
-}
-
 /// 引导期错误文案包含出错值，便于部署者定位配置项。
 #[test]
 fn bootstrap_messages_include_the_problematic_value() {
@@ -521,11 +428,135 @@ fn bootstrap_messages_describe_the_next_step() {
     assert!(found.contains("/opt/fishing/x.conf.toml"), "{found}");
 }
 
+#[test]
+fn chinese_config_errors_are_english_and_success_uses_configured_language() {
+    const CHILD: &str = "FISHBOT_ENGLISH_CONFIG_ERROR_CHILD";
+    if let Ok(mode) = std::env::var(CHILD) {
+        if mode == "returned_error" {
+            let error = minecraft_fishingbot_manager_for_discord::config::Config::load()
+                .expect_err("invalid configuration must return an error");
+            assert!(
+                error.contains("config item anti_afk.input_delay"),
+                "{error}"
+            );
+            assert!(
+                std::panic::catch_unwind(
+                    minecraft_fishingbot_manager_for_discord::config::Config::get
+                )
+                .is_err()
+            );
+            assert!(
+                std::panic::catch_unwind(|| {
+                    minecraft_fishingbot_manager_for_discord::config::Config::get().text()
+                })
+                .is_err()
+            );
+            return;
+        }
+        minecraft_fishingbot_manager_for_discord::config::Config::load().unwrap_or_else(|message| {
+            minecraft_fishingbot_manager_for_discord::runtime::shutdown::exit_on_permanent_failure(
+                &message,
+            )
+        });
+        assert_eq!(
+            mode, "valid",
+            "invalid configuration must terminate the process"
+        );
+        assert_eq!(
+            minecraft_fishingbot_manager_for_discord::config::Config::get()
+                .text()
+                .report_succeeded_label(),
+            "[完成明细]"
+        );
+        return;
+    }
+
+    let root = common::temp_dir("english-config-error");
+    let data = root.join("data");
+    std::fs::create_dir_all(&data).expect("create base directory");
+    let mut config: toml::Value = toml::from_str(common::example_config()).expect("parse example");
+    config["paths"]["base_dir"] = toml::Value::String(data.to_string_lossy().into_owned());
+    config["i18n"]["language"] = toml::Value::String("CHINESE_SIMPLIFIED".into());
+    config["anti_afk"]["input_delay"] = toml::Value::Float(-1.0);
+    std::fs::write(data.join(config["paths"]["jar"].as_str().unwrap()), b"jar")
+        .expect("create test jar");
+    std::fs::write(
+        root.join(common::TEST_CONFIG_FILE_NAME),
+        toml::to_string(&config).expect("serialize config"),
+    )
+    .expect("write config");
+    let executable = root.join("bootstrap-text-test");
+    std::fs::copy(
+        std::env::current_exe().expect("test executable"),
+        &executable,
+    )
+    .expect("copy test executable");
+
+    let returned_error = std::process::Command::new(&executable)
+        .args([
+            "--exact",
+            "chinese_config_errors_are_english_and_success_uses_configured_language",
+            "--nocapture",
+        ])
+        .env(CHILD, "returned_error")
+        .output()
+        .expect("run isolated config error test");
+    assert!(
+        returned_error.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&returned_error.stdout),
+        String::from_utf8_lossy(&returned_error.stderr)
+    );
+
+    let output = std::process::Command::new(&executable)
+        .args([
+            "--exact",
+            "chinese_config_errors_are_english_and_success_uses_configured_language",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated config validation");
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("config item anti_afk.input_delay"),
+        "{error}"
+    );
+    assert!(error.contains("non-negative"), "{error}");
+    assert!(!error.contains("配置项"), "{error}");
+    assert!(!error.contains("config not loaded yet"), "{error}");
+    assert!(!error.contains("panicked"), "{error}");
+
+    config["anti_afk"]["input_delay"] = toml::Value::Float(0.05);
+    std::fs::write(
+        root.join(common::TEST_CONFIG_FILE_NAME),
+        toml::to_string(&config).expect("serialize valid config"),
+    )
+    .expect("write valid config");
+    let output = std::process::Command::new(&executable)
+        .args([
+            "--exact",
+            "chinese_config_errors_are_english_and_success_uses_configured_language",
+            "--nocapture",
+        ])
+        .env(CHILD, "valid")
+        .output()
+        .expect("run isolated valid config");
+    common::remove_dir(&root);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// 内部不变量消息指出正确的配置初始化入口。
 #[test]
 fn bootstrap_invariants_name_the_entry_point() {
     assert!(
-        bootstrap::CONFIG_NOT_LOADED.contains("config::Config::get_or_init()"),
+        bootstrap::CONFIG_NOT_LOADED.contains("config::Config::load()"),
         "{}",
         bootstrap::CONFIG_NOT_LOADED
     );
@@ -539,13 +570,9 @@ fn bootstrap_invariants_name_the_entry_point() {
 /// 回复日志同时包含调用者、指令路径与回复正文。
 #[test]
 fn replied_log_line_contains_caller_command_and_reply() {
-    common::install_english();
-
-    let line = text::get().log_text(LogText::CommandReplied {
-        caller_id: 42,
-        command_path: "bot add",
-        reply: "created",
-    });
+    let line = Language::English
+        .implementation()
+        .command_replied(42, "bot add", "created");
 
     assert!(line.contains("/bot add"), "{line}");
     assert!(line.contains("42"), "{line}");

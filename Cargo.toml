@@ -42,6 +42,3 @@ panic = "unwind"
 strip = true
 debug = false
 incremental = false
-
-[dev-dependencies]
-syn = { version = "2", features = ["full", "visit"] }

@@ -1,10 +1,10 @@
 # watchdog: the gateway watchdog
 [简体中文](watchdog-zh_cn.md) | **English**
 
-* Code: `src/runtime/watchdog.rs` (the `Watchdog` itself: timing fields, handshake/probe bookkeeping, the offline record and
-  the process-wide singleton `WATCHDOG`) plus its submodules `gateway` (handshake/probe decisions and the probe task)
+* Code: `src/runtime/watchdog/mod.rs` (the `Watchdog` itself: timing fields, handshake/probe bookkeeping, and the offline record),
+  `src/lib.rs` (the `WATCHDOG` singleton storage), plus the watchdog submodules `gateway` (handshake/probe decisions and the probe task)
   and `lifecycle` (offline bookkeeping, the reconnect signal, waiting for an attempt to end, and process wrap-up);
-  `src/main.rs` wires events and runs the reconnect loop (it obtains the singleton with `WATCHDOG.get_or_init()`;
+  `src/main.rs` wires events and runs the reconnect loop (it obtains the singleton with `Watchdog::get_or_init()`;
   the event callbacks are plain function pointers and use the same entry point).
 * Purpose: decide whether this process has lost contact with Discord. On failure, hand the reason to the process entry
   (`request_reconnect()`), which stops every bot and rebuilds the connection. The process does not exit: it waits one
@@ -25,6 +25,7 @@ process manager to restart it. This avoids a cold start and a new program log fi
 * Handshake: within `first_handshake_timeout` of the connection attempt starting, Discord must have sent one `READY`
   or `RESUMED` (the event handler in `main.rs` calls `watchdog.record_handshake_success()`). Otherwise a reconnect is
   requested with the reason `NeverReady`.
+  The method returns `true` only for the process's first successful handshake; reconnects do not reset it.
 * Reachability: every `probe_interval`, call `Http::get_current_user()` over REST to fetch the current account. Success
   calls `watchdog.clear_probe_failures()`; failure calls `watchdog.record_probe_failure_start()`. Once a failure has
   persisted for a full `window` from the first failure, a reconnect is requested with the reason `Unreachable`.
@@ -61,18 +62,16 @@ two "cannot reach Discord at all" cases above.
 
 ## 4. After a disconnect: stop the bots, wait one window, rebuild the connection
 
-The decision lives in `gateway.rs`, `lifecycle.rs` provides the wrap-up and wait helpers, and the reconnect loop lives
-in `src/main.rs`. The division is: the judging side only decides and wakes, while every visible action (stopping,
-recording, logging, exiting) happens on the entry-point side. The entry point uses `wait_for_attempt()` (wait for the
-current attempt to end and clean up a disconnect), `wait_before_reconnect()` (wait out one judging window) and
-`exit_on_shutdown_signal()` (assemble the same details as `/stopall`, write them to the program log, send them to every
-server's notice channel under the title "shutdown signal received, wrap-up", and exit with code 0).
+`gateway.rs` judges connection health and wakes the waiter; `lifecycle.rs` waits for the connection and reconnect
+window, and `src/main.rs` rebuilds the client. On a shutdown signal during `wait_for_attempt()` or
+`wait_before_reconnect()`, the watchdog passes its last Discord context (possibly absent) to
+`runtime::shutdown::exit_on_shutdown_signal`. That function owns process exit; the reconnect loop does not resume.
 
 1. The judging side: after a disconnect is detected, `request_reconnect(reason)` stores the reason on the watchdog and
    wakes the process entry (`tokio::Notify`); it does not touch the bots itself.
 2. The entry-point cleanup (the "watchdog judged a disconnect" arm of `wait_for_attempt()`): it takes the reason handed
    over by the judging side and calls the private `stop_all_bots_on_disconnect(reason)`, which stops every bot
-   (`shutdown_all_bots()`, the same flow as `/stopall`), writes a WARN and records the reason and the moment. If there
+   (`runtime::bot_instances::stop::shutdown_all_bots()`, the same flow as `/stopall`), writes a WARN and records the reason and the moment. If there
    is no reason to take, the wake-up was late and this round has already cleaned up, so nothing is touched. Stopping
    is mandatory: with Discord unreachable nobody can command the bots, while FishingBot's automatic reconnect keeps
    holding the game accounts and competing with real players for login slots. Nothing recovers by itself while
@@ -97,11 +96,11 @@ Two key constraints:
   disconnect together. A flag is used instead of a notification because a flag is state and cannot be missed, whereas
   an event such as `notify_waiters()` is lost when nobody is waiting.
 
-Only errors that retrying cannot fix exit the process (`exit_on_permanent_failure`, exit code 1; the cause is logged at
-`ERROR`, which distinguishes it from retryable network flakiness at `WARN`): an invalid token, a bot that was never
+Only errors that retrying cannot fix exit the process (`runtime::shutdown::exit_on_permanent_failure`, exit code 1; when error logging is available the cause is logged at
+`ERROR`, otherwise it is printed to the terminal, distinguishing it from retryable network flakiness at `WARN`): an invalid token, a bot that was never
 invited to a server (`50001 Missing Access`), a rejected setup, and similar configuration mistakes. Retrying such an
 error would fail the same way. Exit code 1 is this project's deliberate-failure code (a failed config load or
-validation also exits `main` with 1), so the unit file should set `RestartPreventExitStatus=1` (see
+validation also exits with 1; before configuration is loaded the error goes to the terminal and bot cleanup is skipped), so the unit file should set `RestartPreventExitStatus=1` (see
 [deployment tutorial section 12](../../tutorial/tutorial-en_us.md#12-configure-a-systemd-service-optional-recommended)):
 such an error stops after one exit and goes to `failed` until someone handles it. A crash uses a different code
 (panic 101, killed by OOM or `kill` 137, ...) and is restarted by `Restart=on-failure` as usual.
@@ -118,7 +117,7 @@ and how many failed).
 
 ### The wrap-up when an exit signal arrives
 
-The details assembled by `exit_on_shutdown_signal()` match `/stopall`: they are written to the program log first, then
+The details assembled by `runtime::shutdown::exit_on_shutdown_signal` match `/stopall`: they are written to the program log first, then
 sent to every server by the same channel rule (the system channel, otherwise the first text channel), logged as
 `ShutdownReportNotified` with the number of servers notified and failed. When the connection never handshaked, the
 report is only logged under `ShutdownReportNoContext`. The immediate disconnect and permanent-failure wrap-ups send

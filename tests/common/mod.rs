@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use minecraft_fishingbot_manager_for_discord::text::{self, Language};
-
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+pub const TEST_CONFIG_FILE_NAME: &str = "minecraft-fishingbot-manager-for-discord.conf.toml";
 
 /// 返回唯一的临时目录路径，并确保目录存在且为空。
 pub fn temp_dir(name: &str) -> PathBuf {
@@ -21,12 +21,45 @@ pub fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-/// 安装集成测试使用的固定语言。
-///
-/// `text::install` 只生效一次；所有需要读取文案的测试都应先调用本函数，
-/// 避免依赖测试执行顺序。
-pub fn install_english() {
-    text::install(Language::English);
+/// 在隔离的子进程中加载测试配置。
+pub fn in_configured_child(test_name: &str) -> bool {
+    const CHILD: &str = "FISHBOT_CONFIGURED_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        minecraft_fishingbot_manager_for_discord::config::Config::load()
+            .expect("load test configuration");
+        return true;
+    }
+
+    let root = temp_dir("configured-child");
+    let data = root.join("data");
+    std::fs::create_dir_all(&data).expect("create test data directory");
+    let mut value: toml::Value = toml::from_str(example_config()).expect("parse example");
+    value["paths"]["base_dir"] = toml::Value::String(data.to_string_lossy().into_owned());
+    std::fs::write(
+        data.join(value["paths"]["jar"].as_str().unwrap()),
+        b"test jar",
+    )
+    .expect("create test jar");
+    std::fs::write(
+        root.join(TEST_CONFIG_FILE_NAME),
+        toml::to_string(&value).expect("serialize test config"),
+    )
+    .expect("write test config");
+    let executable = root.join("configured-test");
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).expect("copy test executable");
+    let output = std::process::Command::new(executable)
+        .args(["--exact", test_name, "--nocapture"])
+        .env(CHILD, "1")
+        .output()
+        .expect("run configured test");
+    remove_dir(&root);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    false
 }
 
 /// 读取仓库根目录的示例配置。

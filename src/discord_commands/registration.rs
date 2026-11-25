@@ -1,19 +1,13 @@
 //! 手动同步配置的指令范围，并清理旧范围。
 
+use crate::{config, operations::begin_command_sync, text::report::Report};
 use poise::serenity_prelude as serenity;
-use tokio::sync::Mutex;
-
-use minecraft_fishingbot_manager_for_discord::{
-    check_sync_commands_permission, config, text, utils::Report,
-};
 
 use super::{Context, Data, Error};
 
 const SYNC_COMMAND_NAME: &str = "sync-commands";
-static COMMAND_SYNC_LOCK: Mutex<()> = Mutex::const_new(());
-
 /// 只在同步入口不存在时创建它，不覆盖同范围内的其他指令。
-pub(crate) async fn try_register_missing_sync_commands(
+pub async fn try_register_missing_sync_commands(
     http: &serenity::Http,
     commands: &[poise::Command<Data, Error>],
     guild_ids: &[u64],
@@ -43,7 +37,7 @@ pub(crate) async fn try_register_missing_sync_commands(
             if let Err(error) = registration_result {
                 log::warn!(
                     "{}",
-                    text::get().command_sync_bootstrap_failed(
+                    crate::bootstrap_error_text().command_sync_bootstrap_failed(
                         &configured_guild_id.to_string(),
                         &error.to_string()
                     )
@@ -63,16 +57,18 @@ fn sync_command_is_missing(registered_commands: &[serenity::Command]) -> bool {
 #[poise::command(slash_command, rename = "sync-commands")]
 pub(crate) async fn sync_commands(ctx: Context<'_>) -> Result<(), Error> {
     let caller_id = ctx.author().id.get();
-    if let Err(reply) = check_sync_commands_permission(caller_id) {
-        return super::say_and_log(ctx, reply).await;
-    }
-
-    let _guard = match COMMAND_SYNC_LOCK.try_lock() {
+    let _guard = match begin_command_sync(caller_id) {
         Ok(guard) => guard,
-        Err(_) => return super::say_and_log(ctx, text::get().command_sync_in_progress()).await,
+        Err(message) => return super::say_and_log(ctx, message).await,
     };
     ctx.defer().await?;
-    super::say_and_log(ctx, text::get().command_started_notice("/sync-commands")).await?;
+    super::say_and_log(
+        ctx,
+        crate::config::Config::get()
+            .text()
+            .command_started_notice("/sync-commands"),
+    )
+    .await?;
 
     let serenity_ctx = ctx.serenity_context();
     let mut joined_guild_ids = serenity_ctx.cache.guilds();
@@ -98,7 +94,9 @@ pub(crate) async fn sync_commands(ctx: Context<'_>) -> Result<(), Error> {
     .await
     {
         Ok(report) => report.render(),
-        Err(reason) => text::get().command_sync_failed(&reason),
+        Err(reason) => crate::config::Config::get()
+            .text()
+            .command_sync_failed(&reason),
     };
     super::say_final_report(ctx, &reply).await
 }
@@ -109,16 +107,22 @@ async fn sync_commands_and_clear_old_scopes(
     configured_guild_ids: &[u64],
     joined_guilds: Vec<(serenity::GuildId, String)>,
 ) -> Result<Report, String> {
-    let mut report = Report::new();
-    report.set_title(text::get().command_sync_title());
+    let mut report = Report::new(
+        crate::config::Config::get().i18n.language,
+        crate::config::Config::get().runtime.max_reply_chars,
+    );
+    report.set_title(crate::config::Config::get().text().command_sync_title());
 
     if configured_guild_ids.is_empty() {
         poise::builtins::register_globally(http, commands)
             .await
             .map_err(|error| error.to_string())?;
-        report
-            .basics
-            .push(text::get().command_sync_registered().to_string());
+        report.basics.push(
+            crate::config::Config::get()
+                .text()
+                .command_sync_registered()
+                .to_string(),
+        );
         clear_guild_commands_now(http, joined_guilds, &mut report).await;
         return Ok(report);
     }
@@ -133,13 +137,16 @@ async fn sync_commands_and_clear_old_scopes(
         match poise::builtins::register_in_guild(http, commands, guild_id).await {
             Ok(()) => {
                 updated_guild_count += 1;
-                let message = text::get().command_sync_guild_updated(&guild_name);
+                let message = crate::config::Config::get()
+                    .text()
+                    .command_sync_guild_updated(&guild_name);
                 log::info!("{message}");
                 report.succeeded.push(message);
             }
             Err(error) => {
-                let message =
-                    text::get().command_sync_guild_failed(&guild_name, &error.to_string());
+                let message = crate::config::Config::get()
+                    .text()
+                    .command_sync_guild_failed(&guild_name, &error.to_string());
                 log::warn!("{message}");
                 report.failed.push(message);
             }
@@ -148,16 +155,24 @@ async fn sync_commands_and_clear_old_scopes(
 
     let failed_updates = configured_guild_ids.len() - updated_guild_count;
     if failed_updates > 0 {
-        report
-            .basics
-            .push(text::get().command_sync_cleanup_skipped().to_string());
+        report.basics.push(
+            crate::config::Config::get()
+                .text()
+                .command_sync_cleanup_skipped()
+                .to_string(),
+        );
     } else if let Err(error) = clear_global_commands_now(http).await {
-        let message = text::get().command_sync_global_clear_failed(&error);
+        let message = crate::config::Config::get()
+            .text()
+            .command_sync_global_clear_failed(&error);
         log::warn!("{message}");
         report.failed.push(message);
-        report
-            .basics
-            .push(text::get().command_sync_cleanup_skipped().to_string());
+        report.basics.push(
+            crate::config::Config::get()
+                .text()
+                .command_sync_cleanup_skipped()
+                .to_string(),
+        );
     } else {
         let stale_guilds = joined_guilds
             .into_iter()
@@ -167,11 +182,13 @@ async fn sync_commands_and_clear_old_scopes(
     }
     report.basics.insert(
         0,
-        text::get().command_sync_guild_summary(
-            configured_guild_ids.len(),
-            updated_guild_count,
-            failed_updates,
-        ),
+        crate::config::Config::get()
+            .text()
+            .command_sync_guild_summary(
+                configured_guild_ids.len(),
+                updated_guild_count,
+                failed_updates,
+            ),
     );
     Ok(report)
 }
@@ -184,7 +201,9 @@ async fn clear_global_commands_now(http: &serenity::Http) -> Result<(), String> 
         serenity::Command::set_global_commands(http, Vec::new())
             .await
             .map_err(|error| error.to_string())?;
-        let message = text::get().command_sync_global_cleared(registered_global_commands.len());
+        let message = crate::config::Config::get()
+            .text()
+            .command_sync_global_cleared(registered_global_commands.len());
         log::info!("{message}");
     }
     Ok(())
@@ -203,10 +222,9 @@ async fn clear_guild_commands_now(
             Ok(registered_guild_commands) if registered_guild_commands.is_empty() => {}
             Ok(registered_guild_commands) => match guild_id.set_commands(http, Vec::new()).await {
                 Ok(_) => {
-                    let message = text::get().log_text(text::LogText::GuildCommandsCleared {
-                        guild_name: &guild_name,
-                        count: registered_guild_commands.len(),
-                    });
+                    let message = crate::config::Config::get()
+                        .text()
+                        .guild_commands_cleared(&guild_name, registered_guild_commands.len());
                     log::info!("{message}");
                     report.succeeded.push(message);
                 }
@@ -217,17 +235,20 @@ async fn clear_guild_commands_now(
     }
 
     if guild_count > 0 {
-        report.basics.push(text::get().command_sync_summary(
-            guild_count,
-            report.succeeded.len() - initial_success_count,
-            report.failed.len() - initial_failure_count,
-        ));
+        report
+            .basics
+            .push(crate::config::Config::get().text().command_sync_summary(
+                guild_count,
+                report.succeeded.len() - initial_success_count,
+                report.failed.len() - initial_failure_count,
+            ));
     }
 }
 
 fn record_guild_clear_failure(report: &mut Report, guild_name: &str, reason: &str) {
-    let message =
-        text::get().log_text(text::LogText::GuildCommandsClearFailed { guild_name, reason });
+    let message = crate::config::Config::get()
+        .text()
+        .guild_commands_clear_failed(guild_name, reason);
     log::warn!("{message}");
     report.failed.push(message);
 }
@@ -365,7 +386,7 @@ mod tests {
             registered("help", 1),
             registered(SYNC_COMMAND_NAME, 1),
         ]));
-        text::install(text::Language::English);
+        config::init_for_test();
         let command = super::super::all_commands()
             .unwrap()
             .into_iter()
@@ -379,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn startup_creates_only_the_missing_entry_point() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let builder = commands
             .iter()
@@ -423,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn manual_sync_clears_old_commands_and_reports_partial_failures() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let (http, server) = mock_discord(vec![
             ExpectedRequest::new("PUT", "/applications/1/commands", "200 OK", "[]").with_body(
@@ -477,12 +498,17 @@ mod tests {
         assert!(report.failed[0].contains("second"));
         assert!(report.failed[0].contains("/sync-commands"));
         assert!(report.failed[1].contains("fourth"));
-        assert_eq!(report.basics[1], text::get().command_sync_summary(4, 1, 2));
+        assert_eq!(
+            report.basics[1],
+            crate::config::Config::get()
+                .text()
+                .command_sync_summary(4, 1, 2)
+        );
     }
 
     #[tokio::test]
     async fn failed_global_update_does_not_clear_guild_commands() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let (http, server) = mock_discord(vec![ExpectedRequest::new(
             "PUT",
@@ -504,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn guild_bootstrap_continues_after_an_unavailable_server() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let builder = commands
             .iter()
@@ -543,7 +569,7 @@ mod tests {
 
     #[tokio::test]
     async fn guild_sync_updates_all_targets_before_removing_old_scopes() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let payload = serde_json::from_slice(
             &serde_json::to_vec(&poise::builtins::create_application_commands(&commands)).unwrap(),
@@ -595,19 +621,28 @@ mod tests {
         assert_eq!(report.succeeded.len(), 3);
         assert_eq!(
             report.basics[0],
-            text::get().command_sync_guild_summary(2, 2, 0)
+            crate::config::Config::get()
+                .text()
+                .command_sync_guild_summary(2, 2, 0)
         );
-        assert_eq!(report.basics[1], text::get().command_sync_summary(2, 1, 1));
+        assert_eq!(
+            report.basics[1],
+            crate::config::Config::get()
+                .text()
+                .command_sync_summary(2, 1, 1)
+        );
         assert!(
-            !report
-                .succeeded
-                .contains(&text::get().command_sync_global_cleared(1))
+            !report.succeeded.contains(
+                &crate::config::Config::get()
+                    .text()
+                    .command_sync_global_cleared(1)
+            )
         );
     }
 
     #[tokio::test]
     async fn failed_guild_update_retains_global_and_unconfigured_commands() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let (http, server) = mock_discord(vec![
             ExpectedRequest::new("PUT", "/applications/1/guilds/11/commands", "200 OK", "[]"),
@@ -631,15 +666,18 @@ mod tests {
         assert_eq!(report.failed.len(), 1);
         assert!(report.failed[0].contains("second"));
         assert!(
-            report
-                .basics
-                .contains(&text::get().command_sync_cleanup_skipped().to_string())
+            report.basics.contains(
+                &crate::config::Config::get()
+                    .text()
+                    .command_sync_cleanup_skipped()
+                    .to_string()
+            )
         );
     }
 
     #[tokio::test]
     async fn failed_global_cleanup_retains_unconfigured_guild_commands() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let (http, server) = mock_discord(vec![
             ExpectedRequest::new("PUT", "/applications/1/guilds/11/commands", "200 OK", "[]"),
@@ -670,18 +708,23 @@ mod tests {
         assert!(report.failed[0].contains("global"));
         assert_eq!(
             report.basics[0],
-            text::get().command_sync_guild_summary(1, 1, 0)
+            crate::config::Config::get()
+                .text()
+                .command_sync_guild_summary(1, 1, 0)
         );
         assert!(
-            report
-                .basics
-                .contains(&text::get().command_sync_cleanup_skipped().to_string())
+            report.basics.contains(
+                &crate::config::Config::get()
+                    .text()
+                    .command_sync_cleanup_skipped()
+                    .to_string()
+            )
         );
     }
 
     #[tokio::test]
     async fn guild_sync_skips_deleting_an_empty_global_scope() {
-        text::install(text::Language::English);
+        config::init_for_test();
         let commands = super::super::all_commands().unwrap();
         let (http, server) = mock_discord(vec![
             ExpectedRequest::new("PUT", "/applications/1/guilds/11/commands", "200 OK", "[]"),
@@ -701,7 +744,9 @@ mod tests {
         assert!(report.failed.is_empty());
         assert_eq!(
             report.basics,
-            [text::get().command_sync_guild_summary(1, 1, 0)]
+            [crate::config::Config::get()
+                .text()
+                .command_sync_guild_summary(1, 1, 0)]
         );
     }
 
@@ -709,7 +754,7 @@ mod tests {
     fn guild_sync_report_omits_empty_cleanup_and_global_detail() {
         const CHILD: &str = "FISHBOT_SYNC_REPORT_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            minecraft_fishingbot_manager_for_discord::config::Config::get_or_init();
+            crate::config::Config::load().expect("load test configuration");
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let commands = super::super::all_commands().unwrap();
                 let old_commands = (0..20)
@@ -770,7 +815,7 @@ mod tests {
         config["i18n"]["language"] = toml::Value::String("CHINESE_SIMPLIFIED".into());
         std::fs::write(data.join(config["paths"]["jar"].as_str().unwrap()), b"jar").unwrap();
         std::fs::write(
-            root.join(minecraft_fishingbot_manager_for_discord::config::CONFIG_FILE_NAME),
+            root.join(crate::test_support::TEST_CONFIG_FILE_NAME),
             toml::to_string(&config).unwrap(),
         )
         .unwrap();

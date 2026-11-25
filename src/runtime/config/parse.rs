@@ -10,6 +10,15 @@ use crate::text;
 use super::schema::Paths;
 use super::{CONFIG_FILE_NAME, Config};
 
+pub(super) fn deserialize_language<'de, D>(deserializer: D) -> Result<text::Language, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let name = String::deserialize(deserializer)?;
+    text::Language::from_name(&name)
+        .map_err(|error| serde::de::Error::custom(text::bootstrap::language_invalid(&error)))
+}
+
 /// 以字符串读取 Discord 服务器 ID，拒绝无效值和重复项。
 pub(super) fn deserialize_guild_ids<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
 where

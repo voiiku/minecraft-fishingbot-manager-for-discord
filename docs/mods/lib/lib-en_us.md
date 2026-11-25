@@ -1,110 +1,33 @@
-# lib: the command entry layer (routing)
+# Library API and command boundaries
 [简体中文](lib-zh_cn.md) | **English**
-
-* Code: `src/lib.rs` (public exports) and `src/handlers/routes/` (command routing); autocomplete lives in `src/discord_commands/autocomplete.rs`.
-* Role: the layer that turns a Discord slash command into an action function (the architecture doc calls it the command
-  entry layer, or routing layer for short - see the terminology note in
-  [architecture-en_us.md](../architecture/architecture-en_us.md) section 1), plus one place for error text and reply shapes.
-* Above it sits the command layer (read arguments, check numbers, `defer` and send the result); below it, `handlers`
-  groups bot control, account management, bulk operations, read-only queries and general commands.
-* Every permission check happens here, once (`has_permission`); the functions below never check. Each command
-  declares a requirement (`utils::RequiredPermission`, see section 3); for a single-bot command that requirement is
-  "the target bot belongs to the caller, or the caller is an admin", and ownership can only be read off the target
-  entry, so this layer uses `BotDirEntry::find_by_name` to find the entry, checks it, and only then hands it to the
-  business function.
-* Reports are assembled by the caller: utils returns raw outcomes only (stopping gives a `StopOutcome`, for
-  example, which carries `into_report()` and `to_failure_text()`), and `into_report()` has to be called explicitly -
-  utils never hands you a finished `Report`. The batch stop is assembled explicitly in
-  `handlers::stop_all_bots()`, and the process shutdown assembles the same details on the spot inside
-  `watchdog::Watchdog::exit_on_shutdown_signal()` (only the title differs).
-* Visibility: each module exposes a single controlled interface. The crate's interface comes from `lib.rs` (`pub fn
-  handle_*`; the view types `BotLogView`, `BotLoginPrompt` and `FishingbotConfigView`; primitives such as `ProcessLog`
-  and `StartupQueue`; `WATCHDOG` and `Watchdog`; plus `pub mod config`, `pub mod text` and `pub mod utils`).
-  `handlers` keeps its business and routing modules private. The routing layer accesses crate-internal business entry
-  points; `lib.rs` re-exports the public `handle_*` functions, action enums and view types.
-* No cleaning happens here either: the command layer only splits values and passes them through (the action enums
-  carry `raw_*`), and the layer that actually uses a value cleans it once (bot names in
-  `utils::ToCleanBotName::to_clean_bot_name`, command fragments in `utils::ToCleanBotCommand`).
 
 ## 1. Naming
 
-* `handle_*`: the entry points. Take the command, dispatch the action, turn errors into text for the user (the
-  permission checks for everyone-commands and batch commands happen here).
-* `bot_*_reply`: the middle layer that folds an action enum and the raw arguments into the reply text; it lives in
-  the command layer, not here.
-* `*Action` enums: the action dimension of a command, produced by parsing (arguments are passed through untouched
-  by the command layer) and interpreted only here.
-
-The four action enums and their entry points:
-
-* `BotControlAction`, handled by `handle_bot_control`: `/start`, `/stop`, `/restart`, `/pause`, `/unpause`,
-  `/command`.
-* `BotManageAction`, handled by `handle_bot_manage`: `/bot add`, `/bot del`, `/bot rename`, `/token`.
-* `/bot login` does not use an action enum. It is **two-stage**, with two entry points: `handle_bot_login` (stage
-  one: check permission, launch the session, wait for the device code) and `handle_bot_login_await` (stage two: wait
-  for the credential to land on disk, or time out). Why it alone is split in two is in
-  [commands-en_us.md section 4.6](../commands/commands-en_us.md#46-bot-login).
-* `ShowAction`, handled by `handle_show`: `/show status`, `/show mybots`, `/show allbots` and `/show admins`.
-  `/show botconfig` does not use an action enum (it returns an attachment instead of text); it goes through
-  `handle_fishingbot_config`.
-* `AllBotsControlAction`, handled by `handle_all_bots_control`: `/startall`, `/stopall`, `/restartall`,
-  `/pauseall`, `/unpauseall`, `/commandall`.
-
-The remaining commands have no action enum and each has a dedicated entry point: `handle_help`, `handle_whoami`,
-`handle_ping`, `handle_checkserver`, `handle_bot_log`, `handle_fishingbot_config`, plus the two-stage `/bot login`
-entry points.
-
-There is no entry point other than the commands. The autocomplete candidate lookup `bot_name_candidate_states(caller_id)` is a private command-layer function: it returns the bot names and run states the caller is allowed to see; missing bot directories produce an empty list and directory I/O failures return `Err`. The command layer owns `BotNameScope`, prefix filtering, state labels and the candidate cap, then adapts the result to Discord. These are only suggestions and do not perform bot operations. Which `scope` each command uses is in [commands-en_us.md](../commands/commands-en_us.md), section 2.
+`operations` exposes named operations independent of Discord. `/start` calls `start_single_bot(name, caller_id)` directly; `/restartall` calls `restart_all_bots(caller_id)`. There is no action enum or central dispatcher.
 
 ## 2. Error handling conventions
 
-* A missing permission has two sources, and the text always comes from the layer that produces it:
-  * Batch commands: this layer (`handle_all_bots_control`) returns
-    `Discord user ID X is not an admin, not allowed to do that!` directly (no business function runs, no `Report`);
-  * Single-bot and account commands: `permitted_bot_dir_entry` returns `Err` with the text from
-    `BotDirEntry::find_by_name`, `Error: no directory found for bot 'X', or you have no permission to access it`
-    (not found and not allowed are deliberately the same answer, see
-    [commands-en_us.md section 4](../commands/commands-en_us.md)).
-* Argument and business errors: a business function returns `Result<String, String>` where the `Err` is text meant
-  for the user; this layer only passes it back as the reply and rewrites nothing (so one thing never gets two
-  different wordings).
+Text commands return localized results; log and configuration attachments and login prompts have typed results. `discord_commands` owns deferral, blocking tasks, ephemeral replies and attachments, not bot operations.
 
 ## 3. Permission rules
 
-Every command declares one requirement, and every check goes through `has_permission(caller_id, requirement)`:
-
-* `Everyone`: `/help`, `/whoami`, `/show status`, `/ping`, `/checkserver`, `/show *` (including `/show botconfig`),
-  checked once by each `handle_*` here.
-* `MustBeAdmin`: `/startall`, `/stopall`, `/restartall`, `/pauseall`, `/unpauseall`, `/commandall`, checked once by `handle_all_bots_control`
-  here (which is why nothing under `handlers/all_bots_control/*` takes a `caller_id`).
-* `OwnerOrAdmin(owner user ID)`: single-bot commands (`/start`, `/stop`, `/log`, ...) and account commands
-  (`/bot del`, `/bot rename`, `/token`, `/bot login`), checked once by `permitted_bot_dir_entry` here (it resolves the
-  entry with `find_by_name` first, then checks ownership).
-
-Three more rules:
-
-* An ordinary user can only touch the bots in their own user directory; admins (the `[admins]` table) always pass.
-* Not found and not allowed get the same answer (deliberately, see
-  [commands-en_us.md section 4](../commands/commands-en_us.md)).
-* `/bot add` creates inside the caller's own user directory, so ownership follows from the path and the requirement
-  is simply `Everyone`.
+Single-bot control, log access, editing an account and starting a login require ownership or administrator access. Unauthorized access and a missing bot give the same response. Batch control, anti-AFK and command sync require an administrator. New bots belong to the caller; public queries do not require administrator access.
 
 ## 4. Process-level lifecycle
 
-The process-level lifecycle lives in `src/runtime/watchdog/lifecycle.rs`, as methods on the `Watchdog` object (the routing
-layer only re-exports them for `main.rs`):
+Connection lifecycle methods live on `Watchdog` in `src/runtime/watchdog/lifecycle.rs`; bot stopping lives in `src/runtime/bot_instances/stop.rs` and manager exit in `src/runtime/shutdown.rs`:
 
-* `WATCHDOG.get_or_init()`: fetch the process-wide watchdog (the first call builds it from the config `[timing]`;
+* `Watchdog::get_or_init()`: fetch the process-wide watchdog (the first call builds it from the config `[timing]`;
   later calls return the same instance; the entry point and the event callbacks both use it). Call it after
-  `config::Config::get_or_init()`, because the first call reads the config. `Watchdog::new(...)` takes explicit
+  `config::Config::load()`, because the first call reads the config. `Watchdog::new(...)` takes explicit
   timings and is for tests only.
-* `watchdog.shutdown_all_bots()`: stop every running bot session (without exiting the process).
-* `watchdog.exit_on_shutdown_signal()`: the cleanup after SIGTERM / Ctrl+C (the entry point calls it when a signal
+* `runtime::bot_instances::stop::shutdown_all_bots()`: stop every running bot session (without exiting the process), returning errors explicitly.
+* `runtime::shutdown::exit_on_shutdown_signal(notice_ctx)`: the cleanup after SIGTERM / Ctrl+C (the entry point calls it when a signal
   arrives): log it, stop every bot, send the wrap-up report to every server's notice channel (when this connection
   never completed a handshake, only the log is written), and exit with code 0 (systemd will not restart it).
-* `watchdog.exit_on_permanent_failure(reason)`: stop every bot and exit the process with code 1 (`reason` goes into
-  the program log). Only for configuration errors (an invalid token, the bot was not invited to the server): exit code 1 is
-  this project's deliberate-failure code, and `RestartPreventExitStatus=1` in the systemd unit prevents a restart.
+* `runtime::shutdown::exit_on_permanent_failure(reason)`: with configuration loaded, report the error and stop bots before
+  exiting with code 1; without configuration, report to the terminal and exit without attempting bot cleanup. Terminal output is also used when logging is unavailable. The example
+  systemd service uses `KillMode=control-group` to clean up remaining processes and `RestartPreventExitStatus=1` to avoid restarting.
 * `watchdog.request_reconnect(reason)`: whoever judged the disconnect (the watchdog's decision side, or the entry
   point's setup-error path) hands the reason over and wakes the process entry; the entry point then performs the
   cleanup and rebuilds the connection, without exiting the process (see
@@ -121,10 +44,8 @@ layer only re-exports them for `main.rs`):
 * `watchdog.notify_reconnect_success(ctx)`: after an outage, when `Ready` / `Resume` arrives again, send one notice to
   every server this bot is in; does nothing when there was no outage.
 
-How setup failures are classified (which cause gets which log record, and whether it counts as permanent) lives in
-the text layer: `text::setup_failure_log_text` and `text::failure_is_permanent` (see
-[i18n-en_us.md](../i18n/i18n-en_us.md)). The setup-error exit in `main.rs` uses them to decide which record to write
-and whether to call `exit_on_permanent_failure`.
+`main.rs` classifies setup failures and chooses the corresponding localized log message. Missing access or an invalid
+token is permanent and calls `exit_on_permanent_failure`; other errors can be retried.
 
 ## 5. Related documents
 

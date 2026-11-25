@@ -1,156 +1,175 @@
-//! 通用文件和路径操作。
+//! 文件和目录操作，不处理本地化文案。
 
+use chrono::Local;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
 
-use crate::text;
-
-/// 从文件末尾往回读时每次读多少字节。
-const BACKWARD_READ_BLOCK_BYTES: usize = 16 * 1024;
-
-/// 从文件末尾向前读取，直到 `when_to_stop` 匹配；返回的行按文件顺序排列。
-/// 空文件返回空数组，打开或读取失败返回错误。
-pub fn read_lines_backwards_until(
-    file_path: &Path,
-    when_to_stop: impl FnMut(&str) -> bool,
-) -> Result<Vec<String>, String> {
-    read_lines_backwards_from(file_path, 0, when_to_stop)
+#[derive(Debug)]
+pub(crate) enum CreateLogError {
+    CreateDir(PathBuf, io::Error),
+    CreateFile(PathBuf, io::Error),
+    WriteFirstLine(PathBuf, io::Error),
 }
 
-fn read_lines_backwards_from(
-    file_path: &Path,
+#[derive(Debug)]
+pub(crate) enum ReadLogError {
+    Open(io::Error),
+    Metadata(io::Error),
+    Truncated,
+    Seek(io::Error),
+    Read(io::Error),
+}
+
+/// 创建日志目录。
+pub(crate) fn create_log_dir(dir: &Path) -> Result<(), CreateLogError> {
+    fs::create_dir_all(dir).map_err(|error| CreateLogError::CreateDir(dir.to_path_buf(), error))
+}
+
+/// 在已创建的目录下创建时间戳日志文件并写入首行。
+pub(crate) fn create_timestamped_log_file(
+    dir: &Path,
+    first_line: &str,
+    format: &str,
+) -> Result<(PathBuf, File), CreateLogError> {
+    let log_path = dir.join(format!("{}.log", Local::now().format(format)));
+    let mut file =
+        File::create(&log_path).map_err(|e| CreateLogError::CreateFile(log_path.clone(), e))?;
+    writeln!(file, "{first_line}")
+        .map_err(|e| CreateLogError::WriteFirstLine(log_path.clone(), e))?;
+
+    Ok((log_path, file))
+}
+
+/// 持有已打开的日志及已验证的起始偏移。
+pub(crate) struct LogReader {
+    file: File,
     start: u64,
-    mut when_to_stop: impl FnMut(&str) -> bool,
-) -> Result<Vec<String>, String> {
-    let mut file = File::open(file_path).map_err(|e| {
-        text::get().log_text(text::LogText::OpenLogFileFailed {
-            reason: &e.to_string(),
+    file_len: u64,
+}
+
+impl LogReader {
+    pub(crate) fn open(file_path: &Path, start: u64) -> Result<Self, ReadLogError> {
+        let file = File::open(file_path).map_err(ReadLogError::Open)?;
+        let file_len = file.metadata().map_err(ReadLogError::Metadata)?.len();
+        if start > file_len {
+            return Err(ReadLogError::Truncated);
+        }
+        Ok(Self {
+            file,
+            start,
+            file_len,
         })
-    })?;
-
-    let file_len = file
-        .metadata()
-        .map_err(|e| {
-            text::get().log_text(text::LogText::ReadLogMetadataFailed {
-                reason: &e.to_string(),
-            })
-        })?
-        .len();
-    if start > file_len {
-        return Err(text::get().log_text(text::LogText::ReadLogContentFailed {
-            reason: "log truncated before the requested offset",
-        }));
     }
-    let mut position = file_len;
-    let mut scanned_lines: Vec<String> = Vec::new();
-    let mut read_previous_chunk = |position: &mut u64| -> Result<Vec<u8>, String> {
-        let read_size = std::cmp::min(BACKWARD_READ_BLOCK_BYTES as u64, *position - start) as usize;
-        *position -= read_size as u64;
 
-        file.seek(SeekFrom::Start(*position)).map_err(|e| {
-            text::get().log_text(text::LogText::SeekLogFileFailed {
-                reason: &e.to_string(),
-            })
-        })?;
-        let mut chunk = vec![0u8; read_size];
-        file.read_exact(&mut chunk).map_err(|e| {
-            text::get().log_text(text::LogText::ReadLogContentFailed {
-                reason: &e.to_string(),
-            })
-        })?;
+    pub(crate) fn is_empty(&self) -> bool {
+        self.file_len == self.start
+    }
 
-        Ok(chunk)
-    };
+    pub(crate) fn read_last_lines(
+        self,
+        max_lines: NonZeroUsize,
+        block_bytes: NonZeroUsize,
+    ) -> Result<Vec<String>, ReadLogError> {
+        let mut counted_lines = 0usize;
+        self.read_lines_backwards(block_bytes, |_| {
+            counted_lines += 1;
+            counted_lines >= max_lines.get()
+        })
+    }
 
-    // 倒序读取时，一行可能跨越多个字节块。
-    let mut take_lines = {
-        let mut reversed_line_bytes: Vec<u8> = Vec::new();
+    fn read_lines_backwards(
+        self,
+        block_bytes: NonZeroUsize,
+        mut when_to_stop: impl FnMut(&str) -> bool,
+    ) -> Result<Vec<String>, ReadLogError> {
+        let Self {
+            mut file,
+            start,
+            file_len,
+        } = self;
+        let mut position = file_len;
+        let mut scanned_lines: Vec<String> = Vec::new();
+        let mut read_previous_chunk = |position: &mut u64| -> Result<Vec<u8>, ReadLogError> {
+            let read_size = std::cmp::min(block_bytes.get() as u64, *position - start) as usize;
+            *position -= read_size as u64;
 
-        move |chunk: &[u8], at_file_start: bool| -> (Vec<String>, bool) {
-            let mut lines: Vec<String> = Vec::new();
-            let mut take_line = |reversed_line_bytes: &mut Vec<u8>| -> bool {
-                reversed_line_bytes.reverse();
-                let mut line = String::from_utf8_lossy(reversed_line_bytes).into_owned();
-                reversed_line_bytes.clear();
-                if line.ends_with('\r') {
-                    line.pop();
-                }
+            file.seek(SeekFrom::Start(*position))
+                .map_err(ReadLogError::Seek)?;
+            let mut chunk = vec![0u8; read_size];
+            file.read_exact(&mut chunk).map_err(ReadLogError::Read)?;
 
-                let should_stop = when_to_stop(&line);
-                lines.push(line);
-                should_stop
-            };
+            Ok(chunk)
+        };
 
-            let mut should_stop = false;
-            for &byte in chunk.iter().rev() {
-                if byte == b'\n' {
-                    if take_line(&mut reversed_line_bytes) {
-                        should_stop = true;
-                        break;
+        // 倒序读取时，一行可能跨越多个字节块。
+        let mut take_lines = {
+            let mut reversed_line_bytes: Vec<u8> = Vec::new();
+
+            move |chunk: &[u8], at_file_start: bool| -> (Vec<String>, bool) {
+                let mut lines: Vec<String> = Vec::new();
+                let mut take_line = |reversed_line_bytes: &mut Vec<u8>| -> bool {
+                    reversed_line_bytes.reverse();
+                    let mut line = String::from_utf8_lossy(reversed_line_bytes).into_owned();
+                    reversed_line_bytes.clear();
+                    if line.ends_with('\r') {
+                        line.pop();
                     }
-                } else {
-                    reversed_line_bytes.push(byte);
+
+                    let should_stop = when_to_stop(&line);
+                    lines.push(line);
+                    should_stop
+                };
+
+                let mut should_stop = false;
+                for &byte in chunk.iter().rev() {
+                    if byte == b'\n' {
+                        if take_line(&mut reversed_line_bytes) {
+                            should_stop = true;
+                            break;
+                        }
+                    } else {
+                        reversed_line_bytes.push(byte);
+                    }
                 }
+
+                if at_file_start && !should_stop {
+                    take_line(&mut reversed_line_bytes);
+                }
+
+                (lines, should_stop)
             }
+        };
 
-            if at_file_start && !should_stop {
-                take_line(&mut reversed_line_bytes);
-            }
-
-            (lines, should_stop)
-        }
-    };
-
-    if file_len == start {
-        return Ok(Vec::new());
-    }
-
-    // 末尾换行是上一行的结束符，不是额外的空行。
-    let mut chunk = read_previous_chunk(&mut position)?;
-    if chunk.last() == Some(&b'\n') {
-        chunk.pop();
-    }
-
-    loop {
-        let (lines, should_stop) = take_lines(&chunk, position == start);
-        scanned_lines.extend(lines);
-
-        if should_stop || position == start {
-            break;
+        if file_len == start {
+            return Ok(Vec::new());
         }
 
-        chunk = read_previous_chunk(&mut position)?;
+        // 末尾换行是上一行的结束符，不是额外的空行。
+        let mut chunk = read_previous_chunk(&mut position)?;
+        if chunk.last() == Some(&b'\n') {
+            chunk.pop();
+        }
+
+        loop {
+            let (lines, should_stop) = take_lines(&chunk, position == start);
+            scanned_lines.extend(lines);
+
+            if should_stop || position == start {
+                break;
+            }
+
+            chunk = read_previous_chunk(&mut position)?;
+        }
+
+        scanned_lines.reverse();
+        Ok(scanned_lines)
     }
-
-    scanned_lines.reverse();
-    Ok(scanned_lines)
-}
-
-/// 读取文件末尾的 `max_lines` 行；行数为零时返回错误。
-pub fn read_last_lines(file_path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
-    read_last_lines_after(file_path, 0, max_lines)
-}
-
-/// 读取指定字节偏移之后的末尾行。
-pub(crate) fn read_last_lines_after(
-    file_path: &Path,
-    start: u64,
-    max_lines: usize,
-) -> Result<Vec<String>, String> {
-    if max_lines == 0 {
-        return Err(text::get().bot_log_zero_lines().to_string());
-    }
-
-    let mut counted_lines = 0usize;
-    read_lines_backwards_from(file_path, start, |_| {
-        counted_lines += 1;
-        counted_lines >= max_lines
-    })
 }
 
 /// 列出 `dir` 下可读取的子目录名字（只要名字的 UTF-8 文本），跳过单条读取错误，顺序由系统决定。
-pub fn list_subdirectory_names(dir: &Path) -> Result<Vec<String>, std::io::Error> {
+pub(crate) fn list_subdirectory_names(dir: &Path) -> Result<Vec<String>, std::io::Error> {
     let mut subdirectory_names = Vec::new();
     for dir_entry in fs::read_dir(dir)?.flatten() {
         if !dir_entry.path().is_dir() {
@@ -176,8 +195,69 @@ pub fn remove_dir_all_if_exists(dir: &Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
-    /// 每个测试使用独立临时目录，避免并发测试互相干扰。
-    use crate::test_support::temp_test_dir;
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "minecraft-fishingbot-utils-{name}-{}-{timestamp}",
+            std::process::id()
+        ))
+    }
+
+    fn block_size() -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
+    }
+
+    fn read_lines_backwards_from(
+        file_path: &Path,
+        start: u64,
+        when_to_stop: impl FnMut(&str) -> bool,
+    ) -> Result<Vec<String>, ReadLogError> {
+        LogReader::open(file_path, start)?.read_lines_backwards(block_size(), when_to_stop)
+    }
+
+    fn read_last_lines_after(
+        file_path: &Path,
+        start: u64,
+        max_lines: usize,
+    ) -> Result<Vec<String>, ReadLogError> {
+        LogReader::open(file_path, start)?
+            .read_last_lines(NonZeroUsize::new(max_lines).unwrap(), block_size())
+    }
+
+    #[test]
+    fn injected_read_sizes_preserve_multibyte_lines() {
+        let dir = temp_test_dir("read-configurable-blocks");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bot.log");
+        fs::write(&path, "first\r\n钓鱼🐟\r\nlast\n").unwrap();
+
+        for size in [1, 2, 7] {
+            let lines = LogReader::open(&path, 0)
+                .unwrap()
+                .read_last_lines(
+                    NonZeroUsize::new(2).unwrap(),
+                    NonZeroUsize::new(size).unwrap(),
+                )
+                .unwrap();
+            assert_eq!(lines, ["钓鱼🐟", "last"]);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn injected_timestamp_format_names_the_created_file() {
+        let dir = temp_test_dir("create-configurable-log");
+        create_log_dir(&dir).unwrap();
+        let (path, _) = create_timestamped_log_file(&dir, "header", "%Y%m%d").unwrap();
+        let name = path.file_stem().unwrap().to_str().unwrap();
+        assert_eq!(name.len(), 8);
+        assert!(name.bytes().all(|byte| byte.is_ascii_digit()));
+        assert_eq!(fs::read_to_string(path).unwrap(), "header\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     /// 从文件末尾读取时，返回结果按文件顺序排列；末尾换行不产生空行。
     #[test]
@@ -187,12 +267,12 @@ mod tests {
         let log_path = dir.join("2026-09-28-01-47-01.log");
         fs::write(&log_path, "一\n二\n三\n").expect("写日志");
 
-        let all_lines = read_lines_backwards_until(&log_path, |_| false).expect("读日志");
+        let all_lines = read_lines_backwards_from(&log_path, 0, |_| false).expect("读日志");
         assert_eq!(all_lines, vec!["一", "二", "三"]);
 
         // 遇到匹配行后停止扫描，更旧的行不再读取。
         let first_line =
-            read_lines_backwards_until(&log_path, |line| line == "三").expect("读日志");
+            read_lines_backwards_from(&log_path, 0, |line| line == "三").expect("读日志");
         assert_eq!(first_line, vec!["三"]);
 
         fs::remove_dir_all(&dir).expect("清理临时目录");
@@ -207,14 +287,14 @@ mod tests {
         let without_newline = dir.join("no-newline.log");
         fs::write(&without_newline, "只有一行").expect("写日志");
         assert_eq!(
-            read_lines_backwards_until(&without_newline, |_| false).expect("读日志"),
+            read_lines_backwards_from(&without_newline, 0, |_| false).expect("读日志"),
             vec!["只有一行"]
         );
 
         let empty = dir.join("empty.log");
         fs::write(&empty, "").expect("写空日志");
         assert!(
-            read_lines_backwards_until(&empty, |_| false)
+            read_lines_backwards_from(&empty, 0, |_| false)
                 .expect("读空日志")
                 .is_empty()
         );
@@ -222,7 +302,7 @@ mod tests {
         let only_newline = dir.join("only-newline.log");
         fs::write(&only_newline, "\n").expect("写日志");
         assert_eq!(
-            read_lines_backwards_until(&only_newline, |_| false).expect("读日志"),
+            read_lines_backwards_from(&only_newline, 0, |_| false).expect("读日志"),
             vec![""]
         );
 
@@ -272,7 +352,7 @@ mod tests {
             let log_path = dir.join(format!("case-{index}.log"));
             fs::write(&log_path, payload).expect("写日志");
 
-            let read_lines = read_lines_backwards_until(&log_path, |_| false).expect("读日志");
+            let read_lines = read_lines_backwards_from(&log_path, 0, |_| false).expect("读日志");
             assert_eq!(
                 read_lines,
                 payload.lines().collect::<Vec<&str>>(),
@@ -290,14 +370,14 @@ mod tests {
         fs::create_dir_all(&dir).expect("建临时目录");
         let log_path = dir.join("big.log");
 
-        // 总长度明显超过单个读块（`BACKWARD_READ_BLOCK_BYTES` = 16 KiB）。
+        // 总长度明显超过测试使用的单个读块。
         let mut content = String::new();
         for index in 0..2000 {
             content.push_str(&format!("第{index}行-钓鱼中🐟\r\n"));
         }
         fs::write(&log_path, content).expect("写大日志");
 
-        let last_three_lines = read_last_lines(&log_path, 3).expect("读最后 3 行");
+        let last_three_lines = read_last_lines_after(&log_path, 0, 3).expect("读最后 3 行");
         assert_eq!(
             last_three_lines,
             vec![
@@ -308,7 +388,7 @@ mod tests {
         );
 
         // 全文读取用于验证跨块拼接既不丢行，也不重复行。
-        let all_lines = read_lines_backwards_until(&log_path, |_| false).expect("读全文");
+        let all_lines = read_lines_backwards_from(&log_path, 0, |_| false).expect("读全文");
         assert_eq!(all_lines.len(), 2000);
 
         fs::remove_dir_all(&dir).expect("清理临时目录");

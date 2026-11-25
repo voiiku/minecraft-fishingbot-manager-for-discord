@@ -1,7 +1,7 @@
 # process_log: the program log
 [简体中文](process-log-zh_cn.md) | **English**
 
-* Code: `src/runtime/process_log.rs` (`src/runtime/process_log/levels.rs` decides levels and `src/runtime/process_log/format.rs` renders records;
+* Code: `src/runtime/process_log/mod.rs` (`src/runtime/process_log/levels.rs` decides levels and `src/runtime/process_log/format.rs` renders records;
   both are pure functions with their own tests)
 * Public API: `ProcessLog::get_or_init()` (`ProcessLog` is re-exported from the crate root). The first call tries to
   create this run's log file, installs the logger, and records the config path and process ID (plus the log path when
@@ -26,7 +26,7 @@ as described in sections 4 and 5.
 
 Each record looks like
 `[2026-09-28 15:30:12] [INFO] config loaded: /fishingbots/minecraft-fishingbot-manager-for-discord.conf.toml`,
-in plain text without colour. The file name comes from `utils::create_timestamped_log_file` (the same naming as bot
+in plain text without colour. The file name comes from `utils::fs::create_timestamped_log_file` (the same naming as bot
 logs, with the timestamp format `%Y-%m-%d-%H-%M-%S`); the first line describes this startup and is localised according
 to `[i18n] language`.
 
@@ -34,7 +34,7 @@ What gets recorded:
 
 * This project's own events: config load, startup, shutdown, watchdog, bot directories and sessions, the details of
   start/stop/restart/pause, warnings and errors.
-* Every reply (`LogText::CommandReplied`): who asked (Discord user ID), which command, and what was answered. All
+* Every reply (`LogMessages::command_replied`): who asked (Discord user ID), which command, and what was answered. All
   command-layer replies go through `discord_commands::say_and_log` and `log_reply` (see
   [commands-en_us.md](../commands/commands-en_us.md)), so what a user reports receiving can be checked line by line
   against the log.
@@ -69,23 +69,25 @@ as `serenity=debug`) is supported; this project debugs by level, not by module.
 * A logger is already installed: `ProcessLog::get_or_init` checks first; when one is installed it keeps that logger,
   prints a note and returns without creating another file. The file is created before the logger is installed, so
   checking first is what keeps a stray first-line-only file out of `logs/`.
+* A stderr or file write/flush failure, or a poisoned file lock, produces a localized warning directly on stderr
+  without re-entering the logger. If stderr fails, stdout is attempted; if both fail, the process panics because it
+  cannot report the failure.
 
-Logging is an operations concern and must not prevent game accounts from coming online.
+Except when both terminal outputs are unavailable and the failure cannot be reported, logging failures do not prevent
+game accounts from coming online.
 
-That is why `ProcessLog::get_or_init` does not return a `Result`: write failures after installation (a full disk, a
-deleted file) have nowhere to be reported either (the `log::*` signatures are `()`); a `Result` would cover only the
-step before installation and would make `Ok(())` look like a healthy log system. Pushing the degraded decision onto the
-caller would only make every call site repeat "write a warning, keep running".
+`ProcessLog::get_or_init` does not return a `Result`: `log::*` cannot return runtime write errors, which are instead
+reported directly.
 
 ## 5. When it is called
 
 It must be called before the poise `Framework` and `Client` are assembled and before anything logs. The order is in
-`src/main.rs`: `config::Config::get_or_init()`, `ProcessLog::get_or_init`, then build the `Framework`/`Client` and call
+`src/main.rs`: `config::Config::load()`, `ProcessLog::get_or_init`, then build the `Framework`/`Client` and call
 `client.start()`. It reads `[log] debug` from the config itself, which is why the entry point passes no argument.
 
 When config loading fails, the process has not created a log yet, so the related messages only appear in the terminal.
-Only a few direct writes remain from the earliest startup: the template/config-path notes from `src/runtime/config.rs` (stdout)
-and config errors (stderr), plus the two notes from `src/runtime/process_log.rs` (logger installation failure and a repeated
+Besides runtime output-failure warnings, direct writes from earliest startup include the template/config-path notes from `src/runtime/config/mod.rs` (stdout)
+and config errors (stderr), plus the two notes from `src/runtime/process_log/mod.rs` (logger installation failure and a repeated
 initialization keeping the existing logger, both stdout).
 
 ## 6. File retention
@@ -104,5 +106,5 @@ old files:
 ## 7. Related documents
 
 * All documents: [docs index](../../index-en_us.md).
-* The two log lines (bot logs and the program log): [utils-en_us.md](../utils/utils-en_us.md) section 7.
+* The two log lines (bot logs and the program log): [runtime-en_us.md](../runtime/runtime-en_us.md) section 7.
 * What loss detection and the reconnect leave in the log: [watchdog-en_us.md](../watchdog/watchdog-en_us.md).

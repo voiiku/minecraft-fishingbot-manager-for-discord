@@ -1,7 +1,7 @@
 # process_log：程序日志
 [English](process-log-en_us.md) | **简体中文**
 
-* 代码：`src/runtime/process_log.rs`（`src/runtime/process_log/levels.rs` 负责级别判定，`src/runtime/process_log/format.rs` 负责记录渲染；
+* 代码：`src/runtime/process_log/mod.rs`（`src/runtime/process_log/levels.rs` 负责级别判定，`src/runtime/process_log/format.rs` 负责记录渲染；
   两部分都是纯函数，各自带测试）
 * 对外 API：`ProcessLog::get_or_init()`（`ProcessLog` 从 crate 根重导出）。首次调用会尝试创建本次日志文件、安装
   logger，并记录配置路径与进程号（日志文件可用时也记录其路径）。
@@ -21,14 +21,14 @@ serenity 与 poise 通过 `tracing` 记录日志，默认只写终端；本项�
 
 每条记录形如
 `[2026-09-28 15:30:12] [INFO] 已加载配置: /fishingbots/minecraft-fishingbot-manager-for-discord.conf.toml`，
-纯文本、无颜色。文件名由 `utils::create_timestamped_log_file` 生成（与机器人日志同一套命名，时间戳格式为
+纯文本、无颜色。文件名由 `utils::fs::create_timestamped_log_file` 生成（与机器人日志同一套命名，时间戳格式为
 `%Y-%m-%d-%H-%M-%S`）；文件首行是本次启动的说明，文案随 `[i18n] language` 变化。
 
 记录内容：
 
 * 本项目自身的事件：配置加载、启动、关停、看门狗、机器人目录与会话、启动/停止/重启/暂停明细，
   以及警告与错误。
-* 每一次回复（`LogText::CommandReplied`）：调用者（Discord 用户 ID）、指令与回复内容。命令层的回复统一
+* 每一次回复（`LogMessages::command_replied`）：调用者（Discord 用户 ID）、指令与回复内容。命令层的回复统一
   经由 `discord_commands::say_and_log` 与 `log_reply` 输出（见 [commands-zh_cn.md](../commands/commands-zh_cn.md)），
   因此“用户声称收到的内容”可以逐条与日志核对。
 * 第三方 crate（serenity、poise）默认只记录到 `WARN`（见下一节），因为它们按心跳持续输出 `INFO`，会使
@@ -57,21 +57,21 @@ serenity 与 poise 通过 `tracing` 记录日志，默认只写终端；本项�
   都不低于 `WARN`，所以不会被过滤。日志未落盘这件事不能只写在文件里——此时文件正是缺失的那一份。
 * logger 已安装：`ProcessLog::get_or_init` 先检查安装状态，已安装时保留现有 logger、打印一条说明并直接返回，
   不再创建日志文件（文件创建发生在安装 logger 之前，先检查才不会在 `logs/` 留下只有首行的空文件）。
+* 运行中 stderr 或文件写入、刷新失败，以及文件锁中毒时，直接向 stderr 输出本地化告警，不再经过 logger。
+  stderr 无法输出时尝试 stdout；两个输出都失败时明确 panic，因为已无法报告故障。
 
-这样处理的原因是：日志属于运维问题，不应导致游戏账号无法上线。
+除两个终端输出都不可用、无法报告故障的情况外，日志故障不应导致游戏账号无法上线。
 
-`ProcessLog::get_or_init` 因此不返回 `Result`：logger 安装后的运行期写失败（磁盘写满、文件被删除）同样无处
-上报（`log::*` 的签名就是 `()`）；返回 `Result` 只能覆盖安装前的一步，还会让 `Ok(())` 看起来像日志系统
-健康。把降级判断交给调用方，也只会让每个调用点重复“记录告警、继续运行”。
+`ProcessLog::get_or_init` 不返回 `Result`：`log::*` 无法返回运行期写入结果，因此故障通过直接输出告警报告。
 
 ## 5. 调用时机
 
 必须在装配 poise `Framework`、创建 `Client` 以及任何日志输出之前调用。顺序见 `src/main.rs`：
-`config::Config::get_or_init()`、`ProcessLog::get_or_init`、装配 `Framework`/`Client` 并调用 `client.start()`。
+`config::Config::load()`、`ProcessLog::get_or_init`、装配 `Framework`/`Client` 并调用 `client.start()`。
 级别由它自行从配置读取 `[log] debug`，因此入口不传参数。
 
-配置加载失败时进程尚未创建日志，相关提示只会出现在终端。不经 logger 的直写仅剩启动早期几处：
-`src/runtime/config.rs` 的模板/配置路径提示（stdout）与配置错误（stderr），以及 `src/runtime/process_log.rs` 的两条说明
+配置加载失败时进程尚未创建日志，相关提示只会出现在终端。除运行期输出故障告警外，不经 logger 的直写还有启动早期几处：
+`src/runtime/config/mod.rs` 的模板/配置路径提示（stdout）与配置错误（stderr），以及 `src/runtime/process_log/mod.rs` 的两条说明
 （logger 安装失败、重复初始化时保留现有 logger，stdout）。
 
 ## 6. 文件保留策略
@@ -87,5 +87,5 @@ serenity 与 poise 通过 `tracing` 记录日志，默认只写终端；本项�
 ## 7. 相关文档
 
 * 全部文档见 [docs 文档索引](../../index-zh_cn.md)。
-* 两条日志线（机器人日志与程序日志）的口径：[utils-zh_cn.md](../utils/utils-zh_cn.md) 第 7 节。
+* 两条日志线（机器人日志与程序日志）的口径：[runtime-zh_cn.md](../runtime/runtime-zh_cn.md) 第 7 节。
 * 掉线判定与重连会在日志里留下什么：[watchdog-zh_cn.md](../watchdog/watchdog-zh_cn.md)。

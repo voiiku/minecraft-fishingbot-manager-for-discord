@@ -81,9 +81,9 @@ This is expected: the filters are working. Lines matching `keywords.filter_regex
 
 Check the latest filtered log from `/log` against the `[keywords]` configuration:
 
-* `keywords.online` must be a **contiguous, case-sensitive literal substring** of the join message, not a regular expression. For `Welcome duck back to Example Server`, use `back to Example Server`, not `Welcome back to Example Server`, which omits the player name. Also ensure `keywords.filter_regex` does not discard the line.
+* Ensure `keywords.filter_regex` does not discard FishingBot's `/status` response.
 * Restart the program after changing the config. `/start` and `/startall` check the state once after `timing.check_grace`; if joining takes longer, use `/show status` later or increase the grace period to suit the actual join time.
-* If reconnects are not recognized, check that `[i18n] language` matches the JAR output. The `/pause` and `/unpause` echoes are configured in `[command_echo]` and must match the JAR output. See [i18n.md](../mods/i18n/i18n-en_us.md) for details.
+* If status is not recognized, check that `[i18n] language` matches the JAR output and the JAR supports `/status`. See [i18n.md](../mods/i18n/i18n-en_us.md).
 
 ## 11. Some bots fail to start with `/startall`
 

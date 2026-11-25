@@ -26,10 +26,10 @@ enum GatewayState {
 
 impl GatewayState {
     /// 掉线原因对应的日志文案；未掉线时返回 `None`。
-    fn lost_log_text(self) -> Option<crate::text::LogText<'static>> {
+    fn lost_reason(self) -> Option<String> {
         match self {
-            Self::NeverReady => Some(crate::text::LogText::GatewayLostNeverReady),
-            Self::Unreachable => Some(crate::text::LogText::GatewayLostUnreachable),
+            Self::NeverReady => Some(crate::bootstrap_error_text().gateway_lost_never_ready()),
+            Self::Unreachable => Some(crate::bootstrap_error_text().gateway_lost_unreachable()),
             Self::Alive | Self::Waiting => None,
         }
     }
@@ -50,8 +50,8 @@ impl Watchdog {
         ) = None;
     }
 
-    /// 记录握手成功时刻，并清除探活失败起始时刻。
-    pub fn record_handshake_success(&self, now: Instant) {
+    /// 记录握手成功并清除探活失败；返回是否为进程内首次握手。
+    pub fn record_handshake_success(&self, now: Instant) -> bool {
         *lock_or_panic(
             self.last_handshake.lock(),
             text::WatchdogText::LastHandshakeLockRecord,
@@ -60,10 +60,6 @@ impl Watchdog {
             self.unhealthy_since.lock(),
             text::WatchdogText::UnhealthySinceLockClear,
         ) = None;
-    }
-
-    /// 标记已经握手，并返回这是否是进程内第一次调用。
-    pub fn is_first_handshake(&self) -> bool {
         !self.ever_handshaken.swap(true, Ordering::Relaxed)
     }
 
@@ -135,16 +131,14 @@ impl Watchdog {
                     Err(e) => {
                         log::warn!(
                             "{}\n",
-                            text::get().log_text(text::LogText::ProbeFailed {
-                                reason: &e.to_string(),
-                            })
+                            crate::bootstrap_error_text().probe_failed(&e.to_string())
                         );
                         self.record_probe_failure_start(Instant::now());
                     }
                 }
                 // 判定掉线时请求重建连接并结束任务；主循环会创建下一轮探活任务。
-                if let Some(reason) = self.state(Instant::now()).lost_log_text() {
-                    self.request_reconnect(text::get().log_text(reason));
+                if let Some(reason) = self.state(Instant::now()).lost_reason() {
+                    self.request_reconnect(reason);
                     return;
                 }
             }
@@ -188,17 +182,17 @@ mod tests {
         );
     }
 
-    /// 就绪提示每进程只输出一次：`is_first_handshake` 仅在首次返回 `true`。
+    /// 就绪提示每进程只输出一次，重连后仍保留首次握手记录。
     #[test]
     fn only_the_first_handshake_reports_ready() {
         let (watchdog, started) = watchdog_at_start();
 
-        assert!(watchdog.is_first_handshake());
-        assert!(!watchdog.is_first_handshake());
+        assert!(watchdog.record_handshake_success(started));
+        assert!(!watchdog.record_handshake_success(started));
 
         // 重连只清除本轮状态；“是否已输出就绪日志”属于进程级状态，必须保留。
         watchdog.begin_connection_attempt(started);
-        assert!(!watchdog.is_first_handshake());
+        assert!(!watchdog.record_handshake_success(started));
     }
 
     /// 握手成功且探活正常时状态为 Alive。

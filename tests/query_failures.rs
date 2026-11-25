@@ -1,14 +1,13 @@
 //! screen 查询、登录会话状态与反 AFK 的回归测试。
 
+use minecraft_fishingbot_manager_for_discord::operations;
+use minecraft_fishingbot_manager_for_discord::text::report::IntoReplyText;
 mod common;
 
-use minecraft_fishingbot_manager_for_discord::{
-    AllBotsControlAction, AntiAfkAction, BotControlAction, BotManageAction, ShowAction,
-    check_sync_commands_permission, config, handle_all_bots_control, handle_anti_afk,
-    handle_bot_control, handle_bot_log, handle_bot_login, handle_bot_login_await,
-    handle_bot_manage, handle_checkserver, handle_fishingbot_config, handle_show,
-    handle_sync_commands, regenerate_fishingbot_config, text,
-};
+use minecraft_fishingbot_manager_for_discord::runtime::bot_instances::bot_sessions::token_ready_bot_names_with_screen_sessions;
+use minecraft_fishingbot_manager_for_discord::runtime::bot_instances::screen::is_bot_screen_running;
+use minecraft_fishingbot_manager_for_discord::runtime::shutdown;
+use minecraft_fishingbot_manager_for_discord::{config, regenerate_fishingbot_config, text};
 
 #[test]
 fn screen_queries_login_and_anti_afk() {
@@ -16,16 +15,71 @@ fn screen_queries_login_and_anti_afk() {
     const ADMIN: u64 = 123_456_789_012_345_678;
 
     if let Some(mode) = std::env::var_os(CHILD) {
-        config::Config::get_or_init();
-        let i18n = text::get();
+        config::Config::load().expect("load test configuration");
+        if mode != "startup_boundary_zh" {
+            minecraft_fishingbot_manager_for_discord::complete_startup();
+        }
+        let i18n = minecraft_fishingbot_manager_for_discord::config::Config::get().text();
         match mode.to_str().unwrap() {
+            "signal_without_context" => {
+                minecraft_fishingbot_manager_for_discord::ProcessLog::get_or_init();
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(shutdown::exit_on_shutdown_signal(None));
+            }
+            "permanent_failure" | "permanent_failure_cleanup_error" => {
+                shutdown::exit_on_permanent_failure("test permanent failure");
+            }
+            "permanent_failure_logged" => {
+                minecraft_fishingbot_manager_for_discord::ProcessLog::get_or_init();
+                shutdown::exit_on_permanent_failure("test permanent failure");
+            }
+            "permanent_failure_logger_disabled" => {
+                minecraft_fishingbot_manager_for_discord::ProcessLog::get_or_init();
+                log::set_max_level(log::LevelFilter::Off);
+                shutdown::exit_on_permanent_failure("test permanent failure");
+            }
+            "startup_boundary_zh" => {
+                let english = text::all_languages()[1];
+                assert_eq!(
+                    i18n.discord_connected(1),
+                    text::all_languages()[0].discord_connected(1)
+                );
+                let failure = "Unauthorized";
+                assert_eq!(
+                    minecraft_fishingbot_manager_for_discord::bootstrap_error_text()
+                        .discord_init_failed_bad_token(failure),
+                    english.discord_init_failed_bad_token(failure)
+                );
+                let error = is_bot_screen_running("duck").expect_err("screen must fail");
+                assert!(
+                    error.starts_with("Failed to list screen sessions:"),
+                    "{error}"
+                );
+
+                minecraft_fishingbot_manager_for_discord::complete_startup();
+                assert_eq!(
+                    minecraft_fishingbot_manager_for_discord::bootstrap_error_text()
+                        .discord_init_failed_bad_token(failure),
+                    i18n.discord_init_failed_bad_token(failure)
+                );
+                let error = is_bot_screen_running("duck").expect_err("screen must fail");
+                assert!(error.starts_with("查询 screen 会话失败:"), "{error}");
+
+                minecraft_fishingbot_manager_for_discord::complete_startup();
+                assert_eq!(
+                    minecraft_fishingbot_manager_for_discord::bootstrap_error_text()
+                        .discord_init_failed_bad_token(failure),
+                    i18n.discord_init_failed_bad_token(failure)
+                );
+            }
             "game_config" => {
                 let base_dir = &config::Config::get().paths.base_dir;
                 let legacy_path = base_dir.join("conf.json");
                 std::fs::write(&legacy_path, "legacy config").unwrap();
                 regenerate_fishingbot_config().expect("generate game config");
 
-                let view = handle_fishingbot_config(ADMIN).expect("read game config");
+                let view = operations::queries::show_bot_config().expect("read game config");
                 assert_eq!(view.file_name, "config.json");
                 assert_eq!(
                     view.content,
@@ -40,7 +94,9 @@ fn screen_queries_login_and_anti_afk() {
             }
             "checkserver" => {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
-                let reply = runtime.block_on(handle_checkserver(ADMIN));
+                let reply = runtime
+                    .block_on(operations::queries::check_server())
+                    .to_reply_text();
                 assert!(reply.contains(i18n.checkserver_title()), "{reply}");
                 assert!(reply.contains("CPU usage:"), "{reply}");
                 assert!(reply.contains("Memory used/total:"), "{reply}");
@@ -48,7 +104,7 @@ fn screen_queries_login_and_anti_afk() {
                 assert!(reply.contains("Host uptime:"), "{reply}");
             }
             "status" => {
-                let reply = handle_show(ShowAction::Status, ADMIN);
+                let reply = operations::queries::show_status().to_reply_text();
                 assert!(reply.contains("duck"), "{reply}");
                 assert!(reply.contains("goose"), "{reply}");
                 assert!(reply.contains(i18n.bot_status_stopped()), "{reply}");
@@ -59,20 +115,12 @@ fn screen_queries_login_and_anti_afk() {
                     "x",
                     "status must use one screen snapshot"
                 );
-                let mut canonical =
-                    minecraft_fishingbot_manager_for_discord::utils::token_ready_bot_names_with_screen_sessions(
-                    )
-                    .unwrap();
-                let mut compatible =
-                    minecraft_fishingbot_manager_for_discord::utils::all_running_bot_names()
-                        .unwrap();
-                canonical.sort();
-                compatible.sort();
-                assert_eq!(canonical, ["duck", "goose"]);
-                assert_eq!(compatible, canonical);
+                let mut names = token_ready_bot_names_with_screen_sessions().unwrap();
+                names.sort();
+                assert_eq!(names, ["duck", "goose"]);
             }
             "startall_seconds" => {
-                let reply = handle_all_bots_control(AllBotsControlAction::StartAll, ADMIN);
+                let reply = operations::all_bots_control::start_all_bots(ADMIN).to_reply_text();
                 assert!(
                     reply.contains(
                         "1 seconds between bots in a batch, 0.001 seconds between batches"
@@ -81,13 +129,27 @@ fn screen_queries_login_and_anti_afk() {
                 );
             }
             "start_and_status_online" => {
-                let reply = handle_bot_control(BotControlAction::Start, "duck", ADMIN);
-                assert_eq!(reply, i18n.start_command_sent_confirmed("duck"));
+                let reply =
+                    operations::single_bot_control::start_single_bot("duck", ADMIN).to_reply_text();
+                assert_eq!(reply, i18n.start_join_confirmed("duck"));
 
-                let status = handle_show(ShowAction::Status, ADMIN);
-                assert!(status.contains(i18n.bot_status_online()), "{status}");
+                let status = operations::queries::show_status().to_reply_text();
+                assert!(status.contains(i18n.bot_status_joined()), "{status}");
             }
-            "status_log_transitions" => {
+            "start_status_unavailable" | "start_status_timeout" => {
+                let reply =
+                    operations::single_bot_control::start_single_bot("duck", ADMIN).to_reply_text();
+                let expected = if mode == "start_status_unavailable" {
+                    i18n.bot_status_unavailable().to_string()
+                } else {
+                    i18n.bot_status_query_timeout("duck")
+                };
+                assert!(reply.contains(&expected), "{reply}");
+                let counter = std::env::var("FISHBOT_SCREEN_COUNTER").unwrap();
+                assert!(std::path::Path::new(&format!("{counter}.launched")).exists());
+                assert!(!std::path::Path::new(&format!("{counter}.stopping")).exists());
+            }
+            "status_transitions" => {
                 let logs_dir = config::Config::get()
                     .paths
                     .bots_dir
@@ -96,38 +158,59 @@ fn screen_queries_login_and_anti_afk() {
                     .join(&config::Config::get().runtime.bot_logs_dir);
                 std::fs::create_dir_all(&logs_dir).unwrap();
                 let log_path = logs_dir.join("9999-12-31-23-59-59.log");
-                let online = &config::Config::get().keywords.online;
-                let reconnect = format!(
-                    "{}5{}",
-                    i18n.jar_reconnect_prefix(),
-                    i18n.jar_reconnect_suffix()
-                );
-                for (content, expected) in [
+                let counter = std::env::var("FISHBOT_SCREEN_COUNTER").unwrap();
+                for (fields, expected_connection, expected_pause, no_rod, bobber, last_fish) in [
                     (
-                        "Loading configuration".to_string(),
-                        i18n.bot_status_initializing(),
+                        "false true true false 123",
+                        i18n.bot_status_not_joined(),
+                        i18n.bot_pause_paused(),
+                        "true",
+                        "false",
+                        "123",
                     ),
                     (
-                        format!("Loading configuration\n{online}\n"),
-                        i18n.bot_status_online(),
+                        "true false false true 456",
+                        i18n.bot_status_joined(),
+                        i18n.bot_pause_unpaused(),
+                        "false",
+                        "true",
+                        "456",
                     ),
-                    (
-                        format!("{online}\n{reconnect}\n"),
-                        i18n.bot_status_reconnecting(),
-                    ),
-                    (format!("{reconnect}\n{online}\n"), i18n.bot_status_online()),
                 ] {
-                    std::fs::write(&log_path, content).unwrap();
-                    let status = handle_show(ShowAction::Status, ADMIN);
-                    assert!(status.contains(expected), "{status}");
+                    std::fs::write(&log_path, "old log\n").unwrap();
+                    std::fs::write(format!("{counter}.state"), fields).unwrap();
+                    let status = operations::queries::show_status().to_reply_text();
+                    let row = status
+                        .lines()
+                        .find(|line| line.starts_with("- duck |"))
+                        .unwrap();
+                    let columns: Vec<_> = row.split(" | ").collect();
+                    assert_eq!(columns.len(), 7, "{row}");
+                    assert_eq!(
+                        &columns[1..6],
+                        [
+                            expected_connection,
+                            expected_pause,
+                            no_rod,
+                            bobber,
+                            last_fish
+                        ]
+                    );
                 }
+                std::fs::write(format!("{counter}.state"), "unavailable").unwrap();
+                let status = operations::queries::show_status().to_reply_text();
+                assert!(status.contains(i18n.bot_status_unavailable()), "{status}");
                 std::fs::remove_file(log_path).unwrap();
             }
             "pauseall" | "pauseall_zh" => {
                 let owner = config::Config::get().paths.bots_dir.join(ADMIN.to_string());
                 for (name, contents) in [
                     ("duck", "initial\n"),
-                    ("owl", "Fishing paused\n"),
+                    (
+                        "owl",
+                        "[2026] [INFO   ] Fishing status: paused=true joined=true no_rod_available=false has_bobber=false last_fish=0\n",
+                    ),
+                    ("goose", "initial\n"),
                     ("raven", "initial\n"),
                     ("swan", "initial\n"),
                 ] {
@@ -142,11 +225,13 @@ fn screen_queries_login_and_anti_afk() {
                 std::fs::write(falcon.join("refreshToken"), "test token").unwrap();
                 let counter = std::env::var_os("FISHBOT_SCREEN_COUNTER").unwrap();
                 for action in [
-                    AllBotsControlAction::PauseAll,
-                    AllBotsControlAction::UnpauseAll,
+                    operations::all_bots_control::pause_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::unpause_all_bots
+                        as fn(u64) -> Result<String, String>,
                 ] {
                     assert_eq!(
-                        handle_all_bots_control(action, 987_654_322),
+                        action(987_654_322).to_reply_text(),
                         i18n.admin_required(987_654_322)
                     );
                 }
@@ -154,41 +239,48 @@ fn screen_queries_login_and_anti_afk() {
 
                 for (action, command, title, confirmed, status_label, other_status) in [
                     (
-                        AllBotsControlAction::PauseAll,
+                        operations::all_bots_control::pause_all_bots
+                            as fn(u64) -> Result<String, String>,
                         "/pause",
                         i18n.pauseall_title(),
                         i18n.bot_pause_confirmed("duck"),
                         i18n.bot_pause_paused(),
-                        i18n.bot_pause_fishing(),
+                        i18n.bot_pause_unpaused(),
                     ),
                     (
-                        AllBotsControlAction::UnpauseAll,
+                        operations::all_bots_control::unpause_all_bots
+                            as fn(u64) -> Result<String, String>,
                         "/unpause",
                         i18n.unpauseall_title(),
                         i18n.bot_unpause_confirmed("duck"),
-                        i18n.bot_pause_fishing(),
+                        i18n.bot_pause_unpaused(),
                         i18n.bot_pause_paused(),
                     ),
                 ] {
-                    let reply = handle_all_bots_control(action, ADMIN);
-                    let unconfirmed = i18n.bot_pause_unconfirmed("owl", command);
+                    let reply = action(ADMIN).to_reply_text();
+                    let timeout = i18n.bot_status_query_after_command_failed(
+                        command,
+                        &i18n.bot_status_query_timeout("owl"),
+                    );
                     let missing_log = i18n.bot_status_log_not_found("falcon");
                     let send_failed = i18n.send_command_failed("goose", None);
-                    let superseded =
-                        i18n.bot_line("raven", &i18n.bot_pause_superseded(command, other_status));
+                    let superseded = i18n.bot_line(
+                        "raven",
+                        &i18n.bot_pause_status_mismatch(command, other_status),
+                    );
                     assert_eq!(
                         reply,
                         format!(
-                            "{title}:\n=======================\n- {}\n- {}\n- {}\n\n{}:\n- {confirmed}\n- {unconfirmed}\n\n{}:\n- {missing_log}\n- {send_failed}\n- {superseded}",
+                            "{title}:\n=======================\n- {}\n- {}\n- {}\n\n{}:\n- {confirmed}\n\n{}:\n- {missing_log}\n- {send_failed}\n- {timeout}\n- {superseded}",
                             i18n.count_line(i18n.count_running_accounts(), 5),
-                            i18n.count_line(i18n.count_processed_successfully(), 2),
-                            i18n.count_line(i18n.count_processing_failed(), 3),
+                            i18n.count_line(i18n.count_processed_successfully(), 1),
+                            i18n.count_line(i18n.count_processing_failed(), 4),
                             i18n.report_succeeded_label(),
                             i18n.report_failed_label()
                         )
                     );
 
-                    let status = handle_show(ShowAction::Status, ADMIN);
+                    let status = operations::queries::show_status().to_reply_text();
                     let duck = status.lines().find(|line| line.contains("duck |")).unwrap();
                     let owl = status.lines().find(|line| line.contains("owl |")).unwrap();
                     let raven = status
@@ -196,13 +288,35 @@ fn screen_queries_login_and_anti_afk() {
                         .find(|line| line.contains("raven |"))
                         .unwrap();
                     assert!(duck.contains(status_label), "{duck}");
-                    assert!(owl.contains(i18n.bot_pause_fishing()), "{owl}");
+                    assert!(owl.contains(i18n.bot_status_field_unknown()), "{owl}");
                     assert!(raven.contains(other_status), "{raven}");
                 }
+                let sent = std::fs::read_to_string(&counter).unwrap();
+                for command in ["/pause", "/unpause"] {
+                    for name in ["duck", "goose", "owl", "raven"] {
+                        assert!(
+                            sent.contains(&format!("lookup_{name}:{command}\n")),
+                            "{sent}"
+                        );
+                    }
+                }
+                std::fs::write(format!("{}.duck", counter.to_string_lossy()), "true\n").unwrap();
+                std::fs::write(format!("{}.owl_unavailable", counter.to_string_lossy()), "")
+                    .unwrap();
+                let refreshed = operations::queries::show_status().to_reply_text();
+                let duck = refreshed
+                    .lines()
+                    .find(|line| line.contains("duck |"))
+                    .unwrap();
+                let owl = refreshed
+                    .lines()
+                    .find(|line| line.contains("owl |"))
+                    .unwrap();
+                assert!(duck.contains(i18n.bot_pause_paused()), "{duck}");
+                assert!(owl.contains(i18n.bot_status_field_unavailable()), "{owl}");
                 assert_eq!(
-                    std::fs::read_to_string(counter).unwrap(),
-                    "lookup_duck:/pause\nlookup_falcon:/pause\nlookup_goose:/pause\nlookup_owl:/pause\nlookup_raven:/pause\n\
-                     lookup_duck:/unpause\nlookup_falcon:/unpause\nlookup_goose:/unpause\nlookup_owl:/unpause\nlookup_raven:/unpause\n"
+                    operations::single_bot_control::pause_single_bot("owl", ADMIN).to_reply_text(),
+                    i18n.bot_pause_query_unavailable("owl", "/pause")
                 );
                 let duck_log = owner
                     .join("duck")
@@ -211,22 +325,27 @@ fn screen_queries_login_and_anti_afk() {
                 std::fs::write(&duck_log, "old log ".repeat(100)).unwrap();
                 let counter = std::env::var("FISHBOT_SCREEN_COUNTER").unwrap();
                 std::fs::write(format!("{counter}.rotate"), "").unwrap();
-                assert_eq!(
-                    handle_bot_control(BotControlAction::Pause, "duck", ADMIN),
-                    i18n.bot_pause_confirmed("duck")
+                let result =
+                    operations::single_bot_control::pause_single_bot("duck", ADMIN).to_reply_text();
+                assert!(
+                    result.contains(&i18n.bot_status_log_changed("duck")),
+                    "{result}"
                 );
                 std::fs::remove_dir_all(owner.join("owl")).unwrap();
                 std::fs::remove_dir_all(owner.join("raven")).unwrap();
                 std::fs::remove_dir_all(owner.join("falcon")).unwrap();
                 std::fs::remove_dir_all(owner.join("swan")).unwrap();
+                std::fs::remove_dir_all(owner.join("goose").join("logs")).unwrap();
                 std::fs::remove_file(duck_log).unwrap();
             }
             "pauseall_empty" => {
                 for action in [
-                    AllBotsControlAction::PauseAll,
-                    AllBotsControlAction::UnpauseAll,
+                    operations::all_bots_control::pause_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::unpause_all_bots
+                        as fn(u64) -> Result<String, String>,
                 ] {
-                    let reply = handle_all_bots_control(action, ADMIN);
+                    let reply = action(ADMIN).to_reply_text();
                     assert!(
                         reply.contains(&i18n.count_line(i18n.count_running_accounts(), 0)),
                         "{reply}"
@@ -238,7 +357,7 @@ fn screen_queries_login_and_anti_afk() {
                 }
             }
             "pauseall_recheck_error" => {
-                let reply = handle_all_bots_control(AllBotsControlAction::PauseAll, ADMIN);
+                let reply = operations::all_bots_control::pause_all_bots(ADMIN).to_reply_text();
                 assert!(
                     reply.contains(&i18n.count_line(i18n.count_running_accounts(), 1)),
                     "{reply}"
@@ -252,41 +371,44 @@ fn screen_queries_login_and_anti_afk() {
             "failure" => {
                 let expected = "simulated screen query error";
                 let replies = [
-                    handle_show(ShowAction::Status, ADMIN),
-                    handle_bot_control(BotControlAction::Start, "duck", ADMIN),
-                    handle_bot_control(BotControlAction::Stop, "duck", ADMIN),
-                    handle_bot_control(BotControlAction::Restart, "duck", ADMIN),
-                    handle_bot_control(BotControlAction::Command(&["/help"]), "duck", ADMIN),
-                    handle_bot_manage(BotManageAction::Delete, "duck", ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::StartAll, ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::StopAll, ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::RestartAll, ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::PauseAll, ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::UnpauseAll, ADMIN),
-                    handle_all_bots_control(AllBotsControlAction::CommandAll(&["/help"]), ADMIN),
-                    handle_bot_login("duck", ADMIN).unwrap_err(),
+                    operations::queries::show_status().to_reply_text(),
+                    operations::single_bot_control::start_single_bot("duck", ADMIN).to_reply_text(),
+                    operations::single_bot_control::stop_single_bot("duck", ADMIN).to_reply_text(),
+                    operations::single_bot_control::restart_single_bot("duck", ADMIN)
+                        .to_reply_text(),
+                    operations::single_bot_control::send_single_bot_command(
+                        "duck",
+                        &["/help"],
+                        ADMIN,
+                    )
+                    .to_reply_text(),
+                    operations::accounts::delete_bot("duck", ADMIN).to_reply_text(),
+                    operations::all_bots_control::start_all_bots(ADMIN).to_reply_text(),
+                    operations::all_bots_control::stop_all_bots(ADMIN).to_reply_text(),
+                    operations::all_bots_control::restart_all_bots(ADMIN).to_reply_text(),
+                    operations::all_bots_control::pause_all_bots(ADMIN).to_reply_text(),
+                    operations::all_bots_control::unpause_all_bots(ADMIN).to_reply_text(),
+                    operations::all_bots_control::send_all_bots_command(&["/help"], ADMIN)
+                        .to_reply_text(),
+                    operations::accounts::begin_bot_login("duck", ADMIN).unwrap_err(),
                 ];
                 for reply in replies {
                     assert!(reply.contains(expected), "{reply}");
                 }
             }
             "empty" => {
-                assert!(
-                    !minecraft_fishingbot_manager_for_discord::utils::is_bot_screen_running("duck")
-                        .expect("no sessions is not an error")
-                );
+                assert!(!is_bot_screen_running("duck").expect("no sessions is not an error"));
             }
             "missing" => {
                 let error =
-                    minecraft_fishingbot_manager_for_discord::utils::is_bot_screen_running("duck")
-                        .expect_err("missing screen must be reported");
+                    is_bot_screen_running("duck").expect_err("missing screen must be reported");
                 assert!(error.contains("screen"), "{error}");
             }
             "anti_afk_timestamp" => {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 runtime.block_on(async {
                     assert_eq!(
-                        handle_anti_afk(AntiAfkAction::On, ADMIN).await,
+                        operations::set_anti_afk(true, ADMIN).await.to_reply_text(),
                         i18n.anti_afk_started()
                     );
                     let counter = std::env::var_os("FISHBOT_SCREEN_COUNTER").unwrap();
@@ -303,29 +425,32 @@ fn screen_queries_login_and_anti_afk() {
                     .expect("all input steps must use the correct session ID");
                     assert_eq!(std::fs::read_to_string(counter).unwrap(), "//\r");
                     assert_eq!(
-                        handle_anti_afk(AntiAfkAction::Off, ADMIN).await,
+                        operations::set_anti_afk(false, ADMIN).await.to_reply_text(),
                         i18n.anti_afk_stopped()
                     );
                 });
             }
             "race" => {
                 assert_eq!(
-                    handle_bot_login("duck", ADMIN).unwrap_err(),
+                    operations::accounts::begin_bot_login("duck", ADMIN).unwrap_err(),
                     i18n.refusal_bot_running("duck")
                 );
                 let counter = std::env::var_os("FISHBOT_SCREEN_COUNTER").unwrap();
                 assert_eq!(std::fs::read_to_string(counter).unwrap(), "x");
             }
             "verify_failure" => {
-                let reply = handle_bot_control(BotControlAction::Start, "duck", ADMIN);
+                let reply =
+                    operations::single_bot_control::start_single_bot("duck", ADMIN).to_reply_text();
                 assert!(reply.contains("verification screen error"), "{reply}");
             }
             "stop_failure" => {
-                let reply = handle_bot_control(BotControlAction::Stop, "duck", ADMIN);
+                let reply =
+                    operations::single_bot_control::stop_single_bot("duck", ADMIN).to_reply_text();
                 assert!(reply.contains("stop screen error"), "{reply}");
             }
             "restart_failure" => {
-                let reply = handle_bot_control(BotControlAction::Restart, "duck", ADMIN);
+                let reply = operations::single_bot_control::restart_single_bot("duck", ADMIN)
+                    .to_reply_text();
                 assert!(reply.contains("stop screen error"), "{reply}");
                 let counter = std::env::var("FISHBOT_SCREEN_COUNTER").unwrap();
                 assert!(
@@ -334,10 +459,26 @@ fn screen_queries_login_and_anti_afk() {
                 );
             }
             "restart_no_token" => {
-                let reply = handle_bot_control(BotControlAction::Restart, "crane", ADMIN);
+                let reply = operations::single_bot_control::restart_single_bot("crane", ADMIN)
+                    .to_reply_text();
                 assert_eq!(reply, i18n.restart_skipped_missing_token("crane"));
                 let counter = std::env::var("FISHBOT_SCREEN_COUNTER").unwrap();
                 assert!(!std::path::Path::new(&format!("{counter}.unexpected")).exists());
+            }
+            "restartall_already_running" => {
+                let reply = operations::all_bots_control::restart_all_bots(ADMIN).to_reply_text();
+                assert!(
+                    reply.contains(&i18n.count_line(i18n.count_restart_verified(), 0)),
+                    "{reply}"
+                );
+                assert!(
+                    reply.contains(&i18n.count_line(i18n.count_restart_failed(), 1)),
+                    "{reply}"
+                );
+                assert!(
+                    reply.contains(&i18n.startall_skipped_running("duck")),
+                    "{reply}"
+                );
             }
             "restart_success"
             | "restart_success_zh"
@@ -350,23 +491,24 @@ fn screen_queries_login_and_anti_afk() {
                     || mode == "restart_success_zh"
                     || mode == "restartall_success";
                 let reply = if is_batch {
-                    handle_all_bots_control(AllBotsControlAction::RestartAll, ADMIN)
+                    operations::all_bots_control::restart_all_bots(ADMIN).to_reply_text()
                 } else {
-                    handle_bot_control(BotControlAction::Restart, "duck", ADMIN)
+                    operations::single_bot_control::restart_single_bot("duck", ADMIN)
+                        .to_reply_text()
                 };
                 if is_batch {
                     assert!(reply.contains(i18n.restartall_title()), "{reply}");
                     let expected = if confirmed {
-                        i18n.start_command_sent_confirmed("duck")
+                        i18n.start_join_confirmed("duck")
                     } else {
-                        i18n.start_command_sent_unconfirmed("duck")
+                        i18n.start_not_joined("duck")
                     };
                     assert!(reply.contains(&expected), "{reply}");
                 } else {
                     let expected = if confirmed {
                         i18n.bot_restart_online_confirmed("duck")
                     } else {
-                        i18n.bot_restart_session_unconfirmed("duck")
+                        i18n.bot_restart_not_joined("duck")
                     };
                     assert_eq!(reply, expected);
                 }
@@ -376,11 +518,13 @@ fn screen_queries_login_and_anti_afk() {
             }
             "restart_start_failed" | "start_dead" | "restart_dead" | "restartall_dead" => {
                 let reply = match mode.to_str().unwrap() {
-                    "start_dead" => handle_bot_control(BotControlAction::Start, "duck", ADMIN),
+                    "start_dead" => operations::single_bot_control::start_single_bot("duck", ADMIN)
+                        .to_reply_text(),
                     "restartall_dead" => {
-                        handle_all_bots_control(AllBotsControlAction::RestartAll, ADMIN)
+                        operations::all_bots_control::restart_all_bots(ADMIN).to_reply_text()
                     }
-                    _ => handle_bot_control(BotControlAction::Restart, "duck", ADMIN),
+                    _ => operations::single_bot_control::restart_single_bot("duck", ADMIN)
+                        .to_reply_text(),
                 };
                 assert!(reply.contains(&i18n.start_failed("duck")), "{reply}");
                 assert!(
@@ -403,11 +547,16 @@ fn screen_queries_login_and_anti_afk() {
             "routing_permissions" => {
                 const OWNER: u64 = 987_654_321;
                 const OTHER: u64 = 987_654_322;
-                for check_permission in [check_sync_commands_permission, handle_sync_commands] {
-                    assert_eq!(check_permission(OTHER), Err(i18n.admin_required(OTHER)));
-                    assert_eq!(check_permission(OWNER), Err(i18n.admin_required(OWNER)));
-                    assert_eq!(check_permission(ADMIN), Ok(()));
-                }
+                let sync = operations::begin_command_sync(ADMIN).expect("admin may synchronize");
+                assert_eq!(
+                    operations::begin_command_sync(OTHER).unwrap_err(),
+                    i18n.admin_required(OTHER)
+                );
+                assert_eq!(
+                    operations::begin_command_sync(ADMIN).unwrap_err(),
+                    i18n.command_sync_in_progress()
+                );
+                drop(sync);
                 let bot = config::Config::get()
                     .paths
                     .bots_dir
@@ -417,23 +566,29 @@ fn screen_queries_login_and_anti_afk() {
                 let counter = std::env::var_os("FISHBOT_SCREEN_COUNTER").unwrap();
 
                 for action in [
-                    AllBotsControlAction::StartAll,
-                    AllBotsControlAction::StopAll,
-                    AllBotsControlAction::RestartAll,
-                    AllBotsControlAction::PauseAll,
-                    AllBotsControlAction::UnpauseAll,
-                    AllBotsControlAction::CommandAll(&["/help"]),
+                    operations::all_bots_control::start_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::stop_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::restart_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::pause_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    operations::all_bots_control::unpause_all_bots
+                        as fn(u64) -> Result<String, String>,
+                    |caller| {
+                        operations::all_bots_control::send_all_bots_command(&["/help"], caller)
+                    },
                 ] {
-                    assert_eq!(
-                        handle_all_bots_control(action, OTHER),
-                        i18n.admin_required(OTHER)
-                    );
+                    assert_eq!(action(OTHER).to_reply_text(), i18n.admin_required(OTHER));
                 }
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 runtime.block_on(async {
-                    for action in [AntiAfkAction::On, AntiAfkAction::Off] {
+                    for enabled in [true, false] {
                         assert_eq!(
-                            handle_anti_afk(action, OTHER).await,
+                            operations::set_anti_afk(enabled, OTHER)
+                                .await
+                                .to_reply_text(),
                             i18n.admin_required(OTHER)
                         );
                     }
@@ -444,41 +599,74 @@ fn screen_queries_login_and_anti_afk() {
                 );
 
                 let not_found = i18n.bot_dir_not_found("owl");
+                for operation in [
+                    operations::single_bot_control::start_single_bot,
+                    operations::single_bot_control::stop_single_bot,
+                    operations::single_bot_control::restart_single_bot,
+                    operations::single_bot_control::pause_single_bot,
+                    operations::single_bot_control::unpause_single_bot,
+                ] {
+                    assert_eq!(operation("owl", OTHER).to_reply_text(), not_found);
+                }
                 assert_eq!(
-                    handle_bot_control(BotControlAction::Start, "owl", OTHER),
+                    operations::single_bot_control::send_single_bot_command(
+                        "owl",
+                        &["/help"],
+                        OTHER
+                    )
+                    .to_reply_text(),
                     not_found
                 );
                 assert_eq!(
-                    handle_bot_manage(BotManageAction::Delete, "owl", OTHER),
+                    operations::accounts::delete_bot("owl", OTHER).to_reply_text(),
                     not_found
                 );
-                assert_eq!(handle_bot_log(OTHER, "owl", 1).unwrap_err(), not_found);
-                assert_eq!(handle_bot_login("owl", OTHER).unwrap_err(), not_found);
+                assert_eq!(
+                    operations::queries::read_bot_log("owl", Some(-1), OTHER).unwrap_err(),
+                    not_found
+                );
+                assert_eq!(
+                    operations::accounts::begin_bot_login("owl", OTHER).unwrap_err(),
+                    not_found
+                );
+                assert_eq!(
+                    operations::accounts::rename_bot("owl", "other", OTHER).to_reply_text(),
+                    not_found
+                );
+                assert_eq!(
+                    operations::accounts::update_bot_token("owl", "test".into(), OTHER)
+                        .to_reply_text(),
+                    not_found
+                );
+                assert!(!std::path::Path::new(&counter).exists());
                 assert!(bot.exists(), "unauthorized delete must not remove the bot");
 
                 for caller in [OWNER, ADMIN] {
                     assert_eq!(
-                        handle_bot_control(BotControlAction::Start, "owl", caller),
+                        operations::single_bot_control::start_single_bot("owl", caller)
+                            .to_reply_text(),
                         i18n.bot_start_missing_token("owl")
                     );
                     assert_eq!(
-                        handle_bot_manage(BotManageAction::Delete, "owl", caller),
+                        operations::accounts::delete_bot("owl", caller).to_reply_text(),
                         i18n.refusal_bot_running("owl")
                     );
                     assert_eq!(
-                        handle_bot_log(caller, "owl", 1).unwrap_err(),
+                        operations::queries::read_bot_log("owl", Some(1), caller).unwrap_err(),
                         i18n.bot_log_missing("owl")
                     );
                     assert_eq!(
-                        handle_bot_login("owl", caller).unwrap_err(),
+                        operations::accounts::begin_bot_login("owl", caller).unwrap_err(),
                         i18n.bot_login_already_running("owl")
                     );
                 }
             }
             "login_failure" | "login_await_failure" | "login_recover" => {
-                let result = handle_bot_login("duck", ADMIN);
+                let result = operations::accounts::begin_bot_login("duck", ADMIN);
                 let reply = if mode == "login_await_failure" {
-                    handle_bot_login_await(result.expect("device code should be found"))
+                    operations::accounts::finish_bot_login(
+                        result.expect("device code should be found"),
+                    )
                 } else {
                     result.unwrap_err()
                 };
@@ -531,7 +719,7 @@ fn screen_queries_login_and_anti_afk() {
     let jar = value["paths"]["jar"].as_str().unwrap();
     std::fs::write(data.join(jar), b"test jar").unwrap();
     std::fs::write(
-        root.join(config::CONFIG_FILE_NAME),
+        root.join(common::TEST_CONFIG_FILE_NAME),
         toml::to_string(&value).unwrap(),
     )
     .unwrap();
@@ -542,6 +730,12 @@ fn screen_queries_login_and_anti_afk() {
         r#"#!/bin/sh
 case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
   status)
+    if [ "$1" = "-S" ]; then
+      for file in "$FISHBOT_BOT_PATH"/logs/*.log; do
+        [ -f "$file" ] && printf '[2026] [INFO   ] Fishing status: unavailable\n' >> "$file"
+      done
+      exit 0
+    fi
     printf x >> "$FISHBOT_SCREEN_COUNTER"
     printf 'There are screens on:\n\t123.lookup_duck\t(Detached)\n\t456.lookup_goose\t(Dead ???)\n\t789.lookup_crane\t(Detached)\n'
     exit 0 ;;
@@ -555,12 +749,23 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
       printf '\t123.lookup_duck\t(Detached)\n'
     fi
     exit 0 ;;
-  start_and_status_online)
+  start_and_status_online|start_status_unavailable|start_status_timeout)
     if [ "$1" = "-dmS" ]; then
       for file in "$FISHBOT_BOT_PATH"/logs/*.log; do
         printf 'Welcome to the xxx server\n' >> "$file"
       done
       : > "$FISHBOT_SCREEN_COUNTER.launched"
+      exit 0
+    fi
+    if [ "$1" = "-S" ]; then
+      for file in "$FISHBOT_BOT_PATH"/logs/*.log; do
+        [ -f "$file" ] || continue
+        case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
+          start_status_unavailable) printf '[2026] [INFO   ] Fishing status: unavailable\n' >> "$file" ;;
+          start_status_timeout) : ;;
+          *) printf '[2026] [INFO   ] Fishing status: paused=false joined=true no_rod_available=false has_bobber=true last_fish=42\n' >> "$file" ;;
+        esac
+      done
       exit 0
     fi
     if [ -f "$FISHBOT_SCREEN_COUNTER.launched" ]; then
@@ -569,7 +774,16 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
     fi
     printf 'No Sockets found in /tmp/test.\n'
     exit 1 ;;
-  status_log_transitions)
+  status_transitions)
+    if [ "$1" = "-S" ]; then
+      read -r joined paused no_rod bobber last_fish < "$FISHBOT_SCREEN_COUNTER.state"
+      if [ "$joined" = unavailable ]; then
+        printf '[2026] [INFO   ] Fishing status: unavailable\n' >> "$FISHBOT_BOT_PATH/logs/9999-12-31-23-59-59.log"
+      else
+        printf '[2026] [INFO   ] Fishing status: paused=%s joined=%s no_rod_available=%s has_bobber=%s last_fish=%s\n' "$paused" "$joined" "$no_rod" "$bobber" "$last_fish" >> "$FISHBOT_BOT_PATH/logs/9999-12-31-23-59-59.log"
+      fi
+      exit 0
+    fi
     printf 'There is a screen on:\n\t123.lookup_duck\t(Detached)\n'
     exit 0 ;;
   pauseall|pauseall_zh)
@@ -581,26 +795,46 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
         if [ "$3" != "-X" ] || [ "$4" != "stuff" ]; then exit 2; fi
         printf '%s:%s' "$2" "$5" >> "$FISHBOT_SCREEN_COUNTER"
         case "$2" in
-          lookup_duck)
-            case "$5" in
-              /pause*) echo_line='Fishing paused' ;;
-              /unpause*) echo_line='Fishing resumed' ;;
-              *) exit 2 ;;
-            esac
-            if [ -f "$FISHBOT_SCREEN_COUNTER.rotate" ]; then
-              printf '%s\n' "$echo_line" > "$FISHBOT_BOT_PATH/logs/9999-12-31-23-59-59.log"
-            else
-              printf '%s\n' "$echo_line" >> "$FISHBOT_BOT_PATH/logs/9999-12-31-23-59-59.log"
-            fi ;;
           lookup_goose) exit 1 ;;
-          lookup_falcon|lookup_owl) ;;
-          lookup_raven)
+          lookup_falcon) ;;
+          lookup_owl)
+            if [ -f "$FISHBOT_SCREEN_COUNTER.owl_unavailable" ]; then
+              case "$5" in
+                /status*)
+                  if [ "$FISHBOT_QUERY_FAILURE_TEST_CHILD" = pauseall_zh ]; then
+                    echo_line='钓鱼状态：不可用'
+                  else
+                    echo_line='Fishing status: unavailable'
+                  fi
+                  printf '[2026] [INFO   ] %s\n' "$echo_line" >> "$FISHBOT_BOT_PATH/../owl/logs/9999-12-31-23-59-59.log" ;;
+              esac
+            fi ;;
+          lookup_duck|lookup_raven)
+            name="${2#lookup_}"
             case "$5" in
-              /pause*) echo_line='Fishing resumed' ;;
-              /unpause*) echo_line='Fishing paused' ;;
+              /pause*)
+                if [ "$name" = duck ]; then state=true; else state=false; fi
+                printf '%s\n' "$state" > "$FISHBOT_SCREEN_COUNTER.$name" ;;
+              /unpause*)
+                if [ "$name" = duck ]; then state=false; else state=true; fi
+                printf '%s\n' "$state" > "$FISHBOT_SCREEN_COUNTER.$name" ;;
+              /status*)
+                state=false
+                if [ -f "$FISHBOT_SCREEN_COUNTER.$name" ]; then
+                  read -r state < "$FISHBOT_SCREEN_COUNTER.$name"
+                fi
+                if [ "$FISHBOT_QUERY_FAILURE_TEST_CHILD" = pauseall_zh ]; then
+                  prefix='钓鱼状态：'
+                else
+                  prefix='Fishing status: '
+                fi
+                log="$FISHBOT_BOT_PATH/../$name/logs/9999-12-31-23-59-59.log"
+                if [ -f "$FISHBOT_SCREEN_COUNTER.rotate" ]; then
+                  : > "$log"
+                fi
+                printf '[2026] [INFO   ] %spaused=%s joined=true no_rod_available=false has_bobber=true last_fish=0\n' "$prefix" "$state" >> "$log" ;;
               *) exit 2 ;;
-            esac
-            printf '%s\n' "$echo_line" >> "$FISHBOT_BOT_PATH/../raven/logs/9999-12-31-23-59-59.log" ;;
+            esac ;;
           *) exit 2 ;;
         esac
         exit 0 ;;
@@ -633,7 +867,19 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
         exit 0 ;;
       *) exit 2 ;;
     esac ;;
-  failure) printf 'simulated screen query error\n' >&2; exit 1 ;;
+  permanent_failure|permanent_failure_logged|permanent_failure_logger_disabled|signal_without_context)
+    if [ "$1" = "-X" ]; then
+      : > "$FISHBOT_SCREEN_COUNTER.stopping"
+      exit 0
+    fi
+    if [ -f "$FISHBOT_SCREEN_COUNTER.stopping" ]; then
+      printf 'No Sockets found in /tmp/test.\n'
+      exit 1
+    fi
+    printf 'There is a screen on:\n\t123.lookup_duck\t(Detached)\n'
+    exit 0 ;;
+  permanent_failure_cleanup_error) printf 'simulated cleanup failure\n' >&2; exit 1 ;;
+  failure|startup_boundary_zh) printf 'simulated screen query error\n' >&2; exit 1 ;;
   empty) printf 'No Sockets found in /tmp/test.\n'; exit 1 ;;
   race)
     if [ -f "$FISHBOT_SCREEN_COUNTER" ]; then
@@ -677,6 +923,21 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
     fi
     printf 'There is a screen on:\n\t123.lookup_crane\t(Detached)\n'
     exit 0 ;;
+  restartall_already_running)
+    case "$1" in
+      -X) : > "$FISHBOT_SCREEN_COUNTER.stopping"; exit 0 ;;
+      -list)
+        if [ -f "$FISHBOT_SCREEN_COUNTER.stopping" ] && [ ! -f "$FISHBOT_SCREEN_COUNTER.stopped" ]; then
+          if [ -f "$FISHBOT_SCREEN_COUNTER.grace" ]; then
+            : > "$FISHBOT_SCREEN_COUNTER.stopped"
+          else
+            : > "$FISHBOT_SCREEN_COUNTER.grace"
+          fi
+          printf 'No Sockets found in /tmp/test.\n'; exit 1
+        fi
+        printf 'There is a screen on:\n\t123.lookup_duck\t(Detached)\n'; exit 0 ;;
+      *) exit 2 ;;
+    esac ;;
   restart_success|restart_success_zh|restartall_success|restart_unconfirmed|restart_unconfirmed_zh|restartall_unconfirmed)
     if [ "$1" = "-dmS" ]; then
       case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
@@ -690,6 +951,20 @@ case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
     fi
     if [ "$1" = "-X" ]; then
       : > "$FISHBOT_SCREEN_COUNTER.stopping"
+      exit 0
+    fi
+    if [ "$1" = "-S" ]; then
+      case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
+        *unconfirmed*) joined=false ;;
+        *) joined=true ;;
+      esac
+      case "$FISHBOT_QUERY_FAILURE_TEST_CHILD" in
+        *_zh) prefix='钓鱼状态：' ;;
+        *) prefix='Fishing status: ' ;;
+      esac
+      for file in "$FISHBOT_BOT_PATH"/logs/*.log; do
+        [ -f "$file" ] && printf '[2026] [INFO   ] %spaused=false joined=%s no_rod_available=false has_bobber=false last_fish=0\n' "$prefix" "$joined" >> "$file"
+      done
       exit 0
     fi
     if [ -f "$FISHBOT_SCREEN_COUNTER.stopping" ] && [ ! -f "$FISHBOT_SCREEN_COUNTER.launched" ]; then
@@ -780,13 +1055,16 @@ esac
         "status",
         "startall_seconds",
         "start_and_status_online",
-        "status_log_transitions",
+        "start_status_unavailable",
+        "start_status_timeout",
+        "status_transitions",
         "pauseall",
         "pauseall_zh",
         "pauseall_empty",
         "pauseall_recheck_error",
         "anti_afk_timestamp",
         "failure",
+        "startup_boundary_zh",
         "empty",
         "missing",
         "race",
@@ -794,6 +1072,7 @@ esac
         "stop_failure",
         "restart_failure",
         "restart_no_token",
+        "restartall_already_running",
         "restart_success",
         "restart_success_zh",
         "restart_unconfirmed",
@@ -808,11 +1087,16 @@ esac
         "login_await_failure",
         "login_recover",
         "routing_permissions",
+        "permanent_failure",
+        "permanent_failure_cleanup_error",
+        "permanent_failure_logged",
+        "permanent_failure_logger_disabled",
+        "signal_without_context",
     ] {
         if mode.ends_with("_zh") {
             value["i18n"]["language"] = toml::Value::String("CHINESE_SIMPLIFIED".into());
             std::fs::write(
-                root.join(config::CONFIG_FILE_NAME),
+                root.join(common::TEST_CONFIG_FILE_NAME),
                 toml::to_string(&value).unwrap(),
             )
             .unwrap();
@@ -849,12 +1133,40 @@ esac
         if mode.ends_with("_zh") {
             value["i18n"]["language"] = toml::Value::String("ENGLISH".into());
             std::fs::write(
-                root.join(config::CONFIG_FILE_NAME),
+                root.join(common::TEST_CONFIG_FILE_NAME),
                 toml::to_string(&value).unwrap(),
             )
             .unwrap();
         }
-        if !output.status.success() {
+        let success = if mode.starts_with("permanent_failure") {
+            let report_written = mode != "permanent_failure_logged"
+                || std::fs::read_dir(root.join("logs"))
+                    .unwrap()
+                    .flatten()
+                    .any(|entry| {
+                        std::fs::read_to_string(entry.path())
+                            .is_ok_and(|content| content.contains("test permanent failure"))
+                    });
+            let cleanup_observed = if mode == "permanent_failure_cleanup_error" {
+                String::from_utf8_lossy(&output.stderr).contains("simulated cleanup failure")
+            } else {
+                root.join(format!("counter-{mode}.stopping")).is_file()
+            };
+            output.status.code() == Some(1)
+                && String::from_utf8_lossy(&output.stderr).contains("test permanent failure")
+                && cleanup_observed
+                && report_written
+        } else if mode == "signal_without_context" {
+            let text = text::Language::English.implementation();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            output.status.code() == Some(0)
+                && root.join(format!("counter-{mode}.stopping")).is_file()
+                && stderr.contains(&text.shutdown_signal_report_title())
+                && stderr.contains(&text.shutdown_report_no_context())
+        } else {
+            output.status.success()
+        };
+        if !success {
             failures.push(format!(
                 "{mode}:\n{}\n{}",
                 String::from_utf8_lossy(&output.stdout),

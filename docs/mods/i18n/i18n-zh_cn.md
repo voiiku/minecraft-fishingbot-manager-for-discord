@@ -1,10 +1,10 @@
 # i18n：程序运行使用的语言
 [English](i18n-en_us.md) | **简体中文**
 
-* 机制：`src/text.rs`（`Language`、`Text` trait、`install`、`get`）与 `src/text/*.rs`（每种语言一个
-  文件：`en_us.rs` 是英语实现，`zh_cn.rs` 是简体中文；另有五个子模块：`bootstrap`（引导期英文）、
-  `log_text`（`LogText`）、`requirement`（`ConfigRequirement`）、`setup_failure`（装配失败该用哪条
-  文案、算不算永久错）与 `watchdog`（看门狗互斥锁中毒的内部不变量文案，随语言切换））。
+* 机制：`src/text/mod.rs` 定义 `Language`、`Text`、`LogMessages` 和 `WatchdogText`；
+  `src/text/languages/` 存放中英文实现。`bootstrap` 提供启动专用英文文案，`report` 负责报告格式。
+  `text` 不依赖其他项目模块：语言来自 `Config::get().text()`，启动错误的语言边界由 crate 根的
+  `bootstrap_error_text()` 和 `complete_startup()` 管理，报告的语言和长度上限由调用方提供。
 * 配置：`[i18n] language = "ENGLISH"`（示例配置里写的就是它；给中文部署时改成 `CHINESE_SIMPLIFIED`）。
   一个进程一种语言，启动时读一次，改了要重启；取值就是 FishingBot 自己 `i18n.Language` 枚举的常量名
   —— 本项目只实现了 `ENGLISH`（English）与 `CHINESE_SIMPLIFIED`（简体中文）两种，上游还有的
@@ -18,66 +18,47 @@
 纳入：
 
 * 指令回复、报错（业务层返回的 `Err` 与 `String`）。
-* `/show status` 表格里的那些字（`ConnectionStatus` 与 `PauseStatus` 的 `Display`）。
+* `/show status` 表格列名和状态文案。
 * `Report` 的小节标题与"内容过长"的说明。
-* 程序日志、启动期控制台提示与配置报错。它们给部署者看，但同样跟随 `[i18n] language`（做法见第 4
-  节）；语言还没读出来时的提示是唯一例外，固定英文（`src/text/bootstrap.rs`）。
-* JAR 自己打印的断线重连提示（`jar_reconnect_prefix`、`jar_reconnect_suffix`），用来在机器人日志里认出
-  "重连了"。
+* 程序日志和运行期错误跟随 `[i18n] language`。配置及其他启动错误在首次框架初始化成功前使用英文；
+  原有非错误启动日志仍使用配置语言。
+* JAR 打印的 `/status` 回显前缀和不可用提示。
 
 刻意不纳入：
 
 * 机器人日志的内容本身，那是 FishingBot 打印的，我们改不了。只有它自己打印的固定文案才进来，见下。
 * 内部不变量消息：`expect(...)` 与 `panic!` 这类代码写错了才会出现的提示，以及 `cargo test` 的断言
   文案。除看门狗锁中毒的 14 条外，它们不进语言表（不实现 `Text`）；必须固定英文的收在 `bootstrap`，见第 4 节。
-  看门狗文案是例外：它发生在配置装载之后，必须跟随 `[i18n] language`。
+  看门狗文案是例外：首次初始化成功前的错误使用英文，之后跟随 `[i18n] language`。
 * 代码注释、`docs/`、指令名（Discord 只允许 ASCII 小写）。命令与选项说明只写在文案表中，
   注册前严格校验（见 [commands-zh_cn.md 第 1.7.1 节](../commands/commands-zh_cn.md#171-文案表校验)）。
-* 示例配置的注释固定写英文：它是给"照着模板改配置"的人看的，与中文的代码注释分开。只有"取值随语言变、
-  中文部署必须改成另一个值"的那几项，额外带一行 `# CHINESE_SIMPLIFIED:` 提示（`command_echo` 的两条
-  回显与 `[i18n] language`）—— 那不是第二份说明，而是取值提示，改值的人会同时看到它，因此不会漂移。
-* 与游戏服务器或本机环境有关的关键词：服务器自己的进服提示、本机环境的结束标记、自己服务器要丢掉的
-  刷屏噪声。它们各部署不同，留在配置的 `[keywords]` 里。
-* `/pause` 与 `/unpause` 的回显：它由 JAR 打印；是否出现取决于所用 JAR 是否支持这两条指令，所以留在配置的
-  `[command_echo]`（`pause_echo`、`unpause_echo`），换 JAR 时就地改，不必重新编译。
+* 示例配置的注释固定写英文，与代码注释分开。
+* 需要过滤的刷屏噪声按部署配置在 `[keywords]` 中。
 
 ### 为什么 JAR 自己打印的固定文案要进来，而日志内容本身不进来
 
 判据只有一条：这条字符串由谁决定。
 
-* `bot-automatic-reconnect`（重连提示）由 JAR 自己的语言资源决定：中文 JAR 就是那句中文，英文 JAR 就
-  是那句英文，与跑在哪个游戏服、哪台机器无关。让部署者去配置里再抄一遍，等于把程序本来就知道的事变成
-  一个人为出错点（抄错一个标点，`/show status` 就永远显示"初始中"）。所以它跟着 `[i18n] language` 走，跑
-  哪种语言的 JAR 就把 `language` 设成哪种。这两条字符串都写在 `src/text/zh_cn.rs` 与
-  `src/text/en_us.rs` 里一一对应，测试
-  `text::tests::jar_reconnect_messages_are_non_empty_and_distinct_in_both_languages` 盯着它们（中英
-  都非空、两版互不相同）。
-* `command-pause-executed`、`command-unpause-executed`（两条指令的回显）同样由 JAR 决定，但只在所用 JAR 支持
-  `/pause`、`/unpause` 时才会打印（上游已计划加入这两条指令），所以它们落在配置 `[command_echo]` 的
-  `pause_echo`、`unpause_echo` 上：换 JAR 时改配置即可，不必重新编译；启动校验要求非空、且两条不能互相包含
-  （否则日志里那行认不出属于哪条指令）。
-* 反过来，`online`（进服提示，来自游戏服务器或插件）与 `filter_regex`（自己服务器的刷屏噪声）只有
-  部署者知道，JAR 里没有对应句子，它们留在 `[keywords]` 里，由启动校验保证非空。
+* `/status` 的状态前缀和不可用提示由 JAR 语言决定，同样保存在语言表中。
+* `filter_regex` 是部署者选择的日志过滤规则，留在 `[keywords]` 中。
 * "进程已结束"既不是 jar 打的、也不进配置：它看 screen 会话状态（`(Dead ...)` 残壳，见
-  [utils.md](../utils/utils-zh_cn.md)）。日志里那种结束标记是旧版外壳脚本自己写进去的
+  [runtime.md](../runtime/runtime-zh_cn.md)）。日志里那种结束标记是旧版外壳脚本自己写进去的
   （`>>> 机器人进程已结束或被手动中止 <<<`），本项目不产生它，所以没有对应文案要翻译。
 
-换游戏服或改插件时要动 `[keywords]`；换 jar 构建时看 `[command_echo]` 的两条回显；换 JAR 的配置语言
+换游戏服或改插件时要动 `[keywords]`；换 JAR 的配置语言
 （或换 JAR 版本后文案变了）时，把 `[i18n] language` 换成对应语言（新文案确实变了的，改
-`src/text/*.rs` 里那两句）。
+`src/text/languages/*.rs` 里那两句）。
 
 ## 2. 怎么加一种语言（三步，漏一步编译不过）
 
-1. 在 `src/text/` 下新建一个文件，实现 `Text` 的全部方法。用 trait 而不是 `HashMap<&str, &str>`，就是
+1. 在 `src/text/languages/` 下新建一个文件，实现 `Text` 和 `LogMessages` 的全部方法。用 trait 而不是 `HashMap<&str, &str>`，就是
    为了漏翻一条编译失败。
-2. 在 `src/text.rs` 里加 `mod <文件名>;`，给 `Language` 加一个枚举项，并在
-   `Language::implementation()` 的 `match` 里加一个分支（`install()` 的实现在那里；`get()` 未安装时生产
-   构建 panic，测试构建直接使用英语实现）。
-3. 把语言名加进 `Language::supported_names()`。这是合法取值的唯一来源：配置校验、报错文案、示例配置
-   与本文档都取自它，不会出现两份名单漂开。取值照抄 FishingBot 自己 `i18n.Language` 枚举的常量名
+2. 在 `src/text/languages/mod.rs` 里加 `mod <文件名>;`，给 `Language` 加一个枚举项，并在
+   `Language::from_name()`、`Language::name()` 和 `Language::implementation()` 中增加对应分支。
+3. 把语言名加进 `Language::supported_names()`，并保持它与解析和名称返回值一致。取值照抄 FishingBot 自己 `i18n.Language` 枚举的常量名
    —— 它同时就是写进 `config.json` 的 `misc.language`，所以不要另起一套名字（那会多出一张映射表）。
 
-不需要改业务层，也不需要改配置解析：业务层只调 `text::get()`。
+不需要改业务层，也不需要改配置解析：业务层只调 `config::Config::get().text()`。
 
 ## 3. 为什么不用外部语言文件（`.ftl`、`gettext`、语言包 toml）
 
@@ -89,36 +70,26 @@
 取舍一致：需要不重编就能改的大段文案（`/help`）本来就放在配置的 `text.help` 里，所以英文用户想让
 `/help` 也是英文，把 `text.help` 换成英文文本就行（它本来就是给使用者自己写的）。
 
-## 4. 读法与未安装时的行为
+## 4. 读取文案
 
-* 业务层与 utils 一律 `text::get().xxx(...)`（它们不碰框架，只碰这里）。
-* 日志与控制台文案走 `text::get().log_text(LogText::…)`。这类文案数量多、结构单一，所以用"带数据的
-  枚举加一个方法"收口：两个语言文件里的 `match` 是穷尽匹配，漏翻一条或加了变体只在一边实现都编译
-  不过（与逐条方法同样的保证）。级别（`info!`、`warn!`）仍由调用点决定，因为那是语义而不是文案。
-* `text::get()` 只读取安装过的实现。生产构建在未安装时直接 panic（入口调用顺序错误）；测试构建固定返回
-  英语，免去每个测试都先 `install()`。`Language` 不再实现 `Default`；`validate()` 的第一个调用
-  `validate_i18n` 会固定英文报错，配置入口打印到终端并以退出码 1 结束进程。测试里的文案断言因此分两类：
-  1. 接线类（这句话来自哪张表、随语言变）：期望值从 `text::get()` 取（例如 JAR 回显、机器人名报
-     错），换个测试语言也不会红；
-  2. 措辞类（配置报错这类由字段、值、要求拼起来的整句）：钉英语实现的片段。
-
-  示例配置里的 `language = "ENGLISH"` 只决定新部署运行哪种语言（中文部署改成 `CHINESE_SIMPLIFIED`），
-  与测试构建未安装语言时使用英语无关。它同时是生成出来的 `config.json` 里 `misc.language` 的取值（同一个值，
-  不是映射过去的，见 [config.md 第 3.2 节](../config/config-zh_cn.md)），于是 jar 跟着说同一种话，
-  两处不会再对不上。
-* 装语言的时机决定了哪几条消息只能用引导期英文：
-  1. `config::Config::get_or_init()` 解析成功之后立刻 `install()` 一次，于是配置校验报错也是配置语言；
-  2. `main.rs` 不再重复装。语言在第 1 步就装好了，所以 `ProcessLog::get_or_init()` 起程序日志也是配置
-     语言。入口那边刻意不写第二次 `install()`，因为写了也不生效，只会让"语言在哪选定"变得含糊；
-  3. 第 1 步之前发出去的提示一律固定英文：配置文件不存在、读失败、解析失败，生成模板失败，可执行文件
-     路径定位不到，`[i18n] language` 自己写错，以及配置没装载就调 `config::Config::get()` 时那句 `expect`
-     （`bootstrap::CONFIG_NOT_LOADED`），还有语言没安装就取文案时的 `bootstrap::TEXT_NOT_INSTALLED`。那时语言还没确定，提示固定英文。它们统一收在
-     `crate::text::bootstrap`（与语言表并列，但不实现 `Text`）。判断标准只有一条：这条提示是不是配置
-     还没读成功的产物。
-* 看门狗互斥锁中毒时的文案由 `crate::text::watchdog::WatchdogText` 与
-  `Text::watchdog_text` 提供，随 `[i18n] language` 切换；读取静态字符串可避免在每次锁操作时构造临时 `String`。
-* 指令说明这类注册期文字也读同一个 `get()`：`discord_commands::all_commands()` 在建完指令树后调用一次（那时
-  `install()` 已经跑过）。
+* 业务层与运行时模块通过 `config::Config::get().text().xxx(...)` 获取本地化文案，不依赖 Discord 框架。
+* 日志与控制台文案直接调用 `LogMessages` 的命名方法，例如 `config::Config::get().text().process_log_path(path)`。
+  `Text` 继承 `LogMessages`，两种语言漏实现方法都会编译失败。级别（`info!`、`warn!`）仍由调用点决定。
+* 配置解析时将语言名转换为 `Language`，不支持的语言使用英文报错；整份配置校验通过后才发布。
+  `config::Config::get().text()` 通过已发布配置选择文案，不再单独安装或存储语言。
+  配置尚未加载时访问配置会 panic；测试应显式加载配置，或直接使用指定语言实现。
+  同一语言名也写入游戏侧 `config.json` 的 `misc.language`（见 [config.md 第 3.2 节](../config/config-zh_cn.md)）。
+* `text` 不依赖其他项目模块；报告创建时由调用方传入语言和回复长度上限。配置和游戏侧配置的启动专用错误由
+  `text::bootstrap` 输出英文。
+* 共享错误通过 crate 根的 `bootstrap_error_text()` 取文案：首次框架初始化成功前使用英文，之后使用配置语言。
+  初始化在同步命令注册尝试后完成；单个服务器注册失败只产生告警，不阻止完成。首次成功之前的失败与重试
+  继续使用英文，后续重连不会重置这一边界。外部错误细节保留原文。
+  将本项目作为库嵌入其他程序时，应在自身初始化成功后调用 crate 根的 `complete_startup()`；否则共享错误
+  会一直使用英文。
+* 普通信息和指令说明仍使用 `config::Config::get().text()`，因此继续跟随配置语言。
+* 看门狗互斥锁中毒文案由 `WatchdogText` 和 `Text::watchdog_text` 提供，遵循同一启动错误边界；
+  静态字符串避免在每次锁操作时构造临时 `String`。
+* 指令说明等注册期文字也从已加载的配置读取语言。
 
 ## 5. 排版约定：符号跟随语言，补充说明用圆括号
 
@@ -149,45 +120,24 @@
 
 以下内容都由 `Text` 与相关枚举提供多语言实现：
 
-* `utils/reply.rs`：`Report` 小节标签、"内容过长"说明、计数行 `count_line`。
-* `utils/bot_status.rs`：`/show status` 表里那些字，以及 `jar_*` 固定文案（断线重连提示的前后缀；`/pause`
-  与 `/unpause` 的回显已按"换构建要跟着改"的理由挪到配置 `[command_echo]`，见第 1 节）。
-* `utils/bot_name.rs`：机器人名报错。
-* `utils/bot_dirs.rs`（含 `BotTokenStatus` 的 `Display`）与 `utils/running_bots.rs`（含 `/show status`
+* `report.rs`：`Report` 小节标签、"内容过长"说明、计数行 `count_line`。
+* `runtime/bot_instances/bot_status.rs`：`/show status` 表里的文字，以及状态查询的 `jar_*` 固定文案。
+* `text::bot_name_error`：将 `utils::bot_name` 的校验错误转换为机器人名文案。
+* `runtime/bot_instances/bot_dirs.rs`（含 `BotTokenStatus` 的 `Display`）与 `runtime/bot_instances/bot_sessions.rs`（含 `/show status`
   列名）。
-* `utils/screen.rs`、`runtime/startup.rs`、`utils/shutdown.rs`：启动与停止流程的明细行。
-* `handlers/bot_control/*`、`handlers/bot_manage/*`、`handlers/all_bots_control/*`、`show/*`、`general/*`。
-* `lib.rs`（非管理员的拒绝文案）与 `commands/*` 的固定话术（"已开始执行"、附件正文、用法提示、
-  `/whoami`）。
+* `runtime/bot_instances/screen.rs`、`runtime/bot_startup/mod.rs`、`runtime/bot_instances/stop.rs`：启动与停止流程的明细行。
+* `operations/`：业务操作和查询结果。
+* `operations/mod.rs` 使用非管理员的拒绝文案；`discord_commands/` 使用进度提示、附件正文和用法提示。
 * 指令元数据：指令说明、选项说明、`/token` 弹窗标签（注册前改写宏生成的指令树，做法见下）。
-* 程序日志（`log::*`）、启动期控制台提示、配置报错（`config.rs` 与 `config/*`）：走 `LogText` 枚举
-  加 `log_text()`，两种语言里穷尽 `match`。
-* 看门狗锁操作：走 `WatchdogText` 枚举加 `watchdog_text()`（14 条，随语言切换）。
+* 程序日志直接调用 `LogMessages` 的命名方法；启动专用配置错误位于 `bootstrap`。
+* 看门狗锁操作走 `WatchdogText` 和 `watchdog_text()`，遵循上述启动错误边界。
 
-按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言。唯一的例外是看门狗锁中毒文案，
-它属于运行期信息，随 `[i18n] language` 切换。
+按边界不做：内部不变量消息（`expect(...)` 与 `panic!`）与测试断言；看门狗锁中毒文案是例外。
 
-`Text` 目前有 163 个方法（含 `log_text`）、27 条指令说明，以及 `LogText` 的 77 个变体、
-`ConfigRequirement` 的 19 个变体与 `WatchdogText` 的 14 个变体，全部都有调用点。可以这样自查（第一条先用
-`sed` 切出 `pub trait Text` 到它结尾的整段，再按 `fn` 名字去重，所以签名跨行书写也不会漏——
-`command_log_attachment_body` 就是这么写的；第一条同时会列出"没有调用点的方法"，一切正常时它没有输出。
-后三条分别数三个枚举的变体数，`match` 是穷尽的，所以语言文件里出现的名字数就是枚举的变体数）：
+两种语言必须实现全部 `Text` 和 `LogMessages` 方法，并穷尽 `WatchdogText`；遗漏会导致编译失败。
+指令说明表也有测试校验。
 
-```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 163
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
-while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
-grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
-grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 19
-grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
-```
-
-英文实现 `src/text/en_us.rs` 与中文一一齐备（163 个方法、27 条指令说明、77 与 19 个枚举变体，外加 14 条看门狗
-文案，一个不少：漏方法或漏 `match` 分支都编译不过，漏指令说明测试失败）。要确认英文确实上得来，把配置改成
-`language = "ENGLISH"` 跑一次；单测里有 `text::tests::english_impl_is_english` 直接按英文实现断言（它
-不调 `install`，因为 `OnceLock` 是进程级的，装了会影响并发跑的其它用例）。
-
-措辞以中文为准：改文案先改 `zh_cn.rs`，再把 `en_us.rs` 逐条对齐。测试进程未安装语言时 `get()` 返回英语实现，
+措辞以中文为准：改文案先改 `zh_cn.rs`，再把 `en_us.rs` 逐条对齐。测试可直接选择英语实现，
 措辞类断言因此以英语为基准；这不影响中文原稿的地位。
 
 ### 指令元数据（指令说明、选项说明、`/token` 弹窗）

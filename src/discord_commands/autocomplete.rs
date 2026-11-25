@@ -2,12 +2,10 @@
 
 use poise::serenity_prelude as serenity;
 
-use minecraft_fishingbot_manager_for_discord::{
-    BotDirEntry, RequiredPermission, StartupQueue, all_bot_dir_entries, bot_dir_entries_of_owner,
-    config, has_permission, split_bot_entries_by_is_running,
-};
+use crate::config;
+use crate::operations::queries;
 
-use super::{Context, text};
+use super::Context;
 
 /// 按命令语义筛选的机器人运行状态范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,85 +47,38 @@ async fn bot_name_choices(
 ) -> serenity::CreateAutocompleteResponse {
     let caller_id = ctx.author().id.get();
     let partial = partial.to_string();
-    let choices = match tokio::task::spawn_blocking(move || bot_name_candidate_states(caller_id))
-        .await
-    {
-        Ok(Ok(candidates)) => {
-            let max_choices = config::Config::get().runtime.max_autocomplete_choices;
-            select_candidates(&candidates, &partial, scope, max_choices)
-                .into_iter()
-                .map(|(display_name, bot_name)| {
-                    serenity::AutocompleteChoice::new(display_name, bot_name)
-                })
-                .collect()
-        }
-        Ok(Err(error)) => {
-            ::log::warn!(
-                "{}",
-                text::get().log_text(text::LogText::AutocompleteLookupFailed { reason: &error })
-            );
-            Vec::new()
-        }
-        Err(error) => {
-            ::log::warn!(
-                "{}",
-                text::get().log_text(text::LogText::AutocompleteTaskFailed {
-                    reason: &error.to_string()
-                })
-            );
-            Vec::new()
-        }
-    };
+    let choices =
+        match tokio::task::spawn_blocking(move || queries::list_bot_candidates(caller_id)).await {
+            Ok(Ok(candidates)) => {
+                let max_choices = config::Config::get().runtime.max_autocomplete_choices;
+                select_candidates(&candidates, &partial, scope, max_choices)
+                    .into_iter()
+                    .map(|(display_name, bot_name)| {
+                        serenity::AutocompleteChoice::new(display_name, bot_name)
+                    })
+                    .collect()
+            }
+            Ok(Err(error)) => {
+                ::log::warn!(
+                    "{}",
+                    crate::config::Config::get()
+                        .text()
+                        .autocomplete_lookup_failed(&error)
+                );
+                Vec::new()
+            }
+            Err(error) => {
+                ::log::warn!(
+                    "{}",
+                    crate::config::Config::get()
+                        .text()
+                        .autocomplete_task_failed(&error.to_string())
+                );
+                Vec::new()
+            }
+        };
 
     serenity::CreateAutocompleteResponse::new().set_choices(choices)
-}
-
-/// 返回有权访问的机器人状态快照，按运行中、排队中、已停止的顺序排列。
-/// 管理员可查看全部机器人；会话与队列各查询一次。
-fn bot_name_candidate_states(caller_id: u64) -> Result<Vec<(String, bool, bool)>, String> {
-    let bot_dir_entries = if has_permission(caller_id, RequiredPermission::MustBeAdmin) {
-        all_bot_dir_entries()?
-    } else {
-        bot_dir_entries_of_owner(caller_id)?
-    };
-    let (running_entries, not_running_entries) = split_bot_entries_by_is_running(&bot_dir_entries)?;
-    // 运行中的机器人已离开队列，只需查询未运行的机器人。
-    let mut queued_entries: Vec<BotDirEntry> = Vec::new();
-    let mut stopped_entries: Vec<BotDirEntry> = Vec::new();
-    for (bot_dir_entry, in_queue) in StartupQueue::get_or_init().bots_in_queue(&not_running_entries)
-    {
-        if in_queue {
-            queued_entries.push(bot_dir_entry);
-        } else {
-            stopped_entries.push(bot_dir_entry);
-        }
-    }
-
-    Ok(bot_names_sorted(running_entries)
-        .into_iter()
-        .map(|bot_name| (bot_name, true, false))
-        .chain(
-            bot_names_sorted(queued_entries)
-                .into_iter()
-                .map(|bot_name| (bot_name, false, true)),
-        )
-        .chain(
-            bot_names_sorted(stopped_entries)
-                .into_iter()
-                .map(|bot_name| (bot_name, false, false)),
-        )
-        .collect())
-}
-
-/// 提取机器人名称并排序。
-fn bot_names_sorted(bot_dir_entries: Vec<BotDirEntry>) -> Vec<String> {
-    let mut bot_names: Vec<String> = bot_dir_entries
-        .into_iter()
-        .map(|bot_dir_entry| bot_dir_entry.bot_name)
-        .collect();
-    bot_names.sort();
-
-    bot_names
 }
 
 /// 按状态范围、输入前缀和条数上限组装显示名与实际 option 值。
@@ -138,7 +89,7 @@ fn select_candidates(
     max_choices: usize,
 ) -> Vec<(String, String)> {
     let partial = partial.trim().to_lowercase();
-    let i18n_text = text::get();
+    let i18n_text = crate::config::Config::get().text();
 
     candidates
         .iter()
@@ -172,11 +123,9 @@ fn select_candidates(
 mod tests {
     use super::*;
 
-    /// 测试进程的语言实现是进程级单例；需要文案的测试先安装英语。
-    fn install_english_text() {
-        minecraft_fishingbot_manager_for_discord::text::install(
-            minecraft_fishingbot_manager_for_discord::text::Language::English,
-        );
+    /// 测试需要文案时显式加载示例配置。
+    fn init_test_config() {
+        crate::config::init_for_test();
     }
 
     /// 测试用候选上限（真实上限来自 `runtime.max_autocomplete_choices`）。
@@ -208,7 +157,7 @@ mod tests {
 
     #[test]
     fn scopes_filter_states_and_keep_running_candidates_first() {
-        install_english_text();
+        init_test_config();
         let candidates = sample_candidates();
 
         assert_eq!(
@@ -229,7 +178,7 @@ mod tests {
 
     #[test]
     fn prefix_matching_is_case_insensitive_and_empty_prefix_matches_all() {
-        install_english_text();
+        init_test_config();
         let candidates = sample_candidates();
         assert_eq!(
             values(&candidates, "DU", BotNameScope::AnyState),
@@ -241,14 +190,14 @@ mod tests {
 
     #[test]
     fn any_state_display_name_marks_state_but_value_stays_plain() {
-        install_english_text();
+        init_test_config();
         let pairs = select_candidates(
             &sample_candidates(),
             "",
             BotNameScope::AnyState,
             TEST_MAX_CHOICES,
         );
-        let i18n_text = text::get();
+        let i18n_text = crate::config::Config::get().text();
         assert_eq!(
             pairs[0],
             (
@@ -274,7 +223,7 @@ mod tests {
 
     #[test]
     fn candidates_are_capped_at_the_platform_limit() {
-        install_english_text();
+        init_test_config();
         let many: Vec<(String, bool, bool)> = (0..TEST_MAX_CHOICES + 10)
             .map(|index| (format!("bot{index:02}"), index % 3 == 0, index % 3 == 1))
             .collect();

@@ -6,146 +6,38 @@ ends up in a `screen` session. To browse documents by topic, see the [docs index
 
 ## 1. Layers
 
-```
-Discord slash command (the gateway pushes INTERACTION_CREATE)
-   |
-   v
-commands (the command layer, poise)   read options + check numbers + defer + dispatch; no permissions, no cleaning
-   |  handle_*
-   v
-handlers/routes (command entry layer) action enum + permission check (has_permission) + Result -> reply text
-   |
-   v
-business modules                      one file per command
-bot_control / bot_manage / all_bots_control / show / general
-   |
-   v
-utils (the primitives layer)          reusable abilities: directories, sessions, logs, reports
-   |
-   v
-the JVM inside a screen session (FishingBot)
-```
+`discord_commands` receives interactions, passes the caller ID and sends replies. Only `operations` authorizes user commands; Discord does not precheck or scan owner directories.
 
-Name the layers first. `src/discord_commands/` is the command layer: poise's `#[poise::command]` functions that read values,
-check argument counts, turn values into numbers, `defer` and turn an `Err` into a reply. `src/handlers/routes/` provides
-the `handle_*` command entry layer, re-exported by `lib.rs`: it turns the action enum into a business call and checks the
-permissions of everyone-commands and batch commands. The business layer groups `bot_control`, `bot_manage`,
-`all_bots_control`, `show` and `general` under `handlers`; below it sits the shared utils layer.
-
-How arguments travel down: Discord hands the command layer structured options, but an option's value is still the raw
-text the user typed. The command layer only reads the value, checks numbers and passes it through (argument names start
-with `raw_`); the layer that actually uses it cleans it once: bot names through `ToCleanBotName::to_clean_bot_name`
-(called when `BotDirEntry` builds an entry), in-game command fragments through `utils::ToCleanBotCommand`. Number
-conversion (the `/log` line count, the `/ping` port) is the command layer's only conversion; a failed check replies with
-a usage hint on the spot.
-
-Two more chains that have nothing to do with commands:
-
-* `main.rs`: the process lifecycle. It reads the config, initialises the program log, prepares the REST probe handle,
-  assembles the poise `Framework` and serenity `Client`, ensures the manual synchronization entry exists and starts the connection loop. During
-  normal operation the process exits with code 0 only on SIGTERM or Ctrl+C; permanent failures such as an invalid config
-  exit with code 1. A disconnect and `client.start()` returning do not end the process: it stops every bot, waits one
-  judging window and rebuilds the connection.
-* `watchdog`: the gateway watchdog. It decides whether this process has lost contact with Discord (the decision is pure
-  timing; the process entry requests the reconnect). It is the only place that decides we are offline; the rules are in
-  [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 3.
+`operations` handles **user requests**; `runtime::bot_instances` operates on **local FishingBot instances**. `/stopall` checks administrator access and replies to the caller, whereas a SIGTERM has no caller. Both paths use `runtime::bot_instances::stop` to stop and verify sessions; only process shutdown exits the manager.
 
 ## 2. Directory structure
 
-```
-src/
-├── main.rs                     process entry: config -> log -> assemble poise (the probe task is started by the watchdog) -> run -> reconnect / exit on signal
-├── lib.rs                      library entry: public route, type and runtime re-exports
-├── discord_commands.rs         command layer: command tree and shared replies
-├── discord_commands/           the poise command set
-│   ├── autocomplete.rs             the candidate lookup for the `name` option (autocomplete)
-│   ├── bot_control.rs              /start /stop /restart /pause /unpause /command
-│   ├── bot_manage.rs               /bot add|del|rename|login (parent command + four subcommands)
-│   ├── token.rs                    /token (ephemeral)
-│   ├── log.rs                      /log (ephemeral + attachment)
-│   ├── all_bots.rs                 /startall /stopall /restartall /pauseall /unpauseall /commandall
-│   ├── show.rs                     /show status|botconfig|mybots|allbots|admins
-│   ├── general.rs                  /help /ping /checkserver /whoami
-│   └── registration.rs             administrator-triggered registration and scope cleanup
-├── text.rs                     text entry: one language per process (`[i18n] language`) + command metadata rewrite
-├── text/                       en_us (English) / zh_cn (one to one, only literals differ)
-│                               + bootstrap (English during bootstrap) / log_text / requirement (two enums with data)
-│                               + setup_failure (which text a setup failure uses, and whether it is permanent)
-│                               + watchdog (internal watchdog mutex-poisoning notes; language-dependent)
-├── runtime.rs                  runtime module declarations and re-exports
-├── runtime/                    runtime modules
-│   ├── config.rs + config/     configuration loading, validation, paths and template
-│   ├── watchdog.rs + watchdog/ gateway state, probes and lifecycle
-│   ├── startup.rs + startup/   startup queue, dispatch, ledger and verification
-│   ├── process_log.rs + process_log/  program log, level selection and record rendering
-│   └── bot_state.rs            in-process bot pause-state storage
-├── models.rs                   data type module declarations and re-exports
-├── models/                     data types grouped by bot, status, permission, session, report and outcome
-├── handlers.rs                 categorized business entry points
-├── handlers/                   command business modules
-│   ├── routes.rs + routes/     action enums, permission checks and command routing
-│   ├── bot_control.rs + bot_control/       single-bot control
-│   ├── bot_manage.rs + bot_manage/         account management
-│   ├── all_bots_control.rs + all_bots_control/  bulk operations and anti-AFK
-│   ├── show.rs + show/         read-only queries
-│   └── general.rs + general/   general commands
-├── test_support.rs             shared helpers for tests only (compiled under `#[cfg(test)]`)
-├── utils.rs                    utility module declarations, public constants and re-exports
-└── utils/                      globally shared utilities
-    ├── bot_command.rs          how an in-game command is assembled (`/command` and `/commandall` share it, written once)
-    ├── bot_dirs.rs             bot directories: paths, lookup, walking, creation (an entry `BotDirEntry` carries the token status)
-    ├── bot_name.rs             bot name normalisation
-    ├── bot_logs.rs             bot log creation and selection
-    ├── fishingbot_config.rs    generating the game-side config (FishingBot's config.json): delete the old file, then
-    │                           override the `[fishingbot]` keys on top of the repository template
-    │                           (fishingbot-config.example.json)
-    ├── fs.rs                   file and directory primitives: read the tail, list subdirectory names, remove a
-    │                           directory (not existing counts as success)
-    ├── bot_status.rs           bot status: pause memory + echo confirmation, live log reading when online
-    ├── running_bots.rs         run-state grouping, status rows and refusal checks
-    ├── screen.rs               session detection and command injection
-    ├── shutdown.rs             stopping sessions (`/stop`, `/stopall`, the stop stage of a restart, process shutdown)
-    ├── raw_logs.rs             raw log directory preparation
-    ├── restart.rs              restart flow
-    ├── start_results.rs        startup results and report conversion
-    ├── uptime.rs               uptime: seconds read from /proc plus formatting into days/hours/minutes
-    ├── reply.rs                assembling and rendering replies (Report + length cap)
-    └── permission.rs           the admin check
-```
+* `src/discord_commands/`: Discord commands, registration, replies, attachments and modals
+* `src/operations/single_bot_control/`: single-bot operations, one file per command
+* `src/operations/all_bots_control/`: batch bot control; the independent anti-AFK worker is controlled by `src/operations/set_anti_afk.rs`
+* `src/operations/accounts/`: accounts, credentials and login
+* `src/operations/queries/`: queries and views, including `/log`, bot candidates, `/help` and `/ping`; read-only does not imply public access
+* `src/text/report.rs`: Report construction and rendering
+* `src/runtime/bot_instances/`: directories, sessions, status and bot operations; `stop.rs` stops bots without exiting the manager
+* `src/runtime/`: `bot_startup` owns the bot startup queue, `shutdown` handles manager exit, `log_files` serves both process and bot logs, and `discord_notices` handles per-guild delivery for reconnect and shutdown notices. Other runtime components are `config`, `process_log`, `bot_log`, `watchdog` and `anti_afk`
+* `src/runtime/utils/`: private runtime helpers; may depend on configuration and the outer utils, not texts or higher-level business logic
+* `src/utils/`: low-level name, command-fragment, file and uptime tools; no dependency on other project modules or texts
+* `src/text/`: English and Chinese messages and report rendering; independent of other project modules, with report language and limit supplied by callers
 
-The business layer and the command layer are two sets of files: `src/discord_commands/bot_control.rs` (the command layer) only
-declares which commands exist, what the arguments look like, how to `defer` and how to send the result, while the real
-action is in `src/handlers/bot_control/start.rs` (the business layer). The file names are deliberately the same on both sides so
-they can be read side by side.
+`bot_startup` and `bot_instances` collaborate within runtime: the startup queue uses session and status operations, while restart and stop also use the queue.
+
+Import library APIs from their owning modules, for example `text::report::Report` and
+`utils::console_command::ToCleanBotCommand`. `utils` contains low-level implementations, not compatibility re-exports of higher-layer APIs.
+The source module rename does not change the deployment layout: bot data remains under `base_dir/bots`.
 
 ## 3. The full path of one command
 
-Taking `/start <bot name>:duck` as the example (the caller is `caller_id = 1234...`, typing in a server channel):
+For `/start`:
 
-1. Discord pushes `INTERACTION_CREATE` over the gateway, serenity parses it into `FullEvent::InteractionCreate`,
-   poise finds `discord_commands::bot_control::start` by command name and parses the options into function arguments (the
-   command layer's parameter is called `name`; inside the routing layer the same value is called `raw_bot_name`).
-2. The command layer (`src/discord_commands/bot_control.rs`):
-   * `ctx.defer()` takes the 3 second limit out of the way first (the waits inside `stop_bot_sessions` are far longer
-     than 3 seconds);
-   * `ctx.author().id.get()` reads `caller_id`;
-   * first `ctx.say("Request accepted: /start duck. Any start operation will use the global queue. The complete result
-     will follow in a separate message.")`, which replaces the "thinking" placeholder so the user sees progress at
-     once;
-   * then `handle_bot_control(BotControlAction::Start, "duck", caller_id)` inside
-     `tokio::task::spawn_blocking(...)`, because the business layer's `screen`, file and `sleep` calls are all
-     synchronous and blocking and must leave the async threads.
-3. `lib::handle_bot_control` checks the permission with `permitted_bot_dir_entry` first, then calls
-   `handlers::start_bot(&bot_dir_entry)`.
-4. The entry used for that permission check carries the owning user ID and the token status: `find_by_name` looks the
-   name up across every user directory, and then one check decides whether the entry belongs to the caller (admins
-   always pass).
-5. The token status in the entry confirms a token is configured (`BotTokenStatus::from_dir` reads it when the entry is
-   built), and `utils::is_bot_screen_running` confirms it is not already running.
-6. `StartupQueue::start_bots()` follows the four explicit steps of [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)
-   section 4.
-7. The result is assembled by `Report`, turned into text by `IntoReplyText::to_reply_text` and sent as the second
-   message with `ctx.say(report)` (the first message already used up the placeholder's allowance).
+1. Discord defers and passes the name and caller ID to the operation.
+2. `operations::single_bot_control` resolves and authorizes the target once, returning work bound to that directory. A denial produces only an error reply.
+3. Only after Discord delivers the progress notice does it execute the work. `src/operations/single_bot_control/start_single_bot.rs` checks credentials and session state before submitting to the startup queue.
+4. The queue verifies `/status` after the grace period and the Discord adapter sends the final report.
 
 ## 4. Invariants that must hold (the layering-related ones)
 
@@ -154,43 +46,29 @@ The complete list (reply wording, interaction timing, config reading rules) is i
 what are repeated here, so that the two places cannot drift apart:
 
 * One account, one `screen` session: the session name is `runtime.screen_prefix` plus the normalised bot name, with
-  `utils::session_name` as the single source; there is one `screen -list` parsing convention (`utils::screen`).
+  `runtime::bot_instances::screen::session_name` as the single source; the private `runtime::utils::screen` parses `screen -list`.
 * The directory is the ownership: a bot directory is always `base_dir/bots/Discord user ID/bot name`, and the
-  permission boundary is the user ID level (`utils::bot_dirs`).
-* Every command declares one permission requirement and there is one place that checks it. The requirement is
-  `utils::RequiredPermission` (`Everyone`, `MustBeAdmin`, `OwnerOrAdmin(owner user ID)`) and every check goes through
-  `has_permission`:
-  * everyone-commands (`/help`, `/show status`, `/ping`, `/checkserver`, `/show *`): checked once by `lib::handle_*` in
-    the routing layer;
-  * single-bot and account management commands: the routing layer resolves the target entry with
-    `BotDirEntry::find_by_name` first, then checks `OwnerOrAdmin(entry owner)` (ordinary users only touch their own
-    directory, admins can cross directories);
-  * batch commands: checked once by the routing layer's `lib::handle_all_bots_control` with
-    `has_permission(caller_id, RequiredPermission::MustBeAdmin)`, which is why functions under `handlers/all_bots_control/*`
-    take no `caller_id` and check nothing themselves;
-  * the command layer only counts arguments and looks at number ranges, never at permissions;
-  * new commands follow the same rule: the command layer must hand the result to `lib::handle_*` (the layer that
-    declares the requirement and checks it once) and must not build its own reply - `/whoami` included. There is no
-    registry or framework hook to fall back on, so this convention plus review is the guarantee.
+  permission boundary is the user ID level (`runtime::bot_instances::bot_dirs`).
+* Ordinary users control only their own bots; batch control requires an administrator. `operations` owns both rules, using the same business logic for direct library calls and Discord interactions.
 * The framework only appears in the command layer and the process entry: the business layer (`bot_control` and
   friends) and `lib.rs` do not reference serenity or poise; they take plain arguments and return
   `Result<String, String>`. That keeps the business logic unit-testable and makes swapping the transport easier
   later.
 * The command layer never blocks an async thread: every business call goes through `tokio::task::spawn_blocking`
   (the business layer is synchronous).
-* Stopping must be thorough: every stop entry point reuses `utils::stop_bot_sessions` (Ctrl+C, wait, force kill,
+* Stopping must be thorough: every stop entry point reuses `runtime::bot_instances::stop::stop_bot_sessions` (Ctrl+C, wait, force kill,
   re-check), so no orphaned JVM keeps holding a game account.
 * Actions that must not run while a bot is running check the session first: `/token`, `/bot del` and `/bot rename`
   all call `is_bot_screen_running` before touching anything; the restart flow is stricter still and drops targets with
   a missing token before it stops anything.
-* There is one exit path for signals: SIGTERM or Ctrl+C goes through `watchdog.exit_on_shutdown_signal()`, which logs
+* There is one exit path for signals: SIGTERM or Ctrl+C goes through `runtime::shutdown::exit_on_shutdown_signal(notice_ctx)`, which logs
   first, stops every bot and assembles the same wrap-up as `/stopall` (it goes into the program log and is also sent to
   every server's notice channel), and finally exits with code 0 (systemd does not restart it). A
   disconnect and `client.start()` returning do not exit: they stop every bot, wait one judging window and rebuild the
   connection (see [watchdog-en_us.md section 4](../watchdog/watchdog-en_us.md)); only a wrong config (an
   invalid token, the bot not being invited to the server) exits with code 1 and is handed to systemd (the unit sets
   `RestartPreventExitStatus=1`, so such an error is not restarted).
-* Both log streams and the startup steps are documented: see [utils-en_us.md](../utils/utils-en_us.md) section 7 and
+* Both log streams and the startup steps are documented: see [runtime-en_us.md](../runtime/runtime-en_us.md) section 7 and
   [process-log-en_us.md](../process-log/process-log-en_us.md).
 * Replies never overstate: say exactly as much as can be verified. `/start` and `/restart` can only confirm that the
   command was sent and the session appeared, so they say "command sent"; `/stop`'s flow re-checks on the spot that the
@@ -200,10 +78,6 @@ what are repeated here, so that the two places cannot drift apart:
 
 The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 2.
 
-* The layer names are fixed: `src/discord_commands/` is the command layer (read values, check numbers, `defer`, send the
-  result); `src/handlers/routes/` provides `handle_*` as the command entry layer (action enum to business function; permissions are checked
-  once, only here); below that sit the business layer (`bot_control`, `bot_manage`, `show`, `all_bots_control`) and the
-  utils primitive layer.
 * The framework only appears in the command layer and the process entry: the business layer and `lib.rs` do not
   reference serenity or poise; they take plain arguments and return `Result<String, String>`, which keeps the business
   logic unit-testable.
@@ -215,13 +89,10 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
   (`bot_and_anti_afk_status_report`); data sent as an attachment is `*_view` (`fishingbot_config_view`, `bot_log_view`).
   One-off probes, checks and text that is already written out in full use a bare noun (`ping`, `checkserver`, `help`,
   `whoami`).
-* Global singleton accessors share one shape: config `config::Config::get()` and text `text::get()` both mean "the one
-  copy in this process". A missing config `expect`s (that is an internal invariant); a missing language makes
-  `text::get()` panic in a production build (an entry-point ordering error) and return English in a test build.
-  `Language` has no `Default` implementation, and an unsupported `[i18n] language` fails startup validation and
-  exits. The process entry installs both once
-  (`config::Config::get_or_init()` installs `text::install()` along the way). The watchdog takes a different route:
-  `WATCHDOG` in `src/runtime/watchdog.rs` is a process-wide slot and consumers call `WATCHDOG.get_or_init()` once (the first
+* Config is accessed through `config::Config::get()`, and `config::Config::get().text()` selects its language.
+  Access before config loading panics; unsupported `[i18n] language` values fail startup parsing. `text` depends on no
+  other project module and has no separate language singleton. The watchdog uses
+  `WATCHDOG` in `src/lib.rs` as singleton storage, accessed through `Watchdog::get_or_init()` (the first
   call creates it from the config). Poise's event callbacks are plain fn pointers that cannot capture anything, so
   they take the same entry point; every other method takes `&self`.
 * The order inside a file is fixed: module docs (`//!`), `mod` declarations, `use`, public re-exports (`pub use`),
@@ -234,10 +105,8 @@ The complete list, with a reason for each, is in [CONTEXT-en_us.md](../../CONTEX
 * Marks in comments are recognisable at a glance: a leading `?` is an open question still to be confirmed by a real
   run (delete the mark and keep the conclusion once confirmed); a leading `!` is a gap with a fallback path; `⚠️` is
   used in the language tables to warn about a hard convention.
-* Where keywords live: only the ones that differ per deployment and must be filled in by hand go into `[keywords]`
-  (`online`, `filter_regex`); the `/pause` and `/unpause` echoes go into `[command_echo]` (`pause_echo`,
-  `unpause_echo`; they only appear when the JAR in use supports those two commands, and are edited in place when the
-  JAR changes); the reconnect message the JAR prints stays in i18n as the `jar_*` methods and follows `[i18n] language`;
+* The deployment-specific `filter_regex` is in `[keywords]`; JAR status responses stay in i18n as `jar_*` methods and
+  follow `[i18n] language`;
   whether the process is gone is read not from the log but from the screen session shell (`(Dead ...)`).
 
 ## 6. Building and testing from source
@@ -266,5 +135,5 @@ cargo test                                    # library, command layer and publi
 * Layer details: [config-en_us.md](../config/config-en_us.md) (the config layer),
   [commands-en_us.md](../commands/commands-en_us.md) (the command layer),
   [lib-en_us.md](../lib/lib-en_us.md) (the command entry layer),
-  [utils-en_us.md](../utils/utils-en_us.md) (the primitives layer).
+  [runtime-en_us.md](../runtime/runtime-en_us.md) (the primitives layer).
 * Hard constraints and invariants: [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md).

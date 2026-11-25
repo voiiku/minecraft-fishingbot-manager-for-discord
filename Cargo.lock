@@ -996,7 +996,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serenity",
- "syn 2.0.119",
  "sysinfo",
  "tokio",
  "toml",

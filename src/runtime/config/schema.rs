@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::text::Language;
 use serde::Deserialize;
 
 /// 反 AFK 输入及执行间隔，目标使用 `runtime.screen_prefix`。
@@ -76,7 +77,8 @@ pub struct LogConfig {
 #[serde(deny_unknown_fields)]
 pub struct I18nConfig {
     /// 语言名，同时写入 FishingBot 配置的 `misc.language`。
-    pub language: String,
+    #[serde(deserialize_with = "super::parse::deserialize_language")]
+    pub language: Language,
 }
 
 /// 管理员名单：Discord 用户 ID 到显示名称的映射。
@@ -103,12 +105,10 @@ impl Admins {
     }
 }
 
-/// 状态判断关键词：只配置随部署环境变化的内容。
+/// 机器人日志过滤配置。
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeywordsConfig {
-    /// 成功进入游戏服务器的关键词。
-    pub online: String,
     /// 过滤垃圾日志用的正则，直接交给 `grep -E`。
     pub filter_regex: String,
 }
@@ -174,7 +174,7 @@ pub struct RuntimeConfig {
     pub bot_logs_dir: String,
     /// `/log` 返回的最大行数。
     pub max_reply_log_lines: usize,
-    /// 单条回复字符上限，超出时按行截断。
+    /// 报告按行截断的 UTF-16 码元目标；省略说明可能超过极小的目标值。
     pub max_reply_chars: usize,
     /// 自动候选（autocomplete）单次返回的最大条数；不超过 25（Discord 硬上限）。
     pub max_autocomplete_choices: usize,
@@ -247,24 +247,6 @@ impl TimingConfig {
     pub fn first_handshake_timeout(&self) -> Duration {
         Duration::from_millis(self.watchdog_window_ms.saturating_mul(2))
     }
-}
-
-/// 自动候选单次返回的条数上限（Discord 对 autocomplete 的硬上限）。
-pub const MAX_AUTOCOMPLETE_CHOICES: usize = 25;
-
-/// `/pause` 与 `/unpause` 的 JAR 回显及检查参数。
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CommandEchoConfig {
-    /// `/pause` 生效后 JAR 打印的回显（默认值按英文 jar；中文 jar 是 `已暂停钓鱼`）。
-    pub pause_echo: String,
-    /// `/unpause` 生效后 JAR 打印的回显（默认值按英文 jar；中文 jar 是 `已恢复钓鱼`）。
-    pub unpause_echo: String,
-    /// 发送指令后等待日志回显的时间（内部毫秒）。
-    #[serde(rename = "wait", deserialize_with = "super::parse::seconds_to_millis")]
-    pub wait_ms: u64,
-    /// 检查回显时读取的日志行数。
-    pub scan_lines: usize,
 }
 
 /// 可自定义的帮助文本。

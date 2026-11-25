@@ -20,14 +20,14 @@ For the overview (layers, directory tree and the full path of one command), see 
 
 The remaining module documents:
 
-* [`lib`](mods/lib/lib-en_us.md): the public library interface; `handlers/routes` contains action enums, `handle_*` routes and permission checks.
-* [`discord_commands`](mods/commands/commands-en_us.md): the Discord command layer (poise), which reads options, validates numbers, `defer`s and turns `Err` into a reply; its command categories are `bot_control`, `bot_manage`, `token`, `log`, `all_bots`, `show`, and `general`.
-* `handlers`: business entry points for bot control, account management, bulk operations, read-only queries and general commands. See [commands-en_us.md](mods/commands/commands-en_us.md) sections 3–7.
+* [`lib`](mods/lib/lib-en_us.md): public command APIs, runtime components and view types.
+* [`discord_commands`](mods/commands/commands-en_us.md): reads Discord options, calls the corresponding operation, and sends replies. For example, `/start` calls `operations::single_bot_control::prepare_start_single_bot` directly.
+* `operations`: single-bot and batch control, accounts, queries and anti-AFK control. Restricted operations check permissions at entry. See [commands-en_us.md](mods/commands/commands-en_us.md) sections 3–7.
 * [`config` + `config/`](mods/config/config-en_us.md): the external config. `schema` (the structs corresponding to the TOML), `parse` (deserialisation and path expansion), `validate` (startup validation), `template` (the template generated on first start).
-* [`text`](mods/i18n/i18n-en_us.md): text and languages. One language per process, selected from `[i18n] language` at startup: `en_us` (English), `zh_cn` (one to one with `en_us`, only the literals differ), `bootstrap` (English during bootstrap), `log_text`, `requirement`, `setup_failure`, `watchdog` (internal watchdog invariant notes, language-dependent).
+* [`text`](mods/i18n/i18n-en_us.md): localized text and reports; `languages` contains the English and Chinese implementations, while `bootstrap` contains startup-specific English errors.
 * [`watchdog`](mods/watchdog/watchdog-en_us.md): the gateway watchdog. The only place that decides the connection is lost: the handshake and probe criteria, both pure timing; the process entry requests the reconnect.
 * [`process_log`](mods/process-log/process-log-en_us.md): the program logger under `runtime`, writing to the terminal and a log file.
-* [`utils`](mods/utils/utils-en_us.md): globally shared utilities, including bot directories, logs, status, the startup queue and the process logger.
+* [`runtime`](mods/runtime/runtime-en_us.md): bot directories, sessions, status, the startup queue and shared file, name and uptime helpers.
 
 ## 4. Commands
 

@@ -1,18 +1,7 @@
 # commands: the command layer and every command
 [简体中文](commands-zh_cn.md) | **English**
 
-* Code: `src/discord_commands.rs`, `src/discord_commands/autocomplete.rs` and `src/discord_commands/{general,show,bot_manage,token,log,bot_control,all_bots}.rs`
-* Responsibility: read options, check numbers, `defer`, and send out whatever `handle_*` returned. Permissions,
-  argument cleaning and business state checks all happen one layer down (`src/lib.rs` and the business modules).
-* Hard convention: every command must end up in `lib::handle_*` (that layer declares the permission requirement and
-  checks it once), and this layer must not build ordinary business replies - even a command such as `/whoami`, which only reads the
-  author's information, goes through `handle_whoami`. Skipping that step means skipping the permission check (there is
-  no registry or framework hook to fall back on; this convention plus review are the guarantee).
-  `/sync-commands` checks administrator access through `check_sync_commands_permission`, then performs Discord API operations
-  and builds the synchronization report in the command layer.
-* Relation to the business layer: `src/discord_commands/bot_control.rs` (the command layer) only declares which commands exist,
-  what the arguments look like and how to reply; the real action is in `src/handlers/bot_control/start.rs` (the business layer). The
-  file names are deliberately the same on both sides so they can be read side by side.
+* `src/discord_commands/` receives interactions and sends replies. Only `src/operations/` authorizes callers and targets. For `/sync-commands`, `operations::begin_command_sync` checks the admin and acquires the sync lock; Discord registration calls stay in the adapter.
 
 ## 1. The rules of the command layer
 
@@ -22,11 +11,12 @@ Discord requires an interaction to be answered within 3 seconds, otherwise the u
 we have to do (start a JVM, wait in the batch queue, run `screen -list`, wait per bot and read logs) takes far longer than
 that. `ctx.defer()` answers first, after which there is a 15 minute window (the lifetime of the interaction token).
 
-There are only two exceptions:
+These cases do not defer first:
 
 * `/help` and `/whoami` are purely local text, so they answer without deferring;
 * `/token` collects its input in a Modal, and a modal has to be the first response of an interaction, so it cannot
   defer either.
+* `/sync-commands` replies immediately if it cannot acquire a sync permit, without calling Discord registration APIs.
 
 ### 1.2 Why long commands send two messages
 
@@ -39,27 +29,11 @@ the second one onwards is a new message. So the long-running commands (the six `
 
 Query commands (`/show status`, `/show ...`, `/log`) send only the first one: the result replaces the placeholder directly.
 
-#### 1.2.1 The five reply funnels (named after the kind of command, not after the number of replies)
+#### 1.2.1 Shared replies
 
-Commands call the appropriate entry point in `src/discord_commands.rs` with an explicit action, caller, and required
-arguments. Each entry point handles `defer`, progress acknowledgements, and blocking-pool dispatch as needed.
-Every reply is recorded in the program log (`say_and_log`
-and `log_reply` go through `LogText::CommandReplied`: who called it, which command, and what was answered), so when
-troubleshooting "what did it actually answer" the log is the reference, see
-[process-log-en_us.md](../process-log/process-log-en_us.md).
-
-* `single_bot_control`: covers `/start`, `/stop`, `/restart`, `/pause`, `/unpause` and `/command`. The user gets a
-  progress acknowledgement first and the full result once it is done.
-* `single_bot_manage`: covers `/bot add`, `/bot del` and `/bot rename`. The user only gets the final result.
-* `all_bots_manage`: covers `/startall`, `/stopall`, `/restartall`, `/pauseall`, `/unpauseall` and `/commandall`. The user gets a progress
-  acknowledgement first and the full result once it is done.
-* `read_only_query`: covers `/show status`, `/show mybots`, `/show allbots` and `/show admins`. The user only gets the final result.
-* `run_async_and_reply`: covers `/ping`, `/checkserver` and `/anti-afk`. The user only gets the final result; the anti-AFK
-  implementation puts blocking thread operations on the blocking pool.
-
-Three cases are outside these five, each for its own reason: `/help` and `/whoami` are purely local text (no `defer`);
-`/log` and `/show botconfig` have to send an attachment themselves; and `/token`'s modal has to be the first response
-of the interaction.
+* `run_control_with_notice` defers and prepares the operation on the blocking pool. Denial or preparation failure sends only an error. On success it sends the progress notice before executing and sending the final report. Failure to deliver the notice drops the pending work. `/startall` estimates and submits the same candidate snapshot.
+* `/bot add|del|rename` and text-only `/show` queries share `run_blocking_and_reply`: defer, run the operation supplied by the command on the blocking pool, then send a single result. `run_async_and_reply` handles async operations.
+* `/log`, `/show botconfig`, `/bot login` and `/token` retain their attachment, private reply or modal flows.
 
 ### 1.3 Sensitive content: ephemeral and Modal
 
@@ -74,7 +48,7 @@ submission for us (closing the modal) -> parse it into a struct -> `spawn_blocki
 `CreateReply::ephemeral(true)`. The modal took the place of the first response, so that last step is a followup
 message.
 
-`/bot login` is the only command whose **two replies both get their content from the business layer**: the first one (a
+`/bot login` uses two private replies: the first one (a
 login link and a device code) cannot be known until the JAR prints it, so the command layer cannot send a fixed
 progress acknowledgement first the way other commands do. Its shape is: `defer_ephemeral` -> run the first stage
 (launch the session, wait for the device code) -> send the first reply -> run the second stage (wait for the credential
@@ -111,8 +85,8 @@ inside the pool. Login, logs and configuration attachments retain their separate
 * Synchronization replaces this application's commands in the target scope and deletes all its commands in old scopes,
   including manually added ones; other applications are unaffected. There is no timer or automatic retry. Restart and
   run the command after changing configuration; first configure an administrator ID.
-* Command and option descriptions come only from the language `COMMAND_TEXTS` tables; `all_commands()` validates and
-  fills them before registration (section 1.7).
+* Command and option descriptions come from language texts; `/log`'s default line count is filled dynamically.
+  `all_commands()` validates them before registration (section 1.7).
 * Context aliases: `Context<'a>` (ordinary commands) and `ApplicationContext<'a>` (commands that need a Modal, since a
   Modal only exists in the context of slash commands).
 * Only `slash_command` is used; there is no `!prefix` command, because that needs the `MESSAGE_CONTENT` privileged
@@ -122,7 +96,7 @@ inside the pool. Login, logs and configuration attachments retain their separate
 ### 1.6 How errors are handled
 
 * An `Err` text returned by the business layer is treated as something to show the user, and the command layer sends it
-  out as it is (`handle_*` has already converted it).
+  out as it is (`operations` has already converted it).
 * An `Err` a command function returns itself (a genuine surprise) goes to `main.rs`'s `on_error`: it logs with
   `log::error!`, then the command layer sends a generic ephemeral error message to the caller. Internal error details are
   not shown to users. Command panics use the same reply path.
@@ -136,9 +110,9 @@ inside the pool. Login, logs and configuration attachments retain their separate
 
 The texts in the command layer come in two groups, with different origins and different timing:
 
-* Command descriptions and option descriptions: from `text::get().command_texts()`, validated and filled before
-  registration.
-* Progress acknowledgements, usage hints, attachment bodies and the reply log entry: the same `text::get()`
+* Command descriptions and option descriptions: from `config::Config::get().text().command_texts()`, validated and filled before
+  registration. The `/log` line description uses a language method and `Config::get().constants.default_log_lines`.
+* Progress acknowledgements, usage hints, attachment bodies and the reply log entry: the same `config::Config::get().text()`
   (`command_started_notice`, `command_ping_port_usage`, `command_log_attachment_body`, ...), read on every call.
 * Modal titles, field labels and placeholders: read on the spot in `TokenModal`'s `create()` (a hand-written
   `impl poise::Modal`), on every modal.
@@ -153,7 +127,7 @@ table supplies them:
   `impl poise::Modal` (the texts come from `create()`, the values from `parse()` by `custom_id`; the shape is exactly
   what derive would generate).
 
-The texts themselves live in the language files (`COMMAND_TEXTS` in `src/text/zh_cn.rs` and `src/text/en_us.rs`), where
+The texts themselves live in the language files (`COMMAND_TEXTS` in `src/text/languages/zh_cn.rs` and `src/text/languages/en_us.rs`), where
 `name_path` must match the command name here word for word (a subcommand is written as `"bot add"`). Adding or changing
 a command means updating both languages.
 
@@ -198,12 +172,12 @@ The free text of `/command` and `/commandall` uses a single `String` option: spa
 box. The only exception is pasting or typing the whole line at once: the client then splits on spaces and the extra
 words try to match other options and fail (client behaviour, unavoidable). We do no processing at all (no unquoting, no
 space merging, no `trim`), so whatever the user typed is what gets injected; the assembly and the "must not be empty"
-check happen once in the business layer (`utils::ToCleanBotCommand`).
+check happen once in the business layer (`utils::console_command::ToCleanBotCommand`).
 
 ### 2.1 Autocomplete for the command options
 
 Options such as the bot name `name` offer suggestions while the user types (a native Discord ability). The command-side
-`commands/autocomplete.rs` queries permitted bot directories and running states, filters candidates by command scope,
+`operations/queries/list_bot_candidates.rs` queries permitted bots and their states; `discord_commands/autocomplete.rs` filters candidates by command scope,
 builds display labels, and adapts the Discord interaction. Suggestions follow the meaning of the command rather than
 always being "the running ones":
 
@@ -224,37 +198,24 @@ Details: the permission rule matches the server side (admins get every bot, ever
 an autocomplete interaction, so it must not probe per bot); at most `runtime.max_autocomplete_choices` entries (default
 25, Discord's hard limit, enforced by the candidate logic in `src/discord_commands/autocomplete.rs`), with the running ones first
 and the queued ones next. The suggestions are only suggestions: the user can still type any name, and ownership plus
-whether the session is running are decided by the `handle_*` functions as before.
+whether the session is running are decided by the `operations` functions as before.
 
 ## 3. Single-bot control: `/start`, `/stop`, `/restart`, `/pause`, `/unpause`, `/command`, `/log`
 
-* Code: `src/handlers/bot_control.rs` (the module docs) and `src/handlers/bot_control/*.rs` (one file per command)
-* Entry point: `lib::handle_bot_control` (the action enum `BotControlAction`)
-* Every session operation reuses the primitives in `utils`; this layer only validates, converts results and replies.
-* Permissions are not in this module: the requirement of a single-bot command such as `/start` is
-  `RequiredPermission::OwnerOrAdmin(owner of the target bot)`, checked once by the routing layer, where
-  `handle_bot_control` and `handle_bot_log` resolve the target entry with `BotDirEntry::find_by_name` first. The batch
-  `/startall` group requires `RequiredPermission::MustBeAdmin`, also checked in the routing layer.
-* The autocomplete for the `name` option belongs to the command layer, not to this business module:
-  `src/discord_commands/autocomplete.rs` picks a batch by command meaning (`/start`, `/bot del` and `/bot rename` only look
-  at the ones not running; `/stop`, `/pause`, `/unpause`, `/command` and `/restart` only at the running ones; `/log`
-  gives all of them), see [section 2](#2-the-command-list-and-their-options).
+Only `operations` resolves and authorizes the bot. `/token` checks after modal submission, before writing credentials. Autocomplete suggests only visible names; it does not grant access.
 
 ### 3.1 The command list
 
-* `/start <bot name>`: `start::start_bot(&bot_dir_entry)`. Launches the session and checks it twice (it counts as
+* `/start <bot name>`: `single_bot_control::start_single_bot(name, caller_id)`. Launches the session and checks it twice (it counts as
   started only when it is still there on the second check, see section 3.2), then replies with the verification result:
-  join confirmed, session exists but state unconfirmed, or start failed.
-* `/stop <bot name>`: `stop::stop_bot(&bot_dir_entry)`. Stops the session (releasing the game account); the stop is
+  joined, not currently joined, or an issue.
+* `/stop <bot name>`: `single_bot_control::stop_single_bot(name, caller_id)`. Stops the session (releasing the game account); the stop is
   re-checked on the spot and it replies "stopped successfully".
-* `/restart <bot name>`: `restart::restart_bot(&bot_dir_entry)`. Stops and relaunches an existing session, then reports
-  confirmed server entry, an unconfirmed state, or the failure reason.
-* `/pause <bot name>`: `pause::pause_fishing(&bot_dir_entry)`. An in-game `/pause` without logging out; after sending
-  it waits `command_echo.wait` (0.3 seconds by default) to confirm the log echo and replies "pause confirmed" or
-  "command sent".
-* `/unpause <bot name>`: `unpause::unpause_fishing(&bot_dir_entry)`. An in-game `/unpause`; the confirmation and the
-  wording are as above.
-* `/command <bot name> <command>`: `command::send_command_to_bot(&bot_dir_entry, raw_bot_command_args)`. Forwards an
+* `/restart <bot name>`: `single_bot_control::restart_single_bot(name, caller_id)`. Stops and relaunches an existing session, then reports
+  confirmed server entry, not currently joined, or the failure reason.
+* `/pause <bot name>` and `/unpause <bot name>`: after authorization, both call `runtime::bot_instances::fishing_pause::set_fishing_pause`.
+  They request opposite pause states but share command delivery and `/status` confirmation.
+* `/command <bot name> <command>`: `single_bot_control::send_single_bot_command(name, args, caller_id)`. Forwards an
   in-game command.
 * `/log <bot name> <lines>`: `log::bot_log_view(&bot_dir_entry, line_count)`. The reply is ephemeral (visible to the
   caller only).
@@ -262,55 +223,21 @@ whether the session is running are decided by the `handle_*` functions as before
 `name` is **one name** today: taking several bots at once (`/start duck duck2`) is not implemented yet (the assessment
 and the way to do it are recorded in [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 8).
 
-`/pause` and `/unpause` are not separate implementations: the injection goes down the same path as `/command`
-(`utils::bot_status::confirm_pause_command` takes that injection step, with this layer passing
-`command::send_command_to_bot` in, so the validation - directory ownership and the session running - is exactly the same
-as for `/command`). The only difference is that these two also confirm the effect afterwards, which is exactly why the
-"confirm and remember" logic lives in `utils/bot_status.rs` (and not in `command.rs`): what other commands send is
-decided by the user, so a successful echo cannot be predicted and therefore cannot be confirmed.
+After sending `/pause` or `/unpause`, the manager sends `/status` and checks only log output appended after the recorded
+offset. Manager commands and queries for the same bot are serialized. The query waits up to 2 seconds and scans the
+last 100 new lines. A truncated or replaced log is an error; a missing response is a query timeout, and an unavailable
+response is reported as an issue. The manager does not store state.
 
-The steps that confirm the effect:
-
-Before sending, the current log's identity and length are recorded. Only subsequently appended output is checked; a
-replaced or truncated log is read from its beginning so old echoes cannot confirm the new command.
-
-1. Wait `command_echo.wait` from the config (0.3 seconds by default). The JAR prints the echo line synchronously when it
-   receives the command, and that line has to reach the log first.
-2. Look for the echo keyword in the last `command_echo.scan_lines` lines (50 by default) of the new log output. Only the
-   tail is scanned rather than the whole file backwards, because scanning a long-running log from the start is
-   expensive.
-3. Only when the echo is seen does it say "pause confirmed" or "fishing resumed"; without it, it only says "command
-   sent", because it says exactly as much as can be verified (see the "replies never overstate" rule in
-   [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md)). When even the newest log cannot be found (the session is
-   running but the log was moved away or has not been created yet) that is not treated as "no echo" but reported as "log
-   file not found", because it means the confirmation step cannot be performed at all, not that the command had no
-   effect.
-4. When the echo is confirmed, `confirm_pause_command` records the state as well (`BotPauseStatus::set_paused` and
-   `set_fishing`), and `/show status` then uses that memory instead of scanning a log back to the beginning of the file
-   looking for a pause keyword. Sending `/pause` by hand with `/command`, or typing it inside the `screen` session,
-   does not update it, so `/show status` may show a stale value in that case, and the next `/pause` or `/unpause` corrects
-   it.
-
-This assumes the JAR supports `/pause` and `/unpause`. Upstream plans to add both commands; in a build that includes them, the echoes are printed by the JAR. If the JAR in use does not support them yet, the two commands only reply "command sent" and the pause state in `/show status` does not change.
-
-The pause status is stored in the manager's memory rather than queried from the JAR; the initial "fishing" value is only
-a default. If FishingBot reconnects to the game server within the same session, the record is retained and the manager
-does not resend `/pause`. The JAR's actual state depends on its implementation and may differ from the display. The
-manager clears the record when it successfully stops the session or starts a new one, and when its process restarts.
-
-The echo keywords to look for are `pause_echo` and `unpause_echo` in the config's `[command_echo]` (upstream messages
-`command-pause-executed` and `command-unpause-executed`), and they are not passed by the caller:
-`PauseCommand::echo_keyword` picks one of them by command. Different JAR builds may print different echoes, so they are
-configured in place and changing the JAR means changing the config: the defaults match an English jar, while a Chinese
-jar takes `已暂停钓鱼` / `已恢复钓鱼`. The two must differ and neither may contain the other; startup validates this,
-otherwise that echo line cannot be attributed to one of the commands.
+The result confirms the state at query time, not what caused it. "Not paused" does not guarantee a connection or active
+fishing. The JAR must support `/status`, `/pause` and `/unpause`, and the log filter must not discard status responses.
+Upstream responses have no request ID, so a late response to an earlier timed-out query or an external manual query
+can be indistinguishable from the current response.
 
 ### 3.2 The fixed steps of the three action functions
 
-`start_bot`, `stop_bot` and `restart_bot` share one structure, so the code can be read in these four steps:
+`start_single_bot`, `stop_single_bot` and `restart_single_bot` share one structure:
 
-1. Permission and target resolution are done in the routing layer: `lib::handle_bot_control` checks `OwnerOrAdmin` once
-   with `permitted_bot_dir_entry` and passes the entry down, so this function only takes a `&BotDirEntry`. The entry
+1. Each business command resolves the target and checks owner or administrator access once with `permitted_bot_dir_entry`. The entry
    carries the owning Discord user ID, the bot name (cleaned), the path and the token status.
 2. Pre-checks for the action:
    * `/start`: a `bot_token_status == BotTokenStatus::Missing` in the entry is refused outright (without a token the
@@ -321,30 +248,19 @@ otherwise that echo line cannot be attributed to one of the commands.
      the information "when did it disappear"; a target without a token is dropped by the restart flow before it stops
      anything and noted in the failure details, because a restart stops and then starts, a target without a token cannot
      start, and a pointless stop would take an account that is still fishing offline.
-3. Call the `utils` flow functions (neither the waits nor the staggering take parameters; `utils` decides from how many
-   bots are in this batch):
-   * `/start` goes through `StartupQueue::get_or_init().start_bots(std::slice::from_ref(bot_dir_entry))`;
-   * `/stop` goes through `stop_single_bot_session(bot_dir_entry.clone())` (which returns the details; success or
-     failure is read off them);
-   * `/restart` goes through `restart_bot_sessions(std::slice::from_ref(bot_dir_entry))`.
-
-   The `/start` and `/restart` flows take a `&[BotDirEntry]` (a single bot is a slice of one element), while `/stop`
-   takes a single entry. The slice shape is why "support several bots at once later" will not need the start and restart
-   flows rewritten (see [CONTEXT-en_us.md](../../CONTEXTS/CONTEXT-en_us.md) section 8).
+3. Call the corresponding operation:
+   * `/start` goes through `StartupQueue::get_or_init().start_bots(std::slice::from_ref(&bot_dir_entry))`;
+   * `/stop` calls `stop_single_bot_session(&bot_dir_entry)`, which returns success or the stop error;
+   * `/restart` goes through `restart_bot_sessions(std::slice::from_ref(&bot_dir_entry))`.
 
    Adjacent launches are separated by `[startup_queue] bot_login_interval`. After all bots in the request are
    launched it checks once immediately and once after `timing.check_grace` (one wait per start request). The session
-   must still exist and not be dead on the second check; see [utils-en_us.md](../utils/utils-en_us.md) section 4.
-4. Failure is always decided by the methods on the details utils returns (when `outcome.has_failed_lines()` is true,
-   `outcome.to_failure_text()` is returned as the error; the stop details use a `has_failed_lines()` of the same
-   shape). utils returns the details, and the assembly method has to be called explicitly here (see
-   [utils-en_us.md](../utils/utils-en_us.md)). The wording follows the principle of saying only as much as can be
-   verified:
-   * `/start` replies with the verification result: `join confirmed` when the log confirms it joined, `the session
-     exists but its state is unconfirmed` when the session survives the grace period without a confirmed state, and
-     `start failed` when the session disappears before the grace period. It no longer always replies "start command sent".
+   must still exist and not be dead on the second check; see [runtime-en_us.md](../runtime/runtime-en_us.md) section 4.
+4. Startup verification returns each bot's `BotStatus` or an issue. Single-bot commands reply directly; batch commands summarize the same results in order:
+   * `/start` uses `/status` `joined` to report joined or not currently joined. Unavailable status, query errors and a
+     vanished session are reported as issues; an abnormal status does not automatically stop the session.
    * `/stop` replies `Bot 'X' stopped successfully`. The stop flow re-checks on the spot that the session is gone (see
-     `utils::stop_bot_sessions`), so this one can claim success.
+     `runtime::bot_instances::stop::stop_bot_sessions`), so this one can claim success.
    * `/restart` confirms the old session stopped and reports whether the new session's server entry was confirmed.
      Stop failures, start failures, cancellation and verification errors retain their respective reasons.
 
@@ -355,23 +271,23 @@ otherwise that echo line cannot be attributed to one of the commands.
   `to_clean_bot_command` (`ToCleanBotCommand`) (joined with single spaces, and `错误:发送的指令不能为空！` when it is
   empty), exactly once.
 * The echo uses that assembled command.
-* The permission has been checked by the routing layer (`OwnerOrAdmin`) and ownership is not looked at again here; this
-  function only assembles the command and requires the session to be running (the token check is in `/start`).
+* `send_single_bot_command` checks owner or administrator access, assembles the command and requires the session to be running
+  (the token check is in `/start`).
 * A session that is not running is refused, because a command cannot be pushed into a session that does not exist.
-* The injection is done by `utils::send_command_to_single_bot` (a screen primitive that validates nothing; it appends a
+* The injection is done by `runtime::bot_instances::screen::send_command_to_single_bot` (a screen primitive that validates nothing; it appends a
   newline at the end, which is what makes `screen` submit the line).
 
 ### 3.4 The details of `/log`
 
 * The line count must be greater than 0 and is capped by `runtime.max_reply_log_lines` (one command must not pull a whole
   large log back).
-* Only the newest log is read (`utils::bot_logs::latest_log_path`, which only accepts timestamp-shaped names):
+* Only the newest log is read (`runtime::bot_log::latest_log_path`, which only accepts timestamp-shaped names):
   `create_bot_log_file` creates the file before every session launch, and the session appends through `grep -v -E` and
   `tee -a`.
 * FishingBot's own log is written to `raw/log0.log` beside it (a symlink to `/dev/null`, so its contents are
   discarded), which means there is only one log on disk and `/log` cannot read back unfiltered spam. Details in
-  [utils-en_us.md](../utils/utils-en_us.md) section 7.
-* Reading uses the sliding window of `utils::read_last_lines`, so however large the log is only the last N lines are
+  [runtime-en_us.md](../runtime/runtime-en_us.md) section 7.
+* Reading uses the sliding window of `runtime::log_files::read_last_lines`, so however large the log is only the last N lines are
   kept.
 * The raw log text goes into `Report::content` (a whole block), so that no line gets a list prefix; the title carries
   the log file name.
@@ -382,26 +298,16 @@ otherwise that echo line cannot be attributed to one of the commands.
 
 ## 4. Account management: `/bot add`, `/bot del`, `/bot rename`, `/bot login`, `/token`
 
-* Code: `src/handlers/bot_manage.rs` and `src/handlers/bot_manage/*.rs`
-* Entry points: `lib::handle_bot_manage` (the action enum `BotManageAction`); `/bot login` has two more entry points,
-  `lib::handle_bot_login` (stage one) and `lib::handle_bot_login_await` (stage two), see section 4.6.
-* Permissions are neither in the command layer nor in this module: `/bot add` lands under the caller's own user
-  directory (requirement `Everyone`); `del`, `rename`, `token` and `login` require
-  `RequiredPermission::OwnerOrAdmin(owner of the target bot)`, checked once by the routing layer (`handle_bot_manage`,
-  or `handle_bot_login` for `login`) after resolving the target entry with `BotDirEntry::find_by_name`. The command
-  layer only reads values and counts arguments, never permissions.
-* In common: directory names and background log entries always use the normalised name
-  (`utils::ToCleanBotName::to_clean_bot_name`, which returns an `Err` when the name is illegal so the user can rename
-  it), so the reply, the log and the directory name on disk always agree.
+The entry points are `add_bot`, `delete_bot`, `rename_bot` and `update_bot_token`. New accounts belong to the caller; existing accounts require ownership or administrator access. Login uses `begin_bot_login` and `finish_bot_login` so the device code can be sent privately first.
 
 ### 4.1 The command list
 
-* `/bot add`: `add::add_bot(raw_bot_name, caller_id)`. Available to everyone, and it only creates inside the caller's
+* `/bot add`: `accounts::add_bot(raw_bot_name, caller_id)`. Available to everyone, and it only creates inside the caller's
   own user directory.
-* `/bot del`: `del::delete_bot(&bot_dir_entry)`. The creator or an admin.
-* `/bot rename`: `rename::rename_bot(&bot_dir_entry, raw_new_bot_name)`. The creator or an admin; not while running.
+* `/bot del`: `accounts::delete_bot(name, caller_id)`. The creator or an admin.
+* `/bot rename`: `accounts::rename_bot(name, new_name, caller_id)`. The creator or an admin; not while running.
 * `/bot login`: `login::begin_login(&bot_dir_entry)` and `login::await_login(prompt)` (two stages, called by
-  `handle_bot_login` and `handle_bot_login_await`, see section 4.6). The creator or an admin; not while running, and
+  `operations::accounts::begin_bot_login` and `operations::accounts::finish_bot_login`, see section 4.6). The creator or an admin; not while running, and
   both replies are visible to the caller only.
 * `/token`: `token::update_bot_token_file(&bot_dir_entry, raw_token)`. The creator or an admin; the reply is visible to
   the caller only, and not while running.
@@ -411,8 +317,8 @@ four subcommands); `/token` is a separate top-level command that collects its in
 
 ### 4.2 `/bot add`
 
-* Both the name check (`utils::ToCleanBotName::to_clean_bot_name`: an illegal character is an error instead of being
-  filtered out) and the server-wide duplicate check live in `utils::create_bot_dir`, which returns the entry it created
+* Both the name check (`utils::bot_name::ToCleanBotName::to_clean_bot_name`: an illegal character is an error instead of being
+  filtered out) and the server-wide duplicate check live in `runtime::bot_instances::bot_dirs::create_bot_dir`, which returns the entry it created
   on success (the reply and the background log both use the `bot_name` from the entry).
 * The directory always lands under the caller's own user directory: the path is derived from the caller's user ID, so
   the caller cannot write into someone else's directory.
@@ -422,20 +328,19 @@ four subcommands); `/token` is a separate top-level command that collects its in
 
 ### 4.3 `/bot del`
 
-1. The routing layer's `permitted_bot_dir_entry` locates the directory and checks `OwnerOrAdmin` (`find_by_name` first,
+1. The business command calls `permitted_bot_dir_entry` to locate the directory and check owner or administrator access (`find_by_name` first,
    then ownership); when it cannot be located or is not permitted it answers as not found and never reveals that "this
    bot belongs to someone else".
 2. Deleting is refused while the session is running (`refusal_if_not_stopped`, with the wording from
-   `utils::running_bots`), otherwise it would delete the data directory the bot is writing to.
+   `runtime::bot_instances::bot_sessions`), otherwise it would delete the data directory the bot is writing to.
 3. The directory is removed with `fs::remove_dir_all`, and both success and failure are written to the background log.
 
 ### 4.4 `/bot rename`
 
 The order is deliberate; do not reshuffle it:
 
-1. Check that both the old and the new name are legal and that they differ.
-2. The routing layer resolves the entry by the old name (`BotDirEntry::find_by_name`) and checks `OwnerOrAdmin` (the
-   rule is directory ownership, and admins may cross directories).
+1. Resolve the old name and check owner or administrator access through `permitted_bot_dir_entry` (admins may cross directories).
+2. Check that the new name is legal and differs from the old name.
 3. A running session is refused outright (`refusal_if_not_stopped`, the same rule as `/bot del` and `/token`): a running
    process keeps writing to the old directory and renaming would lose the logs from then on. Stop it first with
    `/stop`.
@@ -454,7 +359,7 @@ The order is deliberate; do not reshuffle it:
   it does not take effect and easily makes people believe it was replaced. Stop it first with `/stop` (the same rule as
   `/bot del` and `/bot rename`).
 * The file name is `runtime.token_file` and it is written inside the bot directory; the path convention comes from
-  `utils::token_file_path` and `fs::write` creates the file when it is missing and overwrites it when it exists.
+  `runtime::bot_instances::bot_dirs::token_file_path` and `fs::write` creates the file when it is missing and overwrites it when it exists.
 * The token file is what decides whether a bot can start: `bot_token_status` in the entry (`BotTokenStatus::Ready` or
   `BotTokenStatus::Missing`), decided in exactly one place, `BotTokenStatus::from_dir`.
 * The everyday way to get a credential is `/bot login` (section 4.6); `/token` is the fallback when that does not work.
@@ -479,7 +384,7 @@ Stage one (`login::begin_login`, a few seconds):
    directly and never prints a device code, which turns `/bot login` into "nothing happened". It also deals with
    leftovers from an interrupted attempt at the same time (both present -> delete the leftover; only `.renewing` ->
    put it back).
-3. Launch the session: the same path as `/start` (`utils::StartupQueue::launch_bot_to_login`: create the log -> prepare
+3. Launch the session: the same path as `/start` (`runtime::bot_startup::StartupQueue::launch_bot_to_login`: create the log -> prepare
    FishingBot's raw log directory -> `screen -dmS`), except that it does not refuse over the credential status - step
    zero of `/start` is exactly refusing a bot without a credential, which is why this flow needs an entry point of its
    own. On failure the old credential is put back and the error is returned.
@@ -533,29 +438,23 @@ stop failures are logged.
 
 ## 5. Batch commands: `/startall`, `/stopall`, `/restartall`, `/pauseall`, `/unpauseall`, `/commandall`
 
-* Code: `src/handlers/all_bots_control.rs` and `src/handlers/all_bots_control/*.rs`
-* Entry point: `lib::handle_all_bots_control` (the action enum `AllBotsControlAction`), which is also the routing layer
-  for this group.
-* The permission is checked once, in the routing layer (`has_permission(.., RequiredPermission::MustBeAdmin)` inside
-  `handle_all_bots_control`): functions in this module never take a `caller_id` and never check anything themselves, so
-  avoiding duplicate permission logic. This module only calls the batch flows and
-  assembles the reports.
+Each batch command calls its corresponding admin-only operation, e.g. `/startall` → `operations::all_bots_control::start_all_bots`. Non-admin requests are rejected before progress notices.
 
 ### 5.1 The command list
 
-* `/startall`: `startall::start_all_bots()`, covering every bot with a configured token that is not running.
-* `/stopall`: `stopall::stop_all_bots()`, covering every running bot (including leftover processes whose token is no
+* `/startall`: `all_bots_control::start_all_bots(caller_id)`, covering every bot with a configured token that is not running.
+* `/stopall`: `all_bots_control::stop_all_bots(caller_id)`, covering every running bot (including leftover processes whose token is no
   longer valid).
-* `/restartall`: `restartall::restart_all_bots()`, covering every bot with a configured token that is running.
-* `/pauseall` and `/unpauseall`: `pauseall::set_all_bots_fishing_pause()`, using the same targets as `/commandall` and
-  confirming each bot with the configured echo.
-* `/commandall <command>`: `commandall::send_command_to_all_bots(raw_bot_command_args)`, covering every running bot.
+* `/restartall`: `all_bots_control::restart_all_bots(caller_id)`, covering every bot with a configured token that is running.
+* `/pauseall` and `/unpauseall`: `all_bots_control::pause_report::set_all_bots_fishing_pause` selects the same targets as `/commandall`,
+  calls `set_fishing_pause` for each bot and collects the results.
+* `/commandall <command>`: `all_bots_control::send_all_bots_command(args, caller_id)`, covering every running bot.
 
-`/anti-afk <on|off>` uses the separate `lib::handle_anti_afk` entry and is also admin-only. `on` starts the worker or reports that it is already running; `off` stops and joins it or reports that it is not running. It uses `[anti_afk]` input and intervals, matching every screen session whose name contains `runtime.screen_prefix` (including sessions outside this project). Starting confirms thread creation only, not a matching session or input delivery; `/show status` reports thread liveness. It does not start automatically after a process restart.
+`/anti-afk <on|off>` uses the separate `operations::set_anti_afk` entry and is also admin-only. `on` starts the worker or reports that it is already running; `off` stops and joins it or reports that it is not running. It uses `[anti_afk]` input and intervals, matching every screen session whose name contains `runtime.screen_prefix` (including sessions outside this project). Starting confirms thread creation only, not a matching session or input delivery; `/show status` reports thread liveness. It does not start automatically after a process restart.
 
-None of these functions takes a `caller_id`: the routing layer `handle_all_bots_control` already stopped everyone else,
-so whoever reaches them is an admin. They also pick their own titles (`/stopall` uses the command title; when the
-process receives an exit signal, `watchdog::Watchdog::exit_on_shutdown_signal()` assembles the same details on the spot
+Each batch operation checks administrator access before providing a progress notice, querying screen or taking action.
+They also pick their own titles (`/stopall` uses the command title; when the
+process receives an exit signal, `runtime::shutdown::exit_on_shutdown_signal(notice_ctx)` assembles the same details on the spot
 and only swaps in the "shutdown signal received, wrap-up" title: that report goes into the program log and is also
 sent to every server's notice channel). For
 comparison: a single-bot command's permission is decided inside each business
@@ -565,7 +464,7 @@ function by directory ownership, see
 ### 5.2 Which directories are taken
 
 Which batch is taken is decided by each command (`all_bot_dir_entries()` or `token_ready_bot_dir_entries()`), and then
-grouped with `utils::split_bot_entries_by_is_running(&[BotDirEntry])` (one `screen -list` snapshot):
+grouped with `runtime::bot_instances::bot_sessions::split_bot_entries_by_is_running(&[BotDirEntry])` (one `screen -list` snapshot):
 
 * `/startall`: `all_bot_dir_entries()`, split into two groups by token readiness first. An account without a token is
   not a failure but is counted as skipped, so everything is taken and then grouped.
@@ -584,40 +483,32 @@ file missing, left as it is" rather than disappearing silently.
 
 ### 5.3 The flow of each command
 
-* `/startall`: first split into two groups by token readiness (`split_bot_entries_by_token_status`), then split the
-  token-ready accounts by session state (`split_bot_entries_by_is_running`). It reports when no bot can be started or
-  all token-ready bots already have sessions; otherwise it calls
-  `StartupQueue::get_or_init().start_bots(&not_running_bot_entries)` and then overwrites the count rows with `Report::set_counts`
-  (tokens configured, sessions present after start, skipped (session exists), skipped (token missing), cancelled and
-  start issues). Those count rows are the only place an unstarted account is reported: `/startall` clears `Report::skipped`
-  and no longer lists each already-running, token-missing or cancelled account, so a large account set cannot fill the
-  reply; the cancelled ones are the starts that "stop every bot" (`/stopall`, the disconnect wrap-up, the exit wrap-up)
-  pulled back (`BotStartOutcome::Cancelled`).
-* `/stopall`: `utils::stop_all_bot_sessions()` returns the raw details (it is itself the combination of "ask the starter
+* `/startall` submits bots with a token and no session to the startup queue. The report lists verified starts and
+  failures in ledger order. Already-running bots, missing tokens and cancellations are counted without per-bot details.
+* `/stopall`: `runtime::bot_instances::stop::stop_all_bot_sessions()` returns the raw details (it is itself the combination of "ask the starter
   thread to launch nothing new", "clear the waiting list", `all_bot_dir_entries()`, grouping, stopping, and one more
-  sweep for late sessions), and the report is assembled by this module's `stopall::stop_all_bots()`; it reports only
+  sweep for late sessions), and the report is assembled by this module's `all_bots_control::stop_all_bots(caller_id)`; it reports only
   successes and failures (its only count rows are "stopped" and "stop failed"; bots that were not running are not listed,
   while the cancelled entries from the waiting list go into `Report::skipped`, which is empty when nothing was queued;
   the batch that was already taken out and is being launched is reported by the `/startall` / `/restartall` reply that
   triggered it, as "starting was cancelled"; the "scanned bot directories" field is output only by `/show allbots`). When
   the process receives an exit signal, the wrap-up assembles the same
-  details on the spot inside `watchdog::Watchdog::exit_on_shutdown_signal()`, with the title swapped for "shutdown
+  details on the spot inside `runtime::shutdown::exit_on_shutdown_signal(notice_ctx)`, with the title swapped for "shutdown
   signal received, wrap-up"; the report is written to the program log and also sent to every server's notice channel,
   with a 30-second overall limit on that send (past it the send is dropped and the process exits; nothing is resent on
   the next startup).
 * `/restartall`: only the running group of `all_bot_dir_entries()` is taken (a target that is not running is not a
   restart target); with none it replies `没有运行的机器人实例，无需重启`; otherwise it calls
-  `utils::restart_bot_sessions` and then writes the target bots, sessions present after restart and restart issues with
-  `Report::set_counts` (a target without a token explains itself in the restart failure details). The report only has
-  successes and failures: the targets were picked by this command itself, so there is no "skipped" kind;
-  `Report::skipped` only holds the cancelled starts (the ones "stop every bot" pulled back).
+  `runtime::bot_instances::restart::restart_bot_sessions` and then writes the target bots, sessions present after restart and restart issues with
+  `Report::set_counts` (a target without a token appears in the restart failure details). Cancelled starts are listed
+  under skipped. If a session already exists again before relaunch, the restart is counted as an issue.
 * `/commandall`: the command fragment is passed through as it is by the command layer, and here it is assembled into
   one command with `to_clean_bot_command` (the same convention as `/command`) before being injected one by one.
-  `utils::token_ready_bot_names_with_screen_sessions()` comes from one `screen -list` snapshot, including dead sessions, so the
+  `runtime::bot_instances::bot_sessions::token_ready_bot_names_with_screen_sessions()` comes from one `screen -list` snapshot, including dead sessions, so the
   injection is done straight away without re-authenticating and re-probing each bot; the successes are counted one by
   one and the raw failure text goes into `Report::failed`.
 * `/pauseall` and `/unpauseall`: use the same token and session filters, then call the single-bot pause or resume logic.
-  Each target waits for `command_echo.wait`; the report distinguishes confirmed, sent-only and failed operations.
+  Each target is queried with `/status`; unavailable, timed-out and failed queries are reported as issues.
 
 ### 5.4 Report conventions
 
@@ -626,8 +517,8 @@ file missing, left as it is" rather than disappearing silently.
 * Replies have a length cap: `Report::render()` truncates line by line from the end according to
   `runtime.max_reply_chars` and notes how many lines were omitted. With many accounts the batch details reach the cap
   most easily (an overlong single Discord message fails to send outright).
-* Start and restart counts indicate sessions present at verification, not confirmed game-server entry. Timeouts and
-  failures are counted as issues. Completed details distinguish confirmed and unconfirmed states; issue details retain
+* Start and restart checks pass when the session exists and the status query succeeds, not necessarily when joined. Timeouts and
+  failures are counted as issues. Completed details distinguish joined and not currently joined; issue details retain
   their reasons. Stop results are based on session-exit verification.
 * A command whose basic information is only known once the flow has run (`/startall`, `/restartall`) runs the flow first
   and then overwrites the count rows with `Report::set_counts(..)`. That is an explicit overwrite and does not stack on
@@ -642,14 +533,11 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
 
 ## 6. Queries: `/show status` and `/show botconfig|mybots|allbots|admins`
 
-* Code: `src/handlers/show.rs` and `src/handlers/show/*.rs`
-* Entry points: `lib::handle_show` (the action enum `ShowAction::{MyBots, AllBots, Admins}`) and
-  `lib::handle_fishingbot_config` (`/show botconfig` is separate because it returns an attachment instead of text).
-* All of them are read-only: they touch no session and change nothing on disk, so no running check is needed.
+Public queries call `show_status`, `show_my_bots`, `show_all_bots`, `show_admins` or `show_bot_config`. Only the personal list needs the caller ID.
 
 ### 6.1 The command list
 
-* `/show status`: `status::bot_and_anti_afk_status_report()` (using `utils::running_bots::status_row()`).
+* `/show status`: `show::show_status()` (using `show::show_status::status_row()`).
   The data comes from `screen -list`, each bot's newest filtered log, and one start-queue lookup (the queued bots get a
   `[Queued]` section below the report), and the reply is text (a table).
 * `/show botconfig`: `botconfig::fishingbot_config_view()`. The data comes from `paths.fishingbot_config_file_name`
@@ -663,7 +551,7 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
 
 * The report first shows whether the anti-AFK thread is running, even if no bots are running or queued; this does not confirm input delivery.
 * The list is the intersection of "has a token" and "the session exists": read the bot directories once and split by token
-  (the same scope as `/commandall`), then `utils::running_bots::status_row()` drops the ones that are not
+  (the same scope as `/commandall`), then `show::show_status::status_row()` drops the ones that are not
   running using one `screen -list` snapshot. So everything in the table has a configured token and an existing session;
   a bot whose token file was deleted while the process is still running is not in the table (`/stopall` can still clean
   it up).
@@ -671,31 +559,25 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
   the same wording as `/start` and `/stop`): a queued bot has no session yet, so it cannot be in the table above (no
   online / pause / uptime to report) and gets its own section below the report (`Report::queued`, with the section label
   `report_queued_label()`, `[Queued]`), one bot per line.
-* Each bot's status is decided by `utils::running_bots`. The connection status has two sources: when the session is a
-  `(Dead ...)` shell the log is not read at all and "process finished" is shown directly (the JVM has been killed and
-  the last log line may still say "online"); when the session is normal it is read from the newest log
-  (`BotDirEntry::connection_status`: read fresh on every call, scanning back from the end and stopping at the first
-  conclusion). The pause status comes from the in-process memory `BotPauseStatus.pause_status()` (when a `/pause` and
-  an `/unpause` for the same bot arrive almost at the same time, the last one in the echo window wins; it is updated
-  when the echo is confirmed and reset when a session starts and ends, see
-  [utils-en_us.md](../utils/utils-en_us.md) section 6). How the file is picked is in
-  [utils-en_us.md](../utils/utils-en_us.md) section 7. The wording comes from `utils::bot_status`: the server status is
-  "ready / initializing", "server online", "reconnecting / account online" or "process finished"; the three unreadable
-  cases (no file picked, unreadable, empty) do not happen in normal operation, so the error reason is shown in that
-  cell directly; the fishing status is "fishing" or "paused".
-* Uptime is formatted uniformly by `utils::format_uptime` as "days-hours-minutes", so that no call site writes its own
+* A live session is queried for the five `BotStatus` fields: `joined`, `paused`, `no_rod_available`, `has_bobber`
+  and `last_fish`. The first two are displayed as connection and pause status, the other booleans as `true`/`false`;
+  `last_fish` is the Unix millisecond timestamp of the last fishing action, not necessarily a catch. Unavailable status
+  reports an abnormal session, while timeouts and log errors are reported separately. A dead screen shell is reported
+  as a stopped process.
+* Uptime is formatted uniformly by `utils::uptime::format_uptime` as `1d-1h-5m`, so that no call site writes its own
   version.
 * The output has one line per bot, which is easy to scan by eye. The table has no dedicated type: a row is built on
-  the spot by `utils::running_bots::status_row()` and the header on the spot by `src/handlers/show/status.rs`, both as "a
-  four-element array joined with ` | `", so the two must agree on the column order:
-  * the column names (one set per language) live in `text`: `status_column_bot_name()`, `status_column_connection()`,
-    `status_column_pause()` and `status_column_uptime()`;
+  the spot by `show::show_status::status_row()` and the header on the spot by `src/operations/queries/show_status.rs`, both as "a
+  seven columns joined with ` | `", so the two must agree on the column order:
+  * the column names (one set per language) live in `text`: `status_column_bot_name()`, `status_column_joined()`,
+    `status_column_pause()`, `status_column_no_rod()`, `status_column_bobber()`,
+    `status_column_last_fish()` and `status_column_uptime()`;
   * adding, removing or reordering a column means changing both places; nothing enforces the order at the type level,
     so the alignment rests on both sides reading the same column names and using the same separator (` | `, one space
     on each side);
   * a row is a string discarded right after rendering, so a snapshot cannot be rendered twice, and no getter or trait
-    is needed for one table: `status_row` joins the four cells it just computed;
-  * why the rows live in `running_bots` rather than in the general `reply`: they need the session snapshot and the
+    is needed for one table: `status_row` joins the cells it just computed;
+  * why the rows live in `show_status` rather than in the general `text::report`: they need the session snapshot and the
     logs (both part of the running-state decision), so joining the cells there is simpler than introducing a snapshot
     type to consume.
 
@@ -709,14 +591,14 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
 * Why an attachment: `config.json` easily exceeds Discord's 2000 character limit for a single message and the body would
   be truncated; an attachment gives the full text and naturally carries a file name (`config.json`).
 * The content is not truncated: it is a structured file and cutting it in half invites misreading; when it exceeds the
-  attachment limit (`utils::MAX_ATTACHMENT_BYTES`, 8 MiB) it reports the error honestly and tells you to look at it on
+  attachment limit (`Config::get().constants.max_attachment_bytes`, 8 MiB by default) it reports the error honestly and tells you to look at it on
   the server.
 * When the file is missing or unreadable it replies with an error explaining why (the file is generated at startup by
   this program, so check `base_dir` and the write permission first) instead of silently returning nothing.
 
 ### 6.4 `/show mybots` and `/show allbots`
 
-* Both share one rendering and one directory scope (both in `utils::bot_dirs`, both sorted by bot name); the only
+* Both share one rendering and one directory scope (both in `runtime::bot_instances::bot_dirs`, both sorted by bot name); the only
   difference is which directories are taken: `my_bots_list` goes through `bot_dir_entries_of_owner(user ID)` and
   `all_bots_list` through `all_bot_dir_entries()`.
 * Each bot lists its name, its owning user ID (only meaningful for `allbots`) and whether a token exists. The token is
@@ -724,9 +606,7 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
   online.
 * The first row of `allbots` is the count row "scanned bot directories" (`count_scanned_dirs`, the number of entries
   `all_bot_dir_entries()` returned): that field is output only here, never in the stop reports or the process wrap-up.
-* `allbots` shows every account without regard for permissions, so it is admin-level information; its own permission
-  requirement is `RequiredPermission::Everyone` (anyone may use it), it is just that an ordinary user usually only
-  looks at their own directory and uses `/show mybots`.
+* `allbots` is public and does not filter accounts by owner. Use `/show mybots` to list only your own accounts.
 
 ### 6.5 `/show admins`
 
@@ -737,16 +617,15 @@ insufficient, lower the memory allowance in `runtime.java_opts`; alternatively r
 
 ## 7. General: `/help`, `/whoami`, `/ping`, `/checkserver`
 
-* Code: `src/handlers/general.rs` and `src/handlers/general/*.rs`
+* Code: `src/operations/queries/mod.rs` and `src/operations/queries/*.rs`
 * No coupling to the other modules of this project: they do not read bot directories and do not touch `screen`
   sessions, so they can be used and tested on their own.
-* All four commands require `RequiredPermission::Everyone` (anyone may use them), checked once each in `lib.rs`'s
-  `handle_*`.
+* These four queries are public and need no permission check. Other queries such as `/log` still check bot access.
 
 ### 7.1 The command list
 
-* `/help`: `help::help()`, no network request.
-* `/whoami`: `whoami::whoami(caller_id)`, no network request.
+* `/help`: `operations::queries::help()`, no network request.
+* `/whoami`: `operations::queries::whoami(caller_id)`, no network request.
 * `/ping [host] [port]`: `ping::ping(host, port)`, which does make a network request (a Minecraft server handshake).
 * `/checkserver`: `checkserver::checkserver()`, no network request (it reads local resources).
 
@@ -767,7 +646,7 @@ pieces of text use a bare noun, see [architecture-en_us.md](../architecture/arch
 * Its reason to exist is to untie the chicken-and-egg problem: configuring an admin means filling in your own user ID,
   and the usual ways to get it (developer mode, right-click the avatar, copy user ID) are hard to find for people who
   do not know Discord well.
-* It requires `Everyone`, checked once in `lib::handle_whoami`; the text is generated by `general/whoami.rs` and the
+* It has no permission requirement. `operations::queries::whoami` generates the text and the
   command layer does not build its own reply (see the hard convention in
   [section 1](#1-the-rules-of-the-command-layer)).
 
@@ -802,5 +681,5 @@ pieces of text use a bare noun, see [architecture-en_us.md](../architecture/arch
 
 * All documents: [docs index](../../index-en_us.md).
 * Which layer the action enums and the permission check live in: [lib-en_us.md](../lib/lib-en_us.md).
-* The start/stop waits and the two log lines: [utils-en_us.md](../utils/utils-en_us.md) section 4 and section 7.
+* The start/stop waits and the two log lines: [runtime-en_us.md](../runtime/runtime-en_us.md) section 4 and section 7.
 * The game-side config attachment: [config-en_us.md](../config/config-en_us.md) section 3.2.

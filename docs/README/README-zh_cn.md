@@ -11,7 +11,7 @@
 * **本项目暂时不支持离线模式的服务器或单人游戏**。
 * **本项目暂时只支持运行在 64 位 Linux 系统下**。
 * 无法使用 Discord？可以考虑 [QQ 版本（已停止功能更新）](https://github.com/voiiku/minecraft-fishingbot-manager-for-qq)。
-* 由于 FishingBot的官方构建版本尚未支持 `/pause` 和 `/unpause` 命令（[已计划于 26.4 加入](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)），本项目暂时无法正确处理暂停钓鱼功能（相关逻辑已经实现），其余功能不受影响。
+* 请使用支持 `/status`、`/pause` 和 `/unpause` 的 FishingBot 构建。上游计划在后续版本加入暂停指令（[issue](https://github.com/MrKinau/FishingBot/issues/291)）。
 
 ## 1. 项目概要
 
@@ -55,10 +55,11 @@
 * `/pause`、`/unpause`：暂停钓鱼但不下线、恢复钓鱼（取决于 `FishingBot.jar` 是否支持，不影响其他功能）。
 * `/command <机器人名> <指令>`：向机器人所在的游戏服务器发送指令。
 
-`/show status` 的暂停状态保存在管理程序内存中；暂停和恢复指令仅在确认回显后更新该状态。
-初始显示的“钓鱼中”不是对 JAR 的实时查询。
-FishingBot 在同一会话内断线重连时，记录不会重置，程序也不会重新发送 `/pause`；JAR 的实际状态可能与显示不一致。
-管理程序成功停止会话或启动新会话时会清除记录；重启管理程序也会恢复默认显示。
+`/show status` 向每个机器人发送 `/status` 查询并展示全部五个字段，管理程序不保存状态。
+“未暂停”不代表已连接或正在钓鱼；`last_fish` 是上次钓鱼动作的 Unix 毫秒时间戳，不一定是钓获时间。
+状态不可用表示会话异常；查询超时或失败单独报告。暂停和恢复指令确认的是查询时的状态，而非其产生原因。
+
+升级时请从管理程序配置中删除旧的 `[command_echo]` 表和 `[keywords] online`。
 
 仅管理员可用：
 
@@ -84,7 +85,7 @@ FishingBot 在同一会话内断线重连时，记录不会重置，程序也不
 
 ## 6. 参与贡献
 
-欢迎参与贡献。发现问题或有功能建议，请[提交 Issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)。也欢迎提交 Pull Request；对于较大的改动，建议先开 Issue 讨论方案。
+欢迎参与贡献。发现问题或有功能建议，请[提交 Issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues)。也欢迎提交 Pull Request。
 
 **计划未来重构多语言功能。**
 

@@ -66,7 +66,9 @@ mod tests {
             LevelFilter::Info
         );
         assert_eq!(
-            levels.ceiling_for("minecraft_fishingbot_manager_for_discord::utils::bot_status"),
+            levels.ceiling_for(
+                "minecraft_fishingbot_manager_for_discord::runtime::bot_instances::bot_status"
+            ),
             LevelFilter::Info
         );
         assert_eq!(

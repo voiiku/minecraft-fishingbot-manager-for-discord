@@ -10,7 +10,7 @@
 
 * **Offline-mode servers and single-player worlds are not supported yet.**
 * **This project runs only on 64-bit Linux for now.**
-* The official build of FishingBot does not support `/pause` and `/unpause` yet ([plans to add them](https://github.com/MrKinau/FishingBot/issues/291#issuecomment-6206998408)). Single-bot and batch pause commands therefore cannot confirm a pause until a compatible JAR is used.
+* Use a FishingBot build with `/status`, `/pause` and `/unpause`. Upstream plans to add pause commands in a future release ([issue](https://github.com/MrKinau/FishingBot/issues/291)).
 
 ## 1. Project overview
 
@@ -54,10 +54,12 @@ Available to a bot's creator or an administrator:
 * `/pause`, `/unpause`: pause fishing without disconnecting, or resume it (depends on whether `FishingBot.jar` supports it; other features are unaffected).
 * `/command <name> <command>`: send a command to the game server the bot is connected to.
 
-The pause status shown by `/show status` is held in the manager's memory. Pause and resume commands update it only after
-a matching command echo. It defaults to "fishing", which is not a live check of the JAR. A reconnect in the same session
-neither resets the recorded status nor resends `/pause`; the JAR's actual state may therefore differ. The manager clears
-the record when it successfully stops the session or starts a new one. Restarting the manager also clears the record.
+`/show status` queries each bot's `/status` and shows all five fields. "Not paused" does not guarantee that the bot is
+connected or fishing; `last_fish` is the Unix millisecond timestamp of the last fishing action, not necessarily a catch.
+An unavailable response indicates an abnormal session; timeouts and query errors are reported separately. The manager
+does not store state. Pause commands are followed by a query, which confirms the resulting state, not what caused it.
+
+When upgrading, remove the obsolete `[command_echo]` table and `[keywords] online` from the manager configuration.
 
 Available only to administrators:
 
@@ -83,7 +85,7 @@ Third-party licenses are listed in [THIRD-PARTY-NOTICES.html](THIRD-PARTY-NOTICE
 
 ## 6. Contributing
 
-Contributions are welcome. To report a bug or suggest a feature, [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues). Pull requests are welcome too; for larger changes, please open an issue first to discuss the approach.
+Contributions are welcome. To report a bug or suggest a feature, [open an issue](https://github.com/voiiku/minecraft-fishingbot-manager-for-discord/issues). Pull requests are welcome too.
 
 **A multilingual refactor is planned for the future.**
 

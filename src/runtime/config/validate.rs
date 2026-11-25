@@ -1,47 +1,156 @@
 //! 启动配置校验：检查必填字段、取值范围与命令安全相关的字符串。
 //!
-//! [`validate`] 的第一个调用是语言校验：此时还没有文案实现，语言错误固定英文；语言合法后立刻安装，
-//! 其余校验的错误才能按配置语言格式化。
+//! 校验不发布配置；所有配置校验错误使用引导期英文。
 
+use std::fmt::Write;
+use std::path::Path;
 use std::time::Duration;
 
-use crate::text;
+use crate::text::bootstrap::{self, ConfigRequirement};
 
-use super::Config;
+use super::constants::{ANNOUNCE_TYPES, SHELL_UNSAFE};
 use super::schema::{
-    Admins, AntiAfkConfig, CommandEchoConfig, DiscordConfig, FishingBotConfig, I18nConfig,
-    KeywordsConfig, MAX_AUTOCOMPLETE_CHOICES, Paths, PingConfig, RawGameLogsConfig, RuntimeConfig,
-    StartupQueueConfig, TextConfig, TimingConfig,
+    Admins, AntiAfkConfig, DiscordConfig, FishingBotConfig, KeywordsConfig, Paths, PingConfig,
+    RawGameLogsConfig, RuntimeConfig, StartupQueueConfig, TextConfig, TimingConfig,
 };
+use super::{Config, Constants};
 
-/// 会被拼入 shell 命令的取值禁止出现的字符（`runtime.java_opts`、`token_file`、`bot_logs_dir`）。
-const SHELL_UNSAFE: &[char] = &['\'', '"', '`', '$', ';', '&', '|', '<', '>', '\n', '\r'];
-
-/// 校验语言名并在合法后安装语言；失败信息固定英文，不使用 `text::get()`。
-fn validate_i18n(i18n: &I18nConfig) -> Result<(), String> {
-    let language = text::Language::from_name(&i18n.language)
-        .map_err(|message| text::bootstrap::language_invalid(&message))?;
-    text::install(language);
-
-    Ok(())
-}
-
-/// 校验整份配置：语言第一，安装后再按表校验其余字段。
+/// 校验整份配置。
 pub(super) fn validate(config: &Config) -> Result<(), String> {
-    validate_i18n(&config.i18n)?;
+    validate_constants(&config.constants)?;
     validate_discord(&config.discord)?;
     validate_paths(&config.paths)?;
     validate_fishingbot(&config.fishingbot)?;
     validate_admins(&config.admins)?;
     validate_keywords(&config.keywords)?;
-    validate_command_echo(&config.command_echo)?;
-    validate_runtime(&config.runtime)?;
+    validate_runtime(&config.runtime, config.constants.max_autocomplete_choices)?;
     validate_anti_afk(&config.anti_afk, &config.runtime.screen_prefix)?;
     validate_startup_queue(&config.startup_queue)?;
     validate_timing(&config.timing)?;
     validate_raw_game_logs(&config.raw_game_logs)?;
     validate_ping(&config.ping)?;
-    validate_text(&config.text)
+    validate_text(&config.text)?;
+    Ok(())
+}
+
+fn validate_constants(constants: &Constants) -> Result<(), String> {
+    for (field, is_zero) in [
+        ("max_attachment_bytes", constants.max_attachment_bytes == 0),
+        (
+            "max_autocomplete_choices",
+            constants.max_autocomplete_choices == 0,
+        ),
+        (
+            "max_command_description_utf16",
+            constants.max_command_description_utf16 == 0,
+        ),
+        ("default_log_lines", constants.default_log_lines == 0),
+        (
+            "bot_name_modal_max_length",
+            constants.bot_name_modal_max_length == 0,
+        ),
+        (
+            "token_modal_max_length",
+            constants.token_modal_max_length == 0,
+        ),
+        ("login_code_timeout", constants.login_code_timeout.is_zero()),
+        (
+            "login_authorization_timeout_minutes",
+            constants.login_authorization_timeout_minutes == 0,
+        ),
+        (
+            "login_poll_interval",
+            constants.login_poll_interval.is_zero(),
+        ),
+        ("login_log_tail_lines", constants.login_log_tail_lines == 0),
+        ("status_timeout", constants.status_timeout.is_zero()),
+        (
+            "status_poll_interval",
+            constants.status_poll_interval.is_zero(),
+        ),
+        ("status_scan_lines", constants.status_scan_lines == 0),
+        (
+            "startup_result_timeout_factor",
+            constants.startup_result_timeout_factor == 0,
+        ),
+        (
+            "starter_restart_backoff",
+            constants.starter_restart_backoff.is_zero(),
+        ),
+        (
+            "shutdown_report_timeout",
+            constants.shutdown_report_timeout.is_zero(),
+        ),
+        (
+            "cpu_sample_interval",
+            constants.cpu_sample_interval.is_zero(),
+        ),
+    ] {
+        if is_zero {
+            return Err(invalid(
+                format!("constants.{field}"),
+                ConfigRequirement::GreaterThanZero,
+            ));
+        }
+    }
+    require_non_empty(
+        "constants.login_device_code_marker",
+        constants.login_device_code_marker,
+    )?;
+    require_non_empty(
+        "constants.login_auth_failure_marker",
+        constants.login_auth_failure_marker,
+    )?;
+    require_plain_name(
+        "constants.token_backup_suffix",
+        constants.token_backup_suffix,
+    )?;
+    require_plain_name(
+        "constants.process_log_dir_name",
+        constants.process_log_dir_name,
+    )?;
+
+    for (field, format) in [
+        (
+            "constants.process_log_timestamp_format",
+            constants.process_log_timestamp_format,
+        ),
+        (
+            "constants.display_timestamp_format",
+            constants.display_timestamp_format,
+        ),
+    ] {
+        let mut timestamp = String::new();
+        if write!(&mut timestamp, "{}", chrono::Local::now().format(format)).is_err() {
+            return Err(invalid_value(field, format, ConfigRequirement::TimeFormat));
+        }
+    }
+
+    let format = constants.log_filename_time_format;
+    let invalid_format = || {
+        invalid_value(
+            "constants.log_filename_time_format",
+            format,
+            ConfigRequirement::LogFilenameFormat,
+        )
+    };
+    let mut name = String::new();
+    write!(&mut name, "{}", chrono::Local::now().format(format)).map_err(|_| invalid_format())?;
+    if name.is_empty()
+        || Path::new(&name)
+            .file_name()
+            .is_none_or(|part| part != name.as_str())
+    {
+        return Err(invalid_format());
+    }
+    let timestamp =
+        chrono::NaiveDateTime::parse_from_str(&name, format).map_err(|_| invalid_format())?;
+    let mut roundtrip = String::new();
+    write!(&mut roundtrip, "{}", timestamp.format(format)).map_err(|_| invalid_format())?;
+    if roundtrip != name {
+        return Err(invalid_format());
+    }
+    Ok(())
 }
 
 fn validate_anti_afk(config: &AntiAfkConfig, screen_prefix: &str) -> Result<(), String> {
@@ -49,49 +158,42 @@ fn validate_anti_afk(config: &AntiAfkConfig, screen_prefix: &str) -> Result<(), 
     if config.execution_interval_seconds == 0 {
         return Err(invalid(
             "anti_afk.execution_interval",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
     if Duration::try_from_secs_f64(config.input_delay_seconds).is_err() {
         return Err(invalid(
             "anti_afk.input_delay",
-            text::ConfigRequirement::NonNegativeDuration,
+            ConfigRequirement::NonNegativeDuration,
         ));
     }
     config.input_pulse_config(screen_prefix).map_err(|error| {
         invalid(
             "anti_afk.command",
-            text::ConfigRequirement::InputPulseCommand { reason: &error },
+            ConfigRequirement::InputPulseCommand { reason: &error },
         )
     })?;
     Ok(())
 }
 
 /// 生成字段级错误信息。
-fn invalid(field: impl std::fmt::Display, requirement: text::ConfigRequirement<'_>) -> String {
-    text::get().log_text(text::LogText::ConfigFieldInvalid {
-        field: &field.to_string(),
-        requirement,
-    })
+fn invalid(field: impl std::fmt::Display, requirement: ConfigRequirement<'_>) -> String {
+    bootstrap::config_field_invalid(field, requirement)
 }
 
 /// 生成包含字段值的错误信息。
 fn invalid_value(
     field: impl std::fmt::Display,
     value: impl std::fmt::Display,
-    requirement: text::ConfigRequirement<'_>,
+    requirement: ConfigRequirement<'_>,
 ) -> String {
-    text::get().log_text(text::LogText::ConfigFieldValueInvalid {
-        field: &field.to_string(),
-        value: &value.to_string(),
-        requirement,
-    })
+    bootstrap::config_field_value_invalid(field, value, requirement)
 }
 
 /// 检查必填字符串（值已在 `parse.rs` 里去过两头的空白，这里只判空）。
 fn require_non_empty(field: impl std::fmt::Display, value: &str) -> Result<(), String> {
     if value.is_empty() {
-        return Err(invalid(field, text::ConfigRequirement::NonEmpty));
+        return Err(invalid(field, ConfigRequirement::NonEmpty));
     }
 
     Ok(())
@@ -104,7 +206,7 @@ fn require_plain_name(field: impl std::fmt::Display, value: &str) -> Result<(), 
     let is_dot_name = matches!(value, "." | "..");
 
     if has_whitespace || has_separator || is_dot_name {
-        return Err(invalid(field, text::ConfigRequirement::PlainName));
+        return Err(invalid(field, ConfigRequirement::PlainName));
     }
 
     // 空字符串交由非空检查处理。
@@ -117,14 +219,11 @@ fn validate_ping(ping: &PingConfig) -> Result<(), String> {
     if ping.default_ping_port == 0 {
         return Err(invalid(
             "ping.default_ping_port",
-            text::ConfigRequirement::PortRange,
+            ConfigRequirement::PortRange,
         ));
     }
     if ping.timeout_ms == 0 {
-        return Err(invalid(
-            "ping.timeout",
-            text::ConfigRequirement::GreaterThanZero,
-        ));
+        return Err(invalid("ping.timeout", ConfigRequirement::GreaterThanZero));
     }
 
     Ok(())
@@ -135,7 +234,7 @@ fn validate_discord(discord: &DiscordConfig) -> Result<(), String> {
     if discord.token.is_empty() {
         return Err(invalid(
             "discord.token",
-            text::ConfigRequirement::DiscordTokenEmpty,
+            ConfigRequirement::DiscordTokenEmpty,
         ));
     }
 
@@ -148,13 +247,13 @@ fn validate_admins(admins: &Admins) -> Result<(), String> {
         if user_id.parse::<u64>().is_err() {
             return Err(invalid(
                 "admins",
-                text::ConfigRequirement::AdminsKeyUserId { user_id },
+                ConfigRequirement::AdminsKeyUserId { user_id },
             ));
         }
         if name.is_empty() {
             return Err(invalid(
                 "admins",
-                text::ConfigRequirement::AdminsNameEmpty { user_id },
+                ConfigRequirement::AdminsNameEmpty { user_id },
             ));
         }
     }
@@ -164,19 +263,12 @@ fn validate_admins(admins: &Admins) -> Result<(), String> {
 
 /// 检查日志关键词；过滤正则不能包含单引号。
 fn validate_keywords(keywords: &KeywordsConfig) -> Result<(), String> {
-    let fields = [
-        ("online", &keywords.online),
-        ("filter_regex", &keywords.filter_regex),
-    ];
-
-    for (field, value) in fields {
-        require_non_empty(format!("keywords.{field}"), value)?;
-    }
+    require_non_empty("keywords.filter_regex", &keywords.filter_regex)?;
 
     if keywords.filter_regex.contains('\'') {
         return Err(invalid(
             "keywords.filter_regex",
-            text::ConfigRequirement::NoSingleQuote,
+            ConfigRequirement::NoSingleQuote,
         ));
     }
 
@@ -189,7 +281,7 @@ fn validate_paths(paths: &Paths) -> Result<(), String> {
         return Err(invalid_value(
             "paths.base_dir",
             paths.base_dir.display(),
-            text::ConfigRequirement::BaseDirIsDir,
+            ConfigRequirement::BaseDirIsDir,
         ));
     }
 
@@ -197,7 +289,7 @@ fn validate_paths(paths: &Paths) -> Result<(), String> {
         return Err(invalid_value(
             "paths.jar",
             paths.jar.display(),
-            text::ConfigRequirement::JarIsFile,
+            ConfigRequirement::JarIsFile,
         ));
     }
 
@@ -209,7 +301,7 @@ fn validate_paths(paths: &Paths) -> Result<(), String> {
         if path.to_string_lossy().contains('\'') {
             return Err(invalid(
                 format!("paths.{field}"),
-                text::ConfigRequirement::NoSingleQuote,
+                ConfigRequirement::NoSingleQuote,
             ));
         }
     }
@@ -218,12 +310,12 @@ fn validate_paths(paths: &Paths) -> Result<(), String> {
 }
 
 /// 检查 JVM 参数、目录名与日志限制。
-fn validate_runtime(runtime: &RuntimeConfig) -> Result<(), String> {
+fn validate_runtime(
+    runtime: &RuntimeConfig,
+    max_autocomplete_choices: usize,
+) -> Result<(), String> {
     if runtime.java_opts.contains(SHELL_UNSAFE) {
-        return Err(invalid(
-            "runtime.java_opts",
-            text::ConfigRequirement::ShellSafe,
-        ));
+        return Err(invalid("runtime.java_opts", ConfigRequirement::ShellSafe));
     }
 
     for (field, value) in [
@@ -242,7 +334,7 @@ fn validate_runtime(runtime: &RuntimeConfig) -> Result<(), String> {
         if value.contains(SHELL_UNSAFE) {
             return Err(invalid(
                 format!("runtime.{field}"),
-                text::ConfigRequirement::ShellSafe,
+                ConfigRequirement::ShellSafe,
             ));
         }
     }
@@ -250,22 +342,24 @@ fn validate_runtime(runtime: &RuntimeConfig) -> Result<(), String> {
     if runtime.max_reply_log_lines == 0 {
         return Err(invalid(
             "runtime.max_reply_log_lines",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
     if runtime.max_reply_chars == 0 {
         return Err(invalid(
             "runtime.max_reply_chars",
-            text::ConfigRequirement::ReplyCharsPositive,
+            ConfigRequirement::ReplyCharsPositive,
         ));
     }
     if runtime.max_autocomplete_choices == 0
-        || runtime.max_autocomplete_choices > MAX_AUTOCOMPLETE_CHOICES
+        || runtime.max_autocomplete_choices > max_autocomplete_choices
     {
         return Err(invalid_value(
             "runtime.max_autocomplete_choices",
             runtime.max_autocomplete_choices,
-            text::ConfigRequirement::AutocompleteChoicesInRange,
+            ConfigRequirement::AutocompleteChoicesInRange {
+                max: max_autocomplete_choices,
+            },
         ));
     }
 
@@ -277,25 +371,25 @@ fn validate_startup_queue(startup_queue: &StartupQueueConfig) -> Result<(), Stri
     if startup_queue.max_batch_size == 0 {
         return Err(invalid(
             "startup_queue.max_batch_size",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
     if startup_queue.bot_login_interval_ms == 0 {
         return Err(invalid(
             "startup_queue.bot_login_interval",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
     if startup_queue.batch_login_interval_ms == 0 {
         return Err(invalid(
             "startup_queue.batch_login_interval",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
     if startup_queue.max_pending_requests == 0 {
         return Err(invalid(
             "startup_queue.max_pending_requests",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
 
@@ -307,7 +401,7 @@ fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
     if timing.check_grace_ms == 0 {
         return Err(invalid(
             "timing.check_grace",
-            text::ConfigRequirement::GreaterThanZero,
+            ConfigRequirement::GreaterThanZero,
         ));
     }
 
@@ -315,7 +409,7 @@ fn validate_timing(timing: &TimingConfig) -> Result<(), String> {
     if timing.watchdog_window_ms == 0 {
         return Err(invalid(
             "timing.watchdog_window",
-            text::ConfigRequirement::WatchdogTimingPositive,
+            ConfigRequirement::WatchdogTimingPositive,
         ));
     }
 
@@ -329,34 +423,6 @@ fn validate_raw_game_logs(raw_game_logs: &RawGameLogsConfig) -> Result<(), Strin
     require_non_empty("raw_game_logs.discard_path", &raw_game_logs.discard_path)
 }
 
-/// 检查暂停/恢复回显及其等待参数。
-fn validate_command_echo(command_echo: &CommandEchoConfig) -> Result<(), String> {
-    require_non_empty("command_echo.pause_echo", &command_echo.pause_echo)?;
-    require_non_empty("command_echo.unpause_echo", &command_echo.unpause_echo)?;
-    if command_echo.pause_echo.contains(&command_echo.unpause_echo)
-        || command_echo.unpause_echo.contains(&command_echo.pause_echo)
-    {
-        return Err(invalid(
-            "command_echo.unpause_echo",
-            text::ConfigRequirement::EchoTextsOverlap,
-        ));
-    }
-    if command_echo.wait_ms == 0 {
-        return Err(invalid(
-            "command_echo.wait",
-            text::ConfigRequirement::GreaterThanZero,
-        ));
-    }
-    if command_echo.scan_lines == 0 {
-        return Err(invalid(
-            "command_echo.scan_lines",
-            text::ConfigRequirement::GreaterThanZero,
-        ));
-    }
-
-    Ok(())
-}
-
 /// 帮助文本。
 fn validate_text(text: &TextConfig) -> Result<(), String> {
     require_non_empty("text.help", &text.help)
@@ -368,7 +434,7 @@ fn validate_fishingbot(fishingbot: &FishingBotConfig) -> Result<(), String> {
     if fishingbot.server_port == 0 {
         return Err(invalid(
             "fishingbot.server_port",
-            text::ConfigRequirement::PortRange,
+            ConfigRequirement::PortRange,
         ));
     }
 
@@ -377,7 +443,7 @@ fn validate_fishingbot(fishingbot: &FishingBotConfig) -> Result<(), String> {
         return Err(invalid_value(
             "fishingbot.default_protocol",
             protocol,
-            text::ConfigRequirement::McVersionOrAutomatic,
+            ConfigRequirement::McVersionOrAutomatic,
         ));
     }
 
@@ -399,22 +465,13 @@ fn validate_fishingbot(fishingbot: &FishingBotConfig) -> Result<(), String> {
             return Err(invalid_value(
                 field,
                 value,
-                text::ConfigRequirement::OneOf(ANNOUNCE_TYPES),
+                ConfigRequirement::OneOf(ANNOUNCE_TYPES),
             ));
         }
     }
 
     Ok(())
 }
-
-/// FishingBot 的 `announce-type-chat` / `announce-type-console` 合法取值（上游 `AnnounceType` 枚举）。
-const ANNOUNCE_TYPES: &[&str] = &[
-    "ALL",
-    "ALL_BUT_FISH",
-    "ONLY_ENCHANTED",
-    "ONLY_BOOKS",
-    "NONE",
-];
 
 /// 检查版本号格式（如 `1.20`、`1.20.4`），不验证 JAR 是否支持该版本。
 fn is_mc_version_string(value: &str) -> bool {
@@ -484,11 +541,112 @@ mod tests {
         (dir, text)
     }
 
-    /// 执行解析与校验流程（包含语言校验与安装）。
+    /// 执行解析与校验流程。
     fn load_text(text: &str) -> Result<Config, String> {
         let config = Config::from_toml_text(text)?;
         validate(&config)?;
         Ok(config)
+    }
+
+    #[test]
+    fn validation_does_not_publish_config() {
+        const CHILD: &str = "FISHBOT_VALIDATE_LANGUAGE_ORDER_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(crate::CONFIG.get().is_none());
+            let (dir, text) = staged_example("language-order");
+            let text = set_field(&text, "language", "\"CHINESE_SIMPLIFIED\"");
+            let config = Config::from_toml_text(&text).unwrap();
+            assert_eq!(
+                config.i18n.language,
+                crate::text::Language::ChineseSimplified
+            );
+            validate(&config).unwrap();
+            assert!(crate::CONFIG.get().is_none());
+
+            let invalid_text = set_field(&text, "screen_prefix", "\"invalid prefix\"");
+            let invalid_config = Config::from_toml_text(&invalid_text).unwrap();
+            assert!(validate(&invalid_config).is_err());
+            assert!(crate::CONFIG.get().is_none());
+            std::fs::remove_dir_all(dir).unwrap();
+            return;
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "runtime::config::validate::tests::validation_does_not_publish_config",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated language validation");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn autocomplete_limit_uses_candidate_configuration_before_publication() {
+        let mut candidate = Config::from_toml_text(EXAMPLE).unwrap();
+        candidate.constants.max_autocomplete_choices = 3;
+        candidate.runtime.max_autocomplete_choices = 3;
+        assert!(
+            validate_runtime(
+                &candidate.runtime,
+                candidate.constants.max_autocomplete_choices
+            )
+            .is_ok()
+        );
+        candidate.runtime.max_autocomplete_choices = 4;
+        let error = validate_runtime(
+            &candidate.runtime,
+            candidate.constants.max_autocomplete_choices,
+        )
+        .unwrap_err();
+        assert!(error.contains("between 1 and 3"), "{error}");
+    }
+
+    #[test]
+    fn log_filename_format_must_round_trip_as_one_complete_local_datetime() {
+        let mut candidate = Config::from_toml_text(EXAMPLE).unwrap();
+        for format in ["%Y-%m-%d", "%Y/%m/%d-%H-%M-%S", "%Y-%m-%d-%H-%M-%S%z", "%Q"] {
+            candidate.constants.log_filename_time_format = format;
+            assert!(
+                validate_constants(&candidate.constants).is_err(),
+                "{format}"
+            );
+        }
+
+        candidate.constants.log_filename_time_format = "%d-%m-%Y_%H-%M-%S";
+        assert!(validate_constants(&candidate.constants).is_ok());
+    }
+
+    #[test]
+    fn invalid_builtin_limits_and_log_formats_are_reported() {
+        let mut candidate = Config::from_toml_text(EXAMPLE).unwrap();
+        candidate.constants.login_poll_interval = Duration::ZERO;
+        assert!(
+            validate_constants(&candidate.constants)
+                .unwrap_err()
+                .contains("constants.login_poll_interval")
+        );
+        candidate.constants.login_poll_interval = Duration::from_millis(1);
+        candidate.constants.process_log_timestamp_format = "%Q";
+        assert!(
+            validate_constants(&candidate.constants)
+                .unwrap_err()
+                .contains("constants.process_log_timestamp_format")
+        );
+        candidate.constants.process_log_timestamp_format = "%Y";
+        candidate.constants.display_timestamp_format = "%Q";
+        assert!(
+            validate_constants(&candidate.constants)
+                .unwrap_err()
+                .contains("constants.display_timestamp_format")
+        );
     }
 
     /// 路径满足条件时，示例配置应通过校验。
@@ -539,6 +697,20 @@ mod tests {
         assert_eq!(pulse.execution_interval_seconds, 180);
         assert_eq!(pulse.input_delay_seconds, 0.05);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_errors_are_english_even_when_chinese_is_configured() {
+        let (dir, text) = staged_example("english-config-errors");
+        let text = set_field(&text, "language", "\"CHINESE_SIMPLIFIED\"");
+        let text = set_field(&text, "execution_interval", "0");
+
+        let error = load_text(&text).expect_err("zero interval must fail");
+        assert_eq!(
+            error,
+            "config item anti_afk.execution_interval must be greater than 0"
+        );
+        std::fs::remove_dir_all(dir).expect("remove test directory");
     }
 
     #[test]
@@ -602,24 +774,6 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&dir);
         }
-    }
-
-    #[test]
-    fn overlapping_command_echoes_are_reported() {
-        let (dir, text) = staged_example("echo-overlap");
-        let text = set_field(&text, "unpause_echo", "\"Fishing paused\"");
-
-        let err = load_text(&text).expect_err("两条回显相同应当报错");
-
-        assert!(
-            err.contains("command_echo.unpause_echo"),
-            "报错应指出字段: {err}"
-        );
-        assert!(
-            err.contains("must not be equal to or overlap"),
-            "报错应说明原因: {err}"
-        );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

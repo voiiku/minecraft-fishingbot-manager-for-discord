@@ -1,9 +1,10 @@
 # watchdog：网关看门狗
 [English](watchdog-en_us.md) | **简体中文**
 
-* 代码：`src/runtime/watchdog.rs`（`Watchdog` 本体：时序字段、握手/探活记录、掉线记录，以及进程级单例 `WATCHDOG`）
-  与其子模块 `gateway`（握手与探活判定、探活任务）、`lifecycle`（掉线记录、重连信号、等待一次尝试结束、
-  进程收尾）；`src/main.rs` 负责接线与重连循环（用 `WATCHDOG.get_or_init()` 获取单例，事件回调只接收函数
+* 代码：`src/runtime/watchdog/mod.rs`（`Watchdog` 本体：时序字段、握手/探活记录、掉线记录），
+  `src/lib.rs` 声明保存单例的 `WATCHDOG`，
+  以及看门狗子模块 `gateway`（握手与探活判定、探活任务）、`lifecycle`（掉线记录、重连信号、等待一次尝试结束、
+  进程收尾）；`src/main.rs` 负责接线与重连循环（用 `Watchdog::get_or_init()` 获取单例，事件回调只接收函数
   指针，也走同一入口）。
 * 目的：判定本进程是否已与 Discord 失去联系。判定失败时把原因交给进程入口（`request_reconnect()`），由入口
   停止全部机器人并重建连接；进程不退出，等待一个判定窗口后在同一进程内新建 `Client` 重连（见第 4 节）。
@@ -21,6 +22,7 @@ Discord 不可达时，我们既无法控制机器人，机器人却仍占用游
 * 握手：本次连接尝试开始后，必须在 `first_handshake_timeout` 内收到一次 Discord 的 `READY` 或 `RESUMED`
   （`main.rs` 的事件处理器调用 `watchdog.record_handshake_success()`）。未满足时请求重建连接，原因为
   `NeverReady`。
+  该方法仅在进程内首次握手成功时返回 `true`；重连不会重置这一记录。
 * 可达性：每隔 `probe_interval` 通过 REST 调用 `Http::get_current_user()` 获取自身信息。成功时调用
   `watchdog.clear_probe_failures()`，失败时调用 `watchdog.record_probe_failure_start()`；从首次失败起持续满
   `window` 后请求重建连接，原因为 `Unreachable`。
@@ -50,16 +52,14 @@ serenity 自带的心跳与 ACK 机制会发现并重连（协议保证），我
 
 ## 4. 掉线后的处理：停止机器人、等待窗口、重建连接
 
-判定在 `gateway.rs`；`lifecycle.rs` 提供收尾与等待的辅助函数；重建连接的重连循环在 `src/main.rs`。职责划分是：
-判定侧只判定并唤醒，所有可见动作（停止、记录、写日志、退出）都在入口侧执行。入口侧使用
-`wait_for_attempt()`（等待本轮尝试结束并完成掉线收尾）、`wait_before_reconnect()`（等待一个判定窗口）与
-`exit_on_shutdown_signal()`（收到退出信号后就地生成与 `/stopall` 同口径的收尾明细，写入程序日志并发送到各
-服务器的通报频道，标题为“收到退出信号，收尾结果”，随后以退出码 0 退出）。
+`gateway.rs` 判定连接状态并唤醒等待方；`lifecycle.rs` 等待连接和重连窗口，`src/main.rs` 重建客户端。
+在 `wait_for_attempt()` 或 `wait_before_reconnect()` 收到退出信号时，看门狗将最近的 Discord 上下文（可能为空）
+交给 `runtime::shutdown::exit_on_shutdown_signal`。进程退出由该函数负责，不再进入重连循环。
 
 1. 判定侧：判定掉线后调用 `request_reconnect(reason)`，将原因保存在看门狗中并唤醒进程入口（`tokio::Notify`）；
    它本身不操作机器人。
 2. 入口侧收尾（`wait_for_attempt()` 的“看门狗判定掉线”分支）：取出判定侧交来的原因，调用私有的
-   `stop_all_bots_on_disconnect(reason)` 停止全部机器人（`shutdown_all_bots()`，与 `/stopall` 同一套流程），
+   `stop_all_bots_on_disconnect(reason)` 停止全部机器人（`runtime::bot_instances::stop::shutdown_all_bots()`，与 `/stopall` 同一套流程），
    记录 WARN、掉线原因与掉线时刻。若取不到原因，说明这是迟到的唤醒，本轮已经完成收尾，不再操作机器人。
    必须停止机器人的原因是：Discord 不可达时无人能够指挥它们，而 FishingBot 的自动重连会持续占用游戏账号，
    与真人玩家争抢登录名额。掉线期间不会自动恢复；重连成功后，需要由人到 Discord 中发送 `/startall` 或
@@ -80,10 +80,10 @@ serenity 自带的心跳与 ACK 机制会发现并重连（协议保证），我
   必须退出，否则两个任务会同时探活、同时记录失败并一起触发掉线。使用标志位而非通知，是因为标志位表示状态，
   不会在无人等待时丢失；`notify_waiters()` 这类事件在没有等待者时会丢失。
 
-只有重试无法解决的错误才退出进程（`exit_on_permanent_failure`，退出码 1；原因按 `ERROR` 记录，便于与网络抖动
+只有重试无法解决的错误才退出进程（`runtime::shutdown::exit_on_permanent_failure`，退出码 1；错误日志可用时原因按 `ERROR` 记录，否则输出到终端，便于与网络抖动
 这类可重试错误（`WARN`）区分）：Token 无效、机器人未被邀请进入服务器（`50001 Missing Access`）、装配被拒等。
 这些都属于配置错误，重试再多次结果也相同。退出码 1 是本项目主动失败的专用码（配置加载失败、校验失败同样以 1
-退出 `main`），因此单元文件建议配置 `RestartPreventExitStatus=1`（见
+退出；配置未加载时只向终端报错、不尝试按配置停止机器人），因此单元文件建议配置 `RestartPreventExitStatus=1`（见
 [部署教程第 12 节](../../tutorial/tutorial-zh_cn.md#12-配置-systemd-服务可选推荐)）：这类错误退出一次后即停止，
 进入 `failed` 状态等待人工处理。崩溃使用其他退出码（panic 101、被 OOM 或 kill 137 等），仍由
 `Restart=on-failure` 重新拉起。
@@ -98,7 +98,7 @@ serenity 自带的心跳与 ACK 机制会发现并重连（协议保证），我
 
 ### 收到退出信号时的收尾报告
 
-`exit_on_shutdown_signal()` 就地生成的明细与 `/stopall` 同口径：先写入程序日志，再按相同落点规则（系统频道，
+`runtime::shutdown::exit_on_shutdown_signal` 生成的明细与 `/stopall` 同口径：先写入程序日志，再按相同落点规则（系统频道，
 不存在则使用第一个文字频道）发送到各服务器（`ShutdownReportNotified`：发送到几个服务器、失败几处；本次连接
 未成功握手时只写日志，记 `ShutdownReportNoContext`）。掉线与永久错误的即时收尾不会向频道发送消息：此时连接
 已经不可用，发送也无法成功。

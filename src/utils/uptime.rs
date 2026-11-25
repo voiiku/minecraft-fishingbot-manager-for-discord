@@ -1,4 +1,4 @@
-//! 读取 Linux 进程运行时长，并格式化为天、时、分。
+//! 读取 Linux 进程运行时长，并将时长格式化为天、时、分。
 
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,7 +33,7 @@ pub fn format_uptime(total_secs: u64) -> String {
     let days = total_secs / 86_400;
     let hours = (total_secs % 86_400) / 3_600;
     let minutes = (total_secs % 3_600) / 60;
-    format!("{days}天-{hours}时-{minutes}分")
+    format!("{days}d-{hours}h-{minutes}m")
 }
 
 #[cfg(test)]

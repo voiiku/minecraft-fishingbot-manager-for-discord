@@ -1,27 +1,52 @@
-//! 库入口：导出指令路由、运行时组件与公共工具。
-
-mod handlers;
-mod models;
-mod runtime;
+pub mod discord_commands;
+pub mod operations;
+pub mod runtime;
 pub mod text;
 pub mod utils;
 
 #[cfg(test)]
+#[path = "../tests/common/unit_support.rs"]
 mod test_support;
 
-/// 兼容旧名称；仅检查管理员权限，不执行指令同步。
-pub use handlers::check_sync_commands_permission as handle_sync_commands;
-pub use handlers::{
-    AllBotsControlAction, AntiAfkAction, BotControlAction, BotLogView, BotLoginPrompt,
-    BotManageAction, FishingbotConfigView, ShowAction, check_sync_commands_permission,
-    handle_all_bots_control, handle_anti_afk, handle_bot_control, handle_bot_log, handle_bot_login,
-    handle_bot_login_await, handle_bot_manage, handle_checkserver, handle_fishingbot_config,
-    handle_help, handle_ping, handle_show, handle_startall_notice, handle_whoami,
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+pub use operations::{
+    accounts::BotLoginPrompt,
+    queries::{BotLogView, FishingbotConfigView},
 };
-pub use runtime::config;
-pub use runtime::{WATCHDOG, Watchdog, WatchdogSlot};
-pub use utils::{
-    BotDirEntry, ProcessLog, RequiredPermission, StartupQueue, all_bot_dir_entries,
-    bot_dir_entries_of_owner, has_permission, regenerate_fishingbot_config,
-    split_bot_entries_by_is_running,
+pub use runtime::{
+    ProcessLog, Watchdog,
+    bot_instances::{
+        bot_dirs::{BotDirEntry, all_bot_dir_entries, bot_dir_entries_of_owner},
+        bot_sessions::split_bot_entries_by_is_running,
+        bot_status::BotStatus,
+        fishingbot_config::regenerate_fishingbot_config,
+    },
+    bot_startup::StartupQueue,
+    config,
 };
+
+// 进程级共享状态；初始化与访问规则由所属模块负责。
+pub(crate) static CONFIG: OnceLock<config::Config> = OnceLock::new();
+pub(crate) static STARTUP_COMPLETE: AtomicBool = AtomicBool::new(false);
+pub(crate) static PROCESS_LOGGER: OnceLock<ProcessLog> = OnceLock::new();
+pub(crate) static STARTUP_QUEUE: OnceLock<StartupQueue> = OnceLock::new();
+pub(crate) static WATCHDOG: OnceLock<Watchdog> = OnceLock::new();
+pub(crate) static ANTI_AFK: Mutex<Option<input_pulse::InputPulse>> = Mutex::new(None);
+pub(crate) static SCREEN_COMMAND_LOCKS: OnceLock<Box<[Mutex<()>]>> = OnceLock::new();
+pub(crate) static COMMAND_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 使用启动期英文或首次框架初始化后配置的语言。
+pub fn bootstrap_error_text() -> &'static dyn text::Text {
+    if STARTUP_COMPLETE.load(Ordering::Acquire) {
+        config::Config::get().text()
+    } else {
+        text::Language::English.implementation()
+    }
+}
+
+/// 首次框架初始化成功后启用配置语言的错误文案。
+pub fn complete_startup() {
+    STARTUP_COMPLETE.store(true, Ordering::Release);
+}

@@ -1,11 +1,12 @@
 //! `/token`：通过私密弹窗更新 refreshToken。
 
+use crate::operations::accounts;
+use crate::text::report::IntoReplyText;
 use poise::Modal;
 use poise::serenity_prelude as serenity;
 
 use super::{ApplicationContext, Error};
-use minecraft_fishingbot_manager_for_discord::BotManageAction;
-use minecraft_fishingbot_manager_for_discord::text;
+use crate::config;
 
 /// Token 弹窗表单。
 #[derive(Debug)]
@@ -20,13 +21,9 @@ struct TokenModal {
 const BOT_NAME_INPUT_ID: &str = "bot_name";
 const TOKEN_INPUT_ID: &str = "token";
 
-/// 输入长度上限。
-const BOT_NAME_MAX_LENGTH: u16 = 64;
-const TOKEN_MAX_LENGTH: u16 = 4000;
-
 impl poise::Modal for TokenModal {
     fn create(_defaults: Option<Self>, custom_id: String) -> serenity::CreateInteractionResponse {
-        let i18n_text = text::get();
+        let i18n_text = crate::config::Config::get().text();
 
         let bot_name_input = serenity::CreateInputText::new(
             serenity::InputTextStyle::Short,
@@ -35,7 +32,7 @@ impl poise::Modal for TokenModal {
         )
         .placeholder(i18n_text.token_modal_bot_name_placeholder())
         .required(true)
-        .max_length(BOT_NAME_MAX_LENGTH);
+        .max_length(config::Config::get().constants.bot_name_modal_max_length);
 
         let token_input = serenity::CreateInputText::new(
             serenity::InputTextStyle::Paragraph,
@@ -44,7 +41,7 @@ impl poise::Modal for TokenModal {
         )
         .placeholder(i18n_text.token_modal_token_placeholder())
         .required(true)
-        .max_length(TOKEN_MAX_LENGTH);
+        .max_length(config::Config::get().constants.token_modal_max_length);
 
         serenity::CreateInteractionResponse::Modal(
             serenity::CreateModal::new(custom_id, i18n_text.token_modal_title()).components(vec![
@@ -73,9 +70,11 @@ pub(crate) async fn token(ctx: ApplicationContext<'_>) -> Result<(), Error> {
 
     let caller_id = ctx.author().id.get();
 
-    let reply =
-        super::dispatch_bot_manage(BotManageAction::Token(form.token), form.bot_name, caller_id)
-            .await?;
+    let reply = tokio::task::spawn_blocking(move || {
+        accounts::update_bot_token(&form.bot_name, form.token, caller_id)
+    })
+    .await?
+    .to_reply_text();
 
     // Modal 提交后以私密 followup 回复并记录内容。
     super::log_reply(caller_id, &ctx.command().qualified_name, &reply);

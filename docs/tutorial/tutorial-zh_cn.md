@@ -62,10 +62,9 @@ java -version     # 确认是否成功（能打印出你安装的版本即可）
 # 建立工作目录
 sudo mkdir -p /fishingbots && sudo chown "$USER" /fishingbots
 cd /fishingbots
-
-# 下载 FishingBot.jar
-curl -LO https://github.com/MrKinau/FishingBot/releases/download/v2.13.15/FishingBot-2.13.15.jar
 ```
+
+从 [FishingBot releases](https://github.com/MrKinau/FishingBot/releases) 获取JAR，放入工作目录；示例配置使用文件名 `FishingBot.jar`，也可将配置中的 `paths.jar` 改为实际文件名。
 
 ## 3. 创建一个 Discord 群聊
 
@@ -182,8 +181,8 @@ nano minecraft-fishingbot-manager-for-discord.conf.toml         # 或者 vim
 
 ```bash
 # 在你自己的电脑上（需要 JAVA 环境）执行
-java -jar /your/path/FishingBot-2.13.15.jar
-# 把 `FishingBot-2.13.15.jar` 与路径替换为实际的名字，或者你也可以尝试直接双击打开。
+java -jar /your/path/FishingBot.jar
+# 将文件名与路径替换为实际值，或者尝试直接双击打开。
 ```
 * 窗口出现后点击运行，由于你是第一次运行，它会请求你网页登录，登录成功后同级目录会生成 `refreshToken` 文件。
 * 打开 `refreshToken` 全选复制它。
@@ -196,24 +195,24 @@ java -jar /your/path/FishingBot-2.13.15.jar
 
 1. 响应回复：`已接受 /start duck 请求；涉及启动的操作将由全局启动队列执行，完成后会返回完整结果`
 2. 结果回复（三种之一）：
-   * 日志已确认进服：`机器人 duck: 已确认进服`
-   * 会话活过宽限期但日志尚未确认：`机器人 duck: 会话已存在但尚未确认状态（稍后用/show status 确认）`
+   * `/status` 确认已进服：`机器人 duck: 已确认进服`
+   * 会话活过宽限期但当前未确认进服：`机器人 duck: 会话已存在，当前未进服（稍后用 /show status 查看）`
    * 会话在宽限期前消失：`机器人 duck: 启动失败`
 
-* `/start` 会等满 `timing.check_grace` 再按会话状态与日志下结论，不再固定回"已发送"。复核结束后进程仍可能发生变化，因此后续状态以 `/show status` 为准。
+* `/start` 等待 `timing.check_grace` 后检查会话并查询 `/status`；状态不可用或查询失败时报告异常，但不停止会话。
 
 确认状态：发送 `/show status`，会得到一个运行中的机器人的状态表：
 
 ```
 反 AFK: 未运行
-机器人 | 服务器状态 | 暂停状态 | 运行时长
-你的机器人名 | 已连接 | 钓鱼中 | 3 分钟
+机器人 | 进服状态 | 暂停状态 | 无可用鱼竿 | 存在鱼漂 | 上次钓鱼动作（Unix 毫秒） | 运行时长
+你的机器人名 | 已进服 | 未暂停 | false | true | 1793615750570 | 3 分钟
 ```
-暂停状态是管理程序根据已确认回显保存的内存记录，初始“钓鱼中”不是实时查询。FishingBot 在同一会话内
-重连游戏服务器时，记录不会重置，实际状态可能与显示不一致；通过管理程序成功重启机器人会清除记录。
+五个状态字段来自 FishingBot 的 `/status`，管理程序不保存状态。`last_fish` 是上次钓鱼动作时间，不一定是钓获时间；
+“未暂停”不保证正在钓鱼。无有效回显时报告查询错误，钓鱼模块不可用时显示会话异常。
 
 **常见错误**
-* 状态一直显示"就绪"或"初始中"：可能是日志关键词不匹配你的游戏服务器，先查看 `keywords.online`；若只有"重连"识别不出，再检查`[i18n] language` 有效
+* 状态查询失败：确认 JAR 支持 `/status`、`[i18n] language` 与 JAR 语言一致，且 `keywords.filter_regex` 未过滤回显。
 
 * 会话出现后自行退出：用`/log`指令查看最新机器人日志，并定位原因（refreshToken 失效、`runtime.java_opts` 与 jar 不匹配、或内存不足被杀）。`/start` 会对每台机器人复核两遍，第二遍仍然存在才算启动成功，因此这种情况会被如实报告。
 

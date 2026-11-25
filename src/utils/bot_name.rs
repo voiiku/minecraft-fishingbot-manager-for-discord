@@ -1,30 +1,31 @@
-//! 机器人名称规范化；名称对应磁盘目录，路径规则见 [`super::bot_dirs`]。
+//! 机器人名称的基础校验与规范化。
 
-use crate::text;
+/// 名称为空或包含不允许的字符。
+#[derive(Debug, PartialEq, Eq)]
+pub enum BotNameError<'a> {
+    Empty,
+    InvalidCharacter { name: &'a str, character: char },
+}
 
-/// 规范化机器人名称。
+/// 规范化机器人名称，不负责生成本地化错误文案。
 pub trait ToCleanBotName {
     /// 去除首尾空白并转为小写；仅允许 ASCII 字母、数字、下划线和连字符。
-    /// 名称仅用于标识目录，游戏角色由 Token 决定。
-    fn to_clean_bot_name(&self) -> Result<String, String>;
+    fn to_clean_bot_name(&self) -> Result<String, BotNameError<'_>>;
 }
 
 impl ToCleanBotName for str {
-    fn to_clean_bot_name(&self) -> Result<String, String> {
-        let trimmed_bot_name = self.trim();
-
-        if trimmed_bot_name.is_empty() {
-            return Err(text::get().bot_name_empty().to_string());
+    fn to_clean_bot_name(&self) -> Result<String, BotNameError<'_>> {
+        let name = self.trim();
+        if name.is_empty() {
+            return Err(BotNameError::Empty);
         }
 
-        if let Some(illegal_char) = trimmed_bot_name.chars().find(|c| !is_bot_name_char(*c)) {
-            return Err(text::get().bot_name_illegal_char(trimmed_bot_name, illegal_char));
+        if let Some(character) = name.chars().find(|character| {
+            !character.is_ascii_alphanumeric() && !matches!(*character, '_' | '-')
+        }) {
+            return Err(BotNameError::InvalidCharacter { name, character });
         }
 
-        Ok(trimmed_bot_name.to_ascii_lowercase())
+        Ok(name.to_ascii_lowercase())
     }
-}
-
-fn is_bot_name_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }

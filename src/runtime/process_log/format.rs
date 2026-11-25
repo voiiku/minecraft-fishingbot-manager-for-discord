@@ -1,21 +1,23 @@
 //! 日志记录的格式与渲染：时间戳、级别前缀与续行缩进。
 
+use crate::config;
 use chrono::Local;
 use log::Level;
 
-/// 日志时间戳格式。
-const LOG_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-
-/// 日志续行缩进。
-const CONTINUATION_INDENT: &str = "  ";
-
 /// 当前时间的时间戳文本。
 pub(super) fn timestamp() -> String {
-    Local::now().format(LOG_TIME_FORMAT).to_string()
+    Local::now()
+        .format(config::Config::get().constants.process_log_timestamp_format)
+        .to_string()
 }
 
 /// 渲染一条日志记录，空消息丢弃，续行缩进两个空格。
-pub(super) fn format_record(timestamp: &str, level: Level, message: &str) -> Option<String> {
+pub(super) fn format_record(
+    timestamp: &str,
+    level: Level,
+    message: &str,
+    indent: &str,
+) -> Option<String> {
     if message.is_empty() {
         return None;
     }
@@ -28,7 +30,7 @@ pub(super) fn format_record(timestamp: &str, level: Level, message: &str) -> Opt
             rendered.push_str(&prefix);
         } else {
             rendered.push('\n');
-            rendered.push_str(CONTINUATION_INDENT);
+            rendered.push_str(indent);
         }
         rendered.push_str(chunk);
     }
@@ -60,7 +62,7 @@ mod tests {
             ("T", Level::Info, "a\r\nb", Some("[T] [INFO] a\n  b\n")),
         ] {
             assert_eq!(
-                format_record(timestamp, level, message).as_deref(),
+                format_record(timestamp, level, message, "  ").as_deref(),
                 expected,
                 "{message:?}"
             );

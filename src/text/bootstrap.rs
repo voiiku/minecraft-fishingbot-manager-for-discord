@@ -1,15 +1,127 @@
-//! 配置加载完成前使用的英文提示，以及进程入口调用顺序错误时的内部不变量说明。
+//! 首次上线前的英文错误、配置引导提示与内部不变量说明。
+
+use std::fmt::Display;
 
 use super::Language;
+
+/// 配置字段的校验要求。
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ConfigRequirement<'a> {
+    NonEmpty,
+    PlainName,
+    PortRange,
+    GreaterThanZero,
+    NonNegativeDuration,
+    InputPulseCommand { reason: &'a str },
+    DiscordTokenEmpty,
+    NoSingleQuote,
+    ShellSafe,
+    BaseDirIsDir,
+    JarIsFile,
+    AdminsKeyUserId { user_id: &'a str },
+    AdminsNameEmpty { user_id: &'a str },
+    ReplyCharsPositive,
+    AutocompleteChoicesInRange { max: usize },
+    LogFilenameFormat,
+    TimeFormat,
+    WatchdogTimingPositive,
+    OneOf(&'a [&'a str]),
+    McVersionOrAutomatic,
+}
+
+pub(crate) fn config_field_invalid(
+    field: impl Display,
+    requirement: ConfigRequirement<'_>,
+) -> String {
+    format!("config item {field} {}", requirement_text(requirement))
+}
+
+pub(crate) fn config_field_value_invalid(
+    field: impl Display,
+    value: impl Display,
+    requirement: ConfigRequirement<'_>,
+) -> String {
+    format!(
+        "config item {field} = {value} {}",
+        requirement_text(requirement)
+    )
+}
+
+fn requirement_text(requirement: ConfigRequirement<'_>) -> String {
+    match requirement {
+        ConfigRequirement::NonEmpty => "must not be empty".to_string(),
+        ConfigRequirement::PlainName => {
+            "must not contain whitespace or slashes, and must not be . or ..".to_string()
+        }
+        ConfigRequirement::PortRange => "must be a port number between 1 and 65535".to_string(),
+        ConfigRequirement::GreaterThanZero => "must be greater than 0".to_string(),
+        ConfigRequirement::NonNegativeDuration => {
+            "must be a finite, non-negative number of seconds within the supported range"
+                .to_string()
+        }
+        ConfigRequirement::InputPulseCommand { reason } => {
+            format!("must be input-pulse input supported in screen mode: {reason}")
+        }
+        ConfigRequirement::DiscordTokenEmpty => {
+            "must not be empty (Developer Portal -> your app -> Bot -> Reset Token)".to_string()
+        }
+        ConfigRequirement::NoSingleQuote => "must not contain a single quote".to_string(),
+        ConfigRequirement::ShellSafe => {
+            "must not contain quotes, backticks, $, ;, &, |, <, > or newlines".to_string()
+        }
+        ConfigRequirement::BaseDirIsDir => "does not exist or is not a directory".to_string(),
+        ConfigRequirement::JarIsFile => {
+            "does not exist or is not a file (relative paths are resolved against base_dir)"
+                .to_string()
+        }
+        ConfigRequirement::AdminsKeyUserId { user_id } => format!(
+            "the key {user_id:?} is not a Discord user ID: write it as plain digits, e.g. \
+             \"123456789012345678\" = \"name\""
+        ),
+        ConfigRequirement::AdminsNameEmpty { user_id } => {
+            format!("the name of user {user_id} must not be empty")
+        }
+        ConfigRequirement::ReplyCharsPositive => "must be greater than 0".to_string(),
+        ConfigRequirement::AutocompleteChoicesInRange { max } => {
+            format!("must be between 1 and {max} (Discord's autocomplete limit)")
+        }
+        ConfigRequirement::LogFilenameFormat => {
+            "must format a complete local date and time as one file name".to_string()
+        }
+        ConfigRequirement::TimeFormat => "must be a valid time format".to_string(),
+        ConfigRequirement::WatchdogTimingPositive => "must be greater than 0".to_string(),
+        ConfigRequirement::OneOf(allowed) => format!("must be one of: {}", allowed.join(", ")),
+        ConfigRequirement::McVersionOrAutomatic => {
+            "must be a version string like 1.20.4, or AUTOMATIC to detect it".to_string()
+        }
+    }
+}
+
+pub(crate) fn fishingbot_config_remove_failed(path: &str, reason: &str) -> String {
+    format!("failed to remove the old game-side config {path}: {reason}")
+}
+
+pub(crate) fn fishingbot_config_write_failed(path: &str, reason: &str) -> String {
+    format!("failed to write the game-side config {path}: {reason}")
+}
+
+pub(crate) fn fishingbot_config_serialize_failed(reason: &str) -> String {
+    format!("failed to serialize the game-side config: {reason}")
+}
+
+pub(crate) fn fishingbot_config_template_invalid(reason: &str) -> String {
+    format!("the bundled game-side config template is unusable: {reason}")
+}
+
+pub(crate) fn fishingbot_config_template_path_missing(path: &str) -> String {
+    format!("tried to find {path} in the game-side config template, but that path does not exist")
+}
 
 /// 配置还没装载就取用（`config::Config::get()`）：进程入口的调用顺序写错了，不是部署者的配置问题。
 ///
 /// 内部不变量消息，只有代码写错才会出现；那时没有语言可选，固定英文。
-pub const CONFIG_NOT_LOADED: &str = "config not loaded yet: call minecraft_fishingbot_manager_for_discord::config::Config::get_or_init() \
+pub const CONFIG_NOT_LOADED: &str = "config not loaded yet: call minecraft_fishingbot_manager_for_discord::config::Config::load() \
      at the process entry point before using any other API";
-
-/// 语言还没安装就取文案：进程入口没有走 `config::Config::get_or_init()`，属于调用顺序错误。
-pub const TEXT_NOT_INSTALLED: &str = "text language not installed yet: config::Config::get_or_init() installs it before any text is requested";
 
 /// `i18n.language` 的取值非法：此时还没有语言实现，报错固定英文（格式与其它配置项一致）。
 pub fn language_invalid(message: &str) -> String {
@@ -44,7 +156,7 @@ pub fn config_parse_failed(path: &str, reason: &str) -> String {
     )
 }
 
-/// 解析 `[paths]` 时的路径取值非法；此时语言尚未安装，固定英文。
+/// 解析 `[paths]` 时的路径取值非法；配置尚未发布，固定英文。
 pub fn config_path_value_invalid(field: &str, value: &str, requirement: &str) -> String {
     format!("Invalid config item {field}: `{value}`; {requirement}.")
 }

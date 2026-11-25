@@ -8,11 +8,28 @@ use std::time::Duration;
 use minecraft_fishingbot_manager_for_discord::config::{Admins, Config, Paths};
 use minecraft_fishingbot_manager_for_discord::text;
 
+#[test]
+#[should_panic(expected = "config not loaded yet")]
+fn accessing_configuration_before_loading_panics() {
+    Config::get();
+}
+
+#[test]
+fn builtin_values_are_combined_without_accepting_a_toml_constants_table() {
+    let config: Config = toml::from_str(common::example_config()).unwrap();
+    assert_eq!(config.constants.default_log_lines, 50);
+    assert_eq!(config.constants.status_timeout, Duration::from_secs(2));
+    assert_eq!(config.constants.private_file_mode, 0o600);
+    let input = format!(
+        "constants = {{ default_log_lines = 99 }}\n{}",
+        common::example_config()
+    );
+    assert!(toml::from_str::<Config>(&input).is_err());
+}
+
 /// 示例配置必须能被当前 schema 解析，且关键运行参数处于有效范围。
 #[test]
 fn example_config_matches_the_current_schema() {
-    common::install_english();
-
     let config: Config =
         toml::from_str(common::example_config()).expect("example config must match the schema");
 
@@ -42,10 +59,6 @@ fn example_config_matches_the_current_schema() {
     assert_eq!(config.startup_queue.bot_login_interval_ms, 1000);
     assert_eq!(config.startup_queue.batch_login_interval_ms, 20000);
     assert!(config.startup_queue.max_pending_requests > 0);
-    assert!(!config.command_echo.pause_echo.trim().is_empty());
-    assert!(!config.command_echo.unpause_echo.trim().is_empty());
-    assert_eq!(config.command_echo.wait_ms, 300);
-    assert!(config.command_echo.scan_lines > 0);
     assert!(!config.text.help.trim().is_empty());
 }
 
@@ -75,8 +88,7 @@ fn example_help_fits_and_includes_batch_commands() {
 fn timing_config_accepts_seconds_with_millisecond_precision() {
     let example: toml::Value = toml::from_str(common::example_config()).unwrap();
     type TimingField = (&'static str, &'static str, fn(&Config) -> u64);
-    let fields: [TimingField; 8] = [
-        ("command_echo", "wait", |config| config.command_echo.wait_ms),
+    let fields: [TimingField; 7] = [
         ("ping", "timeout", |config| config.ping.timeout_ms),
         ("startup_queue", "bot_login_interval", |config| {
             config.startup_queue.bot_login_interval_ms
@@ -187,6 +199,20 @@ fn unknown_field_is_rejected() {
     assert!(toml::from_str::<Config>(&text).is_err());
 }
 
+#[test]
+fn removed_command_echo_table_is_rejected() {
+    let input = format!("{}\n[command_echo]\nwait = 0.3\n", common::example_config());
+    let error = toml::from_str::<Config>(&input).unwrap_err();
+    assert!(error.to_string().contains("command_echo"), "{error}");
+}
+
+#[test]
+fn removed_online_keyword_is_rejected() {
+    let input = common::example_config().replace("[keywords]", "[keywords]\nonline = \"Welcome\"");
+    let error = toml::from_str::<Config>(&input).unwrap_err();
+    assert!(error.to_string().contains("online"), "{error}");
+}
+
 /// 示例配置中的每个键都必须在配置文档中以行内代码形式出现。
 #[test]
 fn every_example_key_is_documented() {
@@ -289,8 +315,6 @@ fn admins_lookup_by_user_id() {
 /// `base_dir` 必须是绝对路径。
 #[test]
 fn relative_base_dir_is_rejected() {
-    common::install_english();
-
     let error = read_paths("fishingbots", "FishingBot.jar", "config.json")
         .expect_err("relative base_dir must be rejected");
     assert!(error.contains("absolute path"), "{error}");
@@ -299,8 +323,6 @@ fn relative_base_dir_is_rejected() {
 /// `jar` 与 `fishingbot_config_file_name` 必须是相对路径。
 #[test]
 fn absolute_jar_or_config_file_name_is_rejected() {
-    common::install_english();
-
     let base_dir = absolute("srv/fishbot/data").display().to_string();
 
     let error = read_paths(

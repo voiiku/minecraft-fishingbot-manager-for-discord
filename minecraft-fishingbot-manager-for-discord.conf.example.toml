@@ -22,8 +22,8 @@ guild_ids = []
 [paths]
 # Absolute root directory for bot directories and the following files.
 base_dir = "/absolute/path/yourfolder/fishingbots"
-# FishingBot JAR file name, relative to base_dir.
-jar = "FishingBot-2.13.15.jar"
+# FishingBot JAR file name, relative to base_dir; must support /status, /pause and /unpause.
+jar = "FishingBot.jar"
 # Game configuration file name, relative to base_dir.
 # Regenerated at startup from `[fishingbot]`; direct edits do not persist.
 fishingbot_config_file_name = "config.json"
@@ -34,7 +34,7 @@ fishingbot_config_file_name = "config.json"
 # Game server address and port.
 server_ip = "127.0.0.1"
 server_port = 25565
-# `AUTOMATIC` detects the protocol; use an explicit version if detection fails.
+# `AUTOMATIC` detects the protocol; use an explicit version if detection fails (e.g. default_protocol = "26.2").
 default_protocol = "AUTOMATIC"
 # Automatic reconnect and delay in seconds.
 auto_reconnect = true
@@ -52,25 +52,10 @@ announce_type_chat = "NONE"
 "123456789012345678" = "your name"
 
 # ------------------------------ Log keywords ------------------------------
-# Keywords determine the state displayed by `/show status`; update them after server or JAR changes.
+# Log filtering does not determine bot status.
 [keywords]
-# Case-sensitive literal substring of the join message, excluding the player name.
-# It must remain in the filtered log.
-online = "Welcome to the xxx server"
 # `grep -v -E` expression; matching lines are excluded from the log.
 filter_regex = "([+][0-9.]+XP|is now AFK.|is no longer AFK.|is now away from keyboard.)"
-
-# ------------------------------ Command echo confirmation ------------------------------
-# Pause/unpause and pauseall/unpauseall confirmation scans new log output after the configured wait.
-[command_echo]
-# JAR command echoes; defaults match the English build.
-# These fields may be deprecated when upstream supports pause commands.
-pause_echo = "Fishing paused"
-unpause_echo = "Fishing resumed"
-# Delay before reading the log, in seconds.
-wait = 0.3
-# Maximum trailing lines to scan.
-scan_lines = 50
 
 # ------------------------------ Runtime ------------------------------
 [runtime]
@@ -84,8 +69,9 @@ token_file = "refreshToken"
 bot_logs_dir = "logs"
 # Maximum log lines in the `/log` attachment.
 max_reply_log_lines = 100
-# Reply limit in UTF-16 code units; Discord permits at most 2000.
-# Longer replies are truncated at line boundaries.
+# Positive report truncation target in UTF-16 code units; Discord permits at most 2000.
+# Reports are truncated by whole lines; an omission note can exceed a very small target.
+# This does not truncate every reply, and values above 2000 are not automatically capped.
 max_reply_chars = 2000
 # Autocomplete suggestion limit: 1-25.
 max_autocomplete_choices = 25

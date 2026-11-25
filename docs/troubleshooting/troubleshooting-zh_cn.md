@@ -79,9 +79,9 @@ fake-ip-filter:
 
 检查 `/log` 附件中的最新过滤日志与 `[keywords]` 配置：
 
-* `keywords.online` 必须是进服日志中**连续、区分大小写的原文**，不支持正则表达式。如果日志为 `欢迎 duck 回到示例服`，可使用 `回到示例服`，不能使用中间省略了名称的 `欢迎回到示例服`。同时确认该行未被 `keywords.filter_regex` 过滤。
+* 确认 `keywords.filter_regex` 未过滤 FishingBot 的 `/status` 回显。
 * 修改配置后需重启程序。`/start` 和 `/startall` 在 `timing.check_grace` 后检查一次状态；如果进服较慢，可在等待后使用 `/show status` 查看最新状态，或根据实际进服耗时适当增大宽限期。
-* 重连提示无法识别时，确认 `[i18n] language` 与 JAR 输出语言一致。`/pause`、`/unpause` 的回显由 `[command_echo]` 配置，需与 JAR 输出一致。机制见 [i18n.md](../mods/i18n/i18n-zh_cn.md)。
+* 状态无法识别时，确认 `[i18n] language` 与 JAR 输出语言一致，且 JAR 支持 `/status`。机制见 [i18n.md](../mods/i18n/i18n-zh_cn.md)。
 
 ## 11. 使用 `/startall` 时部分机器人启动失败
 

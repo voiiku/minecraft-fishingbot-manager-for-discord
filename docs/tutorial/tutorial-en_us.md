@@ -64,10 +64,10 @@ java -version     # Confirm it worked (printing the version you installed is eno
 # Create the working directory
 sudo mkdir -p /fishingbots && sudo chown "$USER" /fishingbots
 cd /fishingbots
-
-# Download FishingBot.jar
-curl -LO https://github.com/MrKinau/FishingBot/releases/download/v2.13.15/FishingBot-2.13.15.jar
 ```
+
+Download a JAR from [FishingBot releases](https://github.com/MrKinau/FishingBot/releases)
+and place it in the working directory. The example config uses `FishingBot.jar`; alternatively, set `paths.jar` to the actual filename.
 
 ## 3. Create a Discord server
 
@@ -190,8 +190,8 @@ This creates a directory on the Linux server: `/fishingbots/bots/<your Discord I
 
 ```bash
 # Run this on your own computer (it needs a Java runtime)
-java -jar /your/path/FishingBot-2.13.15.jar
-# Replace `FishingBot-2.13.15.jar` and the path with the real names, or just try double-clicking the jar.
+java -jar /your/path/FishingBot.jar
+# Replace the filename and path with the actual values, or try double-clicking the jar.
 ```
 * When the window appears, click run. Since this is the first run, it asks you to log in through a web page; after a successful login a `refreshToken` file appears next to it.
 * Open `refreshToken` and copy everything.
@@ -204,25 +204,25 @@ If you logged in successfully with `/bot login`, the bot should already be runni
 
 1. An acknowledgement: `Request accepted: /start duck. Any start operation will use the global queue. The complete result will follow in a separate message.`
 2. A result reply (one of three):
-   * the log confirms it joined: `Bot duck: start command sent, the session is up and the log confirms it joined`
-   * the session survives the grace period but the log is not confirmed: `Bot duck: start command sent, the session is up but the state is not confirmed yet`
+   * `/status` confirms it joined: `Bot duck: server join confirmed`
+   * the session survives the grace period but is not currently joined: `Bot duck: session exists; not currently joined (check /show status later)`
    * the session disappears before the grace period: `Bot duck: failed to start`
 
-* `/start` waits for `timing.check_grace` and then reports a conclusion from the session state and the log, instead of always replying "sent". The process may still change afterwards, so use `/show status` for the later state.
+* `/start` waits for `timing.check_grace`, checks the session and queries `/status`. An unavailable status or query error is reported without stopping the session.
 
 To check the status, send `/show status`. It returns a table of the running bots:
 
 ```
 Anti-AFK: not running
-bot | server status | pause status | uptime
-Your bot name | server online | fishing | 3 minutes
+bot | join status | pause status | no rod available | has bobber | last fishing action (Unix ms) | uptime
+Your bot name | joined | not paused | false | true | 1793615750570 | 3 minutes
 ```
-The pause status is an in-memory record of confirmed command echoes; the initial "fishing" value is not a live query.
-When FishingBot reconnects to the game server within the same session, the record is retained and may differ from the
-JAR's actual state. A successful bot restart through the manager clears the record.
+All five fields come from FishingBot's `/status` and are not stored by the manager. `last_fish` is the time of the
+last fishing action, not necessarily a catch. "Not paused" does not guarantee active fishing. Missing responses are
+reported as query errors; an unavailable fishing module is reported as an abnormal session.
 
 **Common problems**
-* The status stays at "ready" or "initializing": the log keywords may not match your game server. Check `keywords.online` first; if only "reconnecting" is not recognised, check that `[i18n] language` is correct.
+* Status queries fail: check that the JAR supports `/status`, `[i18n] language` matches the JAR, and `keywords.filter_regex` does not discard the response.
 
 * The session appeared and then exited on its own: use `/log` to read the newest bot log and find the cause (an invalid refreshToken, `runtime.java_opts` not matching the jar, or the process being killed for lack of memory). `/start` checks each bot twice and only reports success if it is still there on the second check, so this case is reported honestly.
 

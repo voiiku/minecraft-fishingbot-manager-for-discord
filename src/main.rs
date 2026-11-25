@@ -1,7 +1,7 @@
 //! 初始化配置与运行组件，再持续管理 Discord 连接。
 //! 运行时的永久连接错误会停止机器人并退出；可重试错误会停止机器人并等待重连。
 
-mod discord_commands;
+use minecraft_fishingbot_manager_for_discord::discord_commands;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,19 +12,22 @@ use poise::serenity_prelude as serenity;
 use discord_commands::{Data, Error, try_register_missing_sync_commands};
 use minecraft_fishingbot_manager_for_discord::config;
 use minecraft_fishingbot_manager_for_discord::{
-    ProcessLog, WATCHDOG, Watchdog, regenerate_fishingbot_config, text, utils::StartupQueue,
+    ProcessLog, Watchdog, bootstrap_error_text, complete_startup, regenerate_fishingbot_config,
+    runtime::{bot_startup::StartupQueue, shutdown},
+    text,
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 日志、看门狗与启动队列均依赖已加载的配置。
-    let settings = config::Config::get_or_init();
+    config::Config::load().unwrap_or_else(|message| shutdown::exit_on_permanent_failure(&message));
+    let settings = config::Config::get();
     let _ = ProcessLog::get_or_init();
-    let watchdog = WATCHDOG.get_or_init();
+    let watchdog = Watchdog::get_or_init();
     let _startup_queue = StartupQueue::get_or_init();
 
     if let Err(message) = regenerate_fishingbot_config() {
-        watchdog.exit_on_permanent_failure(&message);
+        shutdown::exit_on_permanent_failure(&message);
     }
 
     let mut attempt_count: u32 = 0;
@@ -36,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         attempt_count += 1;
         watchdog.begin_connection_attempt(Instant::now());
         let framework = build_framework()
-            .unwrap_or_else(|message| watchdog.exit_on_permanent_failure(&message));
+            .unwrap_or_else(|message| shutdown::exit_on_permanent_failure(&message));
 
         let stop_probe = Arc::new(AtomicBool::new(false));
         watchdog.probe(Arc::clone(&probe_http), Arc::clone(&stop_probe));
@@ -48,14 +51,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(client) => Some(client),
             Err(e) => {
                 stop_probe.store(true, Ordering::Relaxed);
-                let reason = setup_failure_reason(watchdog, &e.to_string());
+                let reason = setup_failure_reason(&e.to_string());
                 log::warn!(
                     "{}",
-                    text::get().log_text(text::LogText::ReconnectFailed {
-                        attempt: attempt_count,
-                        delay: watchdog.window(),
-                        reason: &reason,
-                    })
+                    bootstrap_error_text().reconnect_failed(
+                        attempt_count,
+                        watchdog.window(),
+                        &reason
+                    )
                 );
                 None
             }
@@ -68,10 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.shard_manager.shutdown_all().await;
             log::warn!(
                 "{}",
-                text::get().log_text(text::LogText::ReconnectScheduled {
-                    attempt: attempt_count + 1,
-                    delay: watchdog.window(),
-                })
+                bootstrap_error_text().reconnect_scheduled(attempt_count + 1, watchdog.window())
             );
         }
 
@@ -80,14 +80,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// 永久错误触发退出，其余错误返回重试原因。
-fn setup_failure_reason(watchdog: &Watchdog, error: &str) -> String {
-    let failure = text::setup_failure_log_text(error);
-
-    if text::failure_is_permanent(&failure) {
-        watchdog.exit_on_permanent_failure(&text::get().log_text(failure));
+fn setup_failure_reason(error: &str) -> String {
+    let (message, is_permanent) = setup_failure_details(error, bootstrap_error_text());
+    if is_permanent {
+        shutdown::exit_on_permanent_failure(&message);
     }
+    message
+}
 
-    text::get().log_text(failure)
+/// 根据 Discord 错误分类并生成日志文案。
+fn setup_failure_details(error: &str, language: &dyn text::Text) -> (String, bool) {
+    if ["Missing Access", "Unknown Guild"]
+        .iter()
+        .any(|phrase| error.contains(phrase))
+    {
+        (language.discord_init_failed_not_invited(error), true)
+    } else if ["Unauthorized", "Invalid Token", "401"]
+        .iter()
+        .any(|phrase| error.contains(phrase))
+    {
+        (language.discord_init_failed_bad_token(error), true)
+    } else {
+        (language.discord_init_failed(error), false)
+    }
 }
 
 /// 装配 poise 框架、确保手动同步入口存在并打印邀请链接。
@@ -101,16 +116,15 @@ fn build_framework() -> Result<poise::Framework<Data, Error>, String> {
             event,
             serenity::FullEvent::Ready { .. } | serenity::FullEvent::Resume { .. }
         ) {
-            let watchdog = WATCHDOG.get_or_init();
-            watchdog.record_handshake_success(Instant::now());
-            if watchdog.is_first_handshake() {
+            let watchdog = Watchdog::get_or_init();
+            if watchdog.record_handshake_success(Instant::now()) {
                 log::info!(
                     "{}",
-                    text::get().log_text(text::LogText::WatchdogReady {
-                        window: watchdog.window(),
-                        probe_interval: watchdog.probe_interval(),
-                        first_handshake_timeout: watchdog.first_handshake_timeout(),
-                    })
+                    config::Config::get().text().watchdog_ready(
+                        watchdog.window(),
+                        watchdog.probe_interval(),
+                        watchdog.first_handshake_timeout()
+                    )
                 );
             }
 
@@ -126,33 +140,28 @@ fn build_framework() -> Result<poise::Framework<Data, Error>, String> {
     async fn on_error(error: poise::FrameworkError<'_, Data, Error>) {
         match error {
             poise::FrameworkError::Setup { error, .. } => {
-                let watchdog = WATCHDOG.get_or_init();
-                watchdog.request_reconnect(setup_failure_reason(watchdog, &error.to_string()));
+                let watchdog = Watchdog::get_or_init();
+                watchdog.request_reconnect(setup_failure_reason(&error.to_string()));
             }
             poise::FrameworkError::Command { error, ctx, .. } => {
                 log::error!(
                     "{}",
-                    text::get().log_text(text::LogText::CommandRunFailed {
-                        error: &error.to_string(),
-                    })
+                    bootstrap_error_text().command_run_failed(&error.to_string())
                 );
                 discord_commands::reply_command_failure(ctx).await;
             }
             poise::FrameworkError::CommandPanic { payload, ctx, .. } => {
                 log::error!(
                     "{}",
-                    text::get().log_text(text::LogText::CommandRunFailed {
-                        error: payload.as_deref().unwrap_or("command panicked"),
-                    })
+                    bootstrap_error_text()
+                        .command_run_failed(payload.as_deref().unwrap_or("command panicked"))
                 );
                 discord_commands::reply_command_failure(ctx).await;
             }
             other => {
                 log::warn!(
                     "{}",
-                    text::get().log_text(text::LogText::FrameworkError {
-                        detail: &other.to_string(),
-                    })
+                    bootstrap_error_text().framework_error(&other.to_string())
                 );
             }
         }
@@ -170,15 +179,16 @@ fn build_framework() -> Result<poise::Framework<Data, Error>, String> {
                 let application_id = ready.user.id;
                 log::info!(
                     "{}",
-                    text::get().log_text(text::LogText::DiscordConnected {
-                        application_id: application_id.get(),
-                    })
+                    config::Config::get()
+                        .text()
+                        .discord_connected(application_id.get())
                 );
                 log::info!(
                     "{}",
-                    text::get().log_text(text::LogText::InviteUrl {
-                        url: &invite_url(application_id),
-                    })
+                    config::Config::get().text().invite_url(&invite_url(
+                        application_id,
+                        config::Config::get().constants.discord_invite_permissions
+                    ))
                 );
 
                 try_register_missing_sync_commands(
@@ -188,6 +198,7 @@ fn build_framework() -> Result<poise::Framework<Data, Error>, String> {
                 )
                 .await?;
 
+                complete_startup();
                 Ok(Data)
             })
         })
@@ -197,10 +208,10 @@ fn build_framework() -> Result<poise::Framework<Data, Error>, String> {
 /// 用应用 ID 拼出邀请链接。
 /// 权限位写在链接中（可在机器人页面查看）：
 /// View Channels `0x400` | Send Messages `0x800` | Embed Links `0x2000` | Attach Files `0x4000` | Read Message History `0x8000` = 60416。
-fn invite_url(application_id: serenity::UserId) -> String {
+fn invite_url(application_id: serenity::UserId, permissions: u64) -> String {
     format!(
-        "https://discord.com/oauth2/authorize?client_id={}&scope=bot+applications.commands&permissions=60416",
-        application_id.get()
+        "https://discord.com/oauth2/authorize?client_id={}&scope=bot+applications.commands&permissions={permissions}",
+        application_id.get(),
     )
 }
 
@@ -217,10 +228,36 @@ mod tests {
     /// Discord 权限位：Mention Everyone。
     const MENTION_EVERYONE: u64 = 0x1_0000;
 
+    #[test]
+    fn setup_failures_keep_their_category_and_retry_policy() {
+        for language in text::all_languages() {
+            for error in ["Missing Access", "Unknown Guild", "Missing Access: 401"] {
+                assert_eq!(
+                    setup_failure_details(error, *language),
+                    (language.discord_init_failed_not_invited(error), true)
+                );
+            }
+            for error in ["Unauthorized", "Invalid Token", "HTTP 401"] {
+                assert_eq!(
+                    setup_failure_details(error, *language),
+                    (language.discord_init_failed_bad_token(error), true)
+                );
+            }
+            let error = "connection refused";
+            assert_eq!(
+                setup_failure_details(error, *language),
+                (language.discord_init_failed(error), false)
+            );
+        }
+    }
+
     /// 邀请链接的权限位必须与最小权限集合一致，且不得包含高权限位。
     #[test]
     fn invite_url_carries_the_documented_permissions() {
-        let permissions = permissions_in(&invite_url(serenity::UserId::new(123)));
+        let permissions = permissions_in(&invite_url(
+            serenity::UserId::new(123),
+            EXPECTED_PERMISSIONS,
+        ));
 
         assert_eq!(permissions, EXPECTED_PERMISSIONS);
         assert_eq!(
@@ -253,7 +290,7 @@ mod tests {
     /// 缺少 `applications.commands` 时，斜杠命令注册会返回 `50001 Missing Access`。
     #[test]
     fn invite_url_carries_both_scopes() {
-        let url = invite_url(serenity::UserId::new(123));
+        let url = invite_url(serenity::UserId::new(123), EXPECTED_PERMISSIONS);
 
         assert!(url.contains("scope=bot+applications.commands"), "{url}");
         assert_eq!(url.matches("permissions=").count(), 1, "{url}");

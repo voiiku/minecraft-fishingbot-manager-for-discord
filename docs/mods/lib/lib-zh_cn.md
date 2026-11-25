@@ -1,91 +1,32 @@
-# lib：指令入口层（路由层）
+# 库接口与命令边界
 [English](lib-en_us.md) | **简体中文**
-
-* 代码：`src/lib.rs`（公开接口）与 `src/handlers/routes/`（指令路由）；autocomplete 候选查询位于 `src/discord_commands/autocomplete.rs`。
-* 定位：把 Discord 斜杠指令翻译成动作函数的那一层（架构文档里叫指令入口层，简称路由层，见
-  [architecture-zh_cn.md](../architecture/architecture-zh_cn.md) 第 1 节的术语说明），并统一处理错误文案与回复格式。
-* 上层是命令层（读取参数、校验数字、`defer` 与发送结果），下层 `handlers` 包含单机器人控制、账号管理、批量操作、只读查询和通用指令。
-* 权限全部在本层判一次（`has_permission`），底层被调用的函数不校验：每条指令都声明一个要求
-  （`utils::RequiredPermission`，见第 3 节）；单机器人指令的要求是目标机器人归调用者或调用者是管理员，
-  归属要先解析出目标条目才知道，因此本层用 `BotDirEntry::find_by_name` 取出条目并判定后，再交给业务函数。
-* 报告由调用方拼装：utils 只返回原始明细（例如停止操作返回 `StopOutcome`，它自带 `into_report()` 与
-  `to_failure_text()`），`into_report()` 必须由调用方显式调用，utils 不返回拼好的 `Report`。
-  批量停止由 `handlers::stop_all_bots()` 显式拼装；进程收尾在
-  `watchdog::Watchdog::exit_on_shutdown_signal()` 中就地拼同一份明细（只有标题不同）。
-* 可见性：每个模块只暴露一个受控接口。crate 的对外接口由 `lib.rs` 提供（`pub fn handle_*`、视图类型
-  `BotLogView`、`BotLoginPrompt` 与 `FishingbotConfigView`、`ProcessLog`、`StartupQueue` 等原语、
-  `WATCHDOG` 与 `Watchdog`，以及 `pub mod config`、`pub mod text`、`pub mod utils`）。
-  `handlers` 的业务模块和路由模块均为私有；路由层访问内部业务入口，公开的 `handle_*`、动作枚举与视图类型
-  由 `lib.rs` 再导出。
-* 参数同样不在本层清洗：命令层只切分并原样透传（动作枚举中保存 `raw_*`），真正使用该值的层再清洗一次
-  （机器人名在 `utils::ToCleanBotName::to_clean_bot_name`，指令片段在 `utils::ToCleanBotCommand`）。
 
 ## 1. 命名约定
 
-* `handle_*`：入口。接指令、分发动作、把错误转成给用户看的文案（全员指令与批量指令的权限在这里查）。
-* `bot_*_reply`：把一个动作枚举与原始参数收敛成回执文本的中间层，定义在命令层，不在本层。
-* `*Action` 枚举：指令的动作维度，是解析产物（参数由命令层原样透传），只在这里被解释。
-
-四个动作枚举与对应入口：
-
-* `BotControlAction` 由 `handle_bot_control` 处理，覆盖 `/start`、`/stop`、`/restart`、`/pause`、
-  `/unpause`、`/command`。
-* `BotManageAction` 由 `handle_bot_manage` 处理，覆盖 `/bot add`、`/bot del`、`/bot rename`、`/token`。
-* `/bot login` 不走动作枚举，它是**两段式**的两个入口：`handle_bot_login`（第一段：判权限、拉起会话、等
-  设备码）与 `handle_bot_login_await`（第二段：等凭据落盘或超时）。为什么只有它拆成两段，见
-  [commands-zh_cn.md 第 4.6 节](../commands/commands-zh_cn.md#46-bot-login)。
-* `ShowAction` 由 `handle_show` 处理，覆盖 `/show status`、`/show mybots`、`/show allbots`、`/show admins`；`/show botconfig` 不使用动作枚举
-  （它返回附件而不是文本），走 `handle_fishingbot_config`。
-* `AllBotsControlAction` 由 `handle_all_bots_control` 处理，覆盖 `/startall`、`/stopall`、
-  `/restartall`、`/pauseall`、`/unpauseall`、`/commandall`。
-
-其余指令没有动作枚举，各有专用入口：`handle_help`、`handle_whoami`、`handle_ping`、`handle_checkserver`、`handle_bot_log`、`handle_fishingbot_config`，以及 `/bot login` 的两段式入口。
-
-指令之外没有别的入口。autocomplete 的候选查询 `bot_name_candidate_states(caller_id)` 是命令层的私有函数：返回调用者有权查看的机器人名及运行状态；缺少机器人目录时返回空列表，目录读取失败时返回 `Err`。`BotNameScope`、前缀筛选、状态标签与候选数量上限都由命令层管理，再转换为 Discord 响应。它只提供建议，不执行机器人操作；各指令使用哪种 scope 见 [commands-zh_cn.md](../commands/commands-zh_cn.md)“指令选项的动态候选”一节。
+`operations` 提供不依赖 Discord 的命名函数。`/start` 直接调用 `start_single_bot(name, caller_id)`，`/restartall` 调用 `restart_all_bots(caller_id)`。没有动作枚举或统一分发器。
 
 ## 2. 错误处理约定
 
-* 权限不足有两种来源，错误文案由产生错误的层提供：
-  * 批量指令：路由层 `handle_all_bots_control` 直接返回
-    `Discord 用户 ID X 不是管理员，无权执行此操作！`（不进入业务函数，也不经过 `Report`）；
-  * 单机器人或账号管理指令：本层 `permitted_bot_dir_entry` 返回 `Err`，文案使用
-    `BotDirEntry::find_by_name` 中的 `未找到机器人 'X' 对应的目录，或你没有权限访问`（刻意不区分
-    不存在与无权限，见 [commands-zh_cn.md 第 4 节](../commands/commands-zh_cn.md)）。
-* 参数与业务错误：业务函数返回 `Result<String, String>`，`Err` 中是给用户看的文案；入口层只负责将其作为
-  回复返回，不改写措辞（避免同一件事出现两种说法）。
+普通命令返回本地化的结果文本；日志、配置附件和登录设备码使用类型化结果。`discord_commands` 负责 defer、阻塞线程、私密回复和附件，不执行机器人业务。
 
 ## 3. 权限规则
 
-每条指令声明一个要求，校验一律走 `has_permission(caller_id, 要求)`：
-
-* `Everyone`：`/help`、`/whoami`、`/show status`、`/ping`、`/checkserver`、`/show *`（含
-  `/show botconfig`），由本层的各 `handle_*` 判一次。
-* `MustBeAdmin`：`/startall`、`/stopall`、`/restartall`、`/pauseall`、`/unpauseall`、`/commandall`，由本层的
-  `handle_all_bots_control` 判一次（所以 `handlers/all_bots_control/*` 一律不带 `caller_id`）。
-* `OwnerOrAdmin(归属用户ID)`：单机器人指令（`/start`、`/stop`、`/log` 等）与账号管理指令
-  （`/bot del`、`/bot rename`、`/token`、`/bot login`），由本层 `permitted_bot_dir_entry` 判一次（先
-  `find_by_name` 解析条目，再按归属判）。
-
-另外三条：
-
-* 普通用户只能操作自己用户目录中的机器人；管理员（`[admins]`）一律放行。
-* 找不到与没权限回同一句话（刻意不区分，见 [commands-zh_cn.md 第 4 节](../commands/commands-zh_cn.md)）。
-* `/bot add` 建在调用者自己的用户目录下，归属由路径决定，所以要求就是 `Everyone`。
+单台控制、读取日志、编辑账号和开始登录前检查归属或管理员身份；无权访问与目标不存在的回复相同。批量控制、反 AFK 和指令同步仅管理员可用。新增机器人归调用者；公开查询不要求管理员。
 
 ## 4. 进程级生命周期
 
-进程级生命周期在 `src/runtime/watchdog/lifecycle.rs`，是 `Watchdog` 对象上的方法（路由层只是替 `main.rs` 再导出）：
+连接生命周期由 `src/runtime/watchdog/lifecycle.rs` 的 `Watchdog` 方法处理；机器人停止位于 `src/runtime/bot_instances/stop.rs`，进程退出位于 `src/runtime/shutdown.rs`：
 
-* `WATCHDOG.get_or_init()`：获取进程内唯一的看门狗（首次调用按配置 `[timing]` 创建，后续调用返回同一实例；
-  进程入口与事件回调都通过它取用）。必须在 `config::Config::get_or_init()` 之后调用，因为首次调用会读取配置。
+* `Watchdog::get_or_init()`：获取进程内唯一的看门狗（首次调用按配置 `[timing]` 创建，后续调用返回同一实例；
+  进程入口与事件回调都通过它取用）。必须在 `config::Config::load()` 之后调用，因为首次调用会读取配置。
   `Watchdog::new(...)` 是显式给定时序的构造，仅供测试。
-* `watchdog.shutdown_all_bots()`：停止所有运行中的机器人会话（不退出进程）。
-* `watchdog.exit_on_shutdown_signal()`：收到 SIGTERM / Ctrl+C 后的收尾（入口收到信号后调用）：记录日志、停止全部
+* `runtime::bot_instances::stop::shutdown_all_bots()`：停止所有运行中的机器人会话（不退出进程），失败时返回错误。
+* `runtime::shutdown::exit_on_shutdown_signal(notice_ctx)`：收到 SIGTERM / Ctrl+C 后的收尾（入口收到信号后调用）：记录日志、停止全部
   机器人、把收尾报告发到各服务器的通报频道（本次连接尚未握手成功时只写日志），以退出码 0 结束进程
   （systemd 不会重启）。
-* `watchdog.exit_on_permanent_failure(reason)`：停止全部机器人并以退出码 1 退出进程（`reason` 会写入本进程
-  日志）。仅用于配置错误（Token 无效、机器人未被邀请进服务器）：退出码 1 是本项目的主动失败专用码，
-  systemd 单元中配置 `RestartPreventExitStatus=1` 即可避免重启。
+* `runtime::shutdown::exit_on_permanent_failure(reason)`：配置已加载时报告错误并停止机器人，以退出码 1 结束；
+  配置未加载时只向终端报告并退出；日志不可用时也回退到终端。部署示例使用 systemd 的 `KillMode=control-group` 清理残留进程，
+  `RestartPreventExitStatus=1` 避免永久错误后重启。
 * `watchdog.request_reconnect(reason)`：判定掉线的一方（看门狗判定侧、入口的装配错误出口）用它把掉线原因交给
   进程入口并唤醒它：收尾与重建连接都由入口完成，不退出进程（见 [watchdog.md 第 4 节](../watchdog/watchdog-zh_cn.md)）。
 * `watchdog.wait_for_attempt(client)`：入口用它等待本次尝试结束并按结束方式收尾——`client.start()` 返回则调用私有的
@@ -97,9 +38,8 @@
 * `watchdog.notify_reconnect_success(ctx)`：掉线后恢复（`Ready` / `Resume` 再次到来）时，向本机器人所在的
   所有服务器发送一次通知；未发生掉线时不执行任何操作。
 
-装配失败怎么归类（哪种成因记哪条日志、算不算永久错）在文案层：`text::setup_failure_log_text` 与
-`text::failure_is_permanent`（见 [i18n.md](../i18n/i18n-zh_cn.md)）。`main.rs` 的装配错误出口靠它决定记哪条日志、
-要不要调 `exit_on_permanent_failure`。
+`main.rs` 按原因分类装配失败并选择对应的本地化日志。缺少访问权限或 Token 无效属于永久错误，
+调用 `exit_on_permanent_failure`；其他错误允许重试。
 
 ## 5. 相关文档
 

@@ -1,11 +1,11 @@
 # i18n: the language the program runs in
 [简体中文](i18n-zh_cn.md) | **English**
 
-* Mechanism: `src/text.rs` (`Language`, the `Text` trait, `install`, `get`) and `src/text/*.rs` (one file per
-  language: `en_us.rs` is the English implementation, `zh_cn.rs` is Simplified Chinese; plus five submodules: `bootstrap`
-  (English during bootstrap), `log_text` (`LogText`), `requirement` (`ConfigRequirement`), `setup_failure` (which
-  text a setup failure uses, and whether it counts as permanent), and `watchdog` (internal watchdog mutex-poisoning
-  notes, language-dependent)).
+* Mechanism: `src/text/mod.rs` defines `Language`, `Text`, `LogMessages` and `WatchdogText`;
+  `src/text/languages/` contains the English and Simplified Chinese implementations. `bootstrap` provides startup-specific
+  English messages and `report` formats shared reports. `text` depends on no other project modules: language comes from
+  `Config::get().text()`, the crate-root `bootstrap_error_text()` and `complete_startup()` manage the startup error
+  language boundary, and callers supply each report's language and length limit.
 * Config: `[i18n] language = "ENGLISH"` (what the example config ships; change it to `CHINESE_SIMPLIFIED` for a
   Chinese deployment). One language per process, read once at startup, restart to change it; the values are the
   constant names of FishingBot's own `i18n.Language` enum - this project implements only `ENGLISH` (English) and
@@ -20,13 +20,11 @@
 Included:
 
 * Command replies and error messages (the `Err` and `String` a business layer returns).
-* The words in the `/show status` table (the `Display` of `ConnectionStatus` and `PauseStatus`).
+* The column names and status text in the `/show status` table.
 * `Report` section titles and the "content too long" note.
-* The program log, the bootstrap console notes and config errors. They are for the deployer, but they follow
-  `[i18n] language` all the same (how that works is section 4); the only exception is the notes written before the
-  language has been read, which are fixed English (`src/text/bootstrap.rs`).
-* The JAR's own reconnect message (`jar_reconnect_prefix`, `jar_reconnect_suffix`), used to recognise "it
-  reconnected" in a bot log.
+* Program logs and runtime errors use `[i18n] language`. Configuration and other startup errors use English until
+  the first successful framework setup; existing non-error startup logs continue to use the configured language.
+* The JAR's `/status` response prefix and unavailable message.
 
 Deliberately not included:
 
@@ -35,64 +33,39 @@ Deliberately not included:
 * Internal invariant messages: the `expect(...)` and `panic!` texts that only appear when the code itself is wrong,
   plus `cargo test` assertion texts. Apart from the 14 watchdog lock-poisoning texts, they are not in the language
   tables (they do not implement `Text`); the one that must be fixed English lives in `bootstrap`, see section 4. The
-  watchdog texts are the exception: they occur after the config has loaded, so they must follow `[i18n] language`.
+  watchdog texts are the exception: startup errors use English and later errors use `[i18n] language`.
 * Code comments, `docs/` and command names (Discord only allows lowercase ASCII). Command and option descriptions
   live only in the language tables and are validated before registration (see
   [commands-en_us.md section 1.7.1](../commands/commands-en_us.md#171-command-text-validation)).
-* The example config's comments are fixed English: they are for people who edit the config by copying the template,
-  and they are kept apart from the Chinese code comments. Only the few entries whose value changes with the language
-  and must be changed for a Chinese deployment carry one extra `# CHINESE_SIMPLIFIED:` line (the two `command_echo`
-  echoes and `[i18n] language`) - that is not a second explanation but a value hint, and whoever changes the value
-  sees it at the same time, so it cannot drift.
-* Keywords tied to the game server or the local machine: the server's own join message, the local machine's end
-  marker, and the spam noise to drop on your own server. They differ per deployment and stay in `[keywords]`.
-* The `/pause` and `/unpause` echoes: the JAR prints them; whether they appear depends on whether the JAR supports those
-  two commands, so they stay in `[command_echo]` (`pause_echo`, `unpause_echo`); change them in place when you change
-  JAR builds, no rebuild needed.
+* The example config's comments are fixed English, separate from code comments.
+* The deployment-specific log filter stays in `[keywords]`.
 
 ### Why the JAR's own fixed texts come in, and log content does not
 
 There is one criterion: who decides this string.
 
-* `bot-automatic-reconnect` (the reconnect message) is decided by the JAR's own language resources: a Chinese JAR
-  says the Chinese sentence, an English JAR says the English one, whatever game server or machine it runs on. Making
-  the deployer copy it into the config turns something the program already knows into a chance for a human error
-  (one punctuation mark copied wrong and `/show status` shows "initializing" forever). So it follows `[i18n] language`:
-  run whichever language of JAR you have and set `language` to that language. Both strings are written one to one in
-  `src/text/zh_cn.rs` and `src/text/en_us.rs`, and the test
-  `text::tests::jar_reconnect_messages_are_non_empty_and_distinct_in_both_languages` watches them (non-empty in both
-  languages, and the two versions differ).
-* `command-pause-executed` and `command-unpause-executed` (the two command echoes) are decided by the JAR as well, but
-  they are only printed when the JAR supports `/pause` and `/unpause` (upstream plans to add both commands), so they live
-  in `[command_echo]` as `pause_echo` and `unpause_echo`: change the config when you change the JAR, no rebuild needed.
-  Startup validation requires both to be non-empty and neither to contain the other (otherwise that log line cannot be
-  told apart).
-* The other way round, `online` (the join message, from the game server or a plugin) and `filter_regex` (the spam
-  noise of your own server) are only known to the deployer and the JAR has no matching sentence, so they stay in
-  `[keywords]`, where startup validation requires them to be non-empty.
+* The `/status` response prefix and unavailable message also follow the JAR's language and live in the language table.
+* The deployment-specific `filter_regex` stays in `[keywords]`.
 * "Process finished" is neither printed by the jar nor configured: it reads the screen session state (a `(Dead ...)`
-  shell, see [utils-en_us.md](../utils/utils-en_us.md)). The end marker seen in logs was written by an older
+  shell, see [runtime-en_us.md](../runtime/runtime-en_us.md)). The end marker seen in logs was written by an older
   wrapper script (`>>> 机器人进程已结束或被手动中止 <<<`); this project does not write it, so there is nothing to
   translate.
 
-Change the game server or a plugin and you touch `[keywords]`; change the jar build and you look at the two
-`[command_echo]` echoes; change the JAR's config language (or change the JAR version and the texts changed with it)
+Change the game server or a plugin and you touch `[keywords]`; change the JAR's config language (or change the JAR version and the texts changed with it)
 and you set `[i18n] language` to the matching language (when the texts really did change, edit those two sentences in
-`src/text/*.rs`).
+`src/text/languages/*.rs`).
 
 ## 2. How to add a language (three steps, skip one and it does not compile)
 
-1. Add a file under `src/text/` implementing every method of `Text`. A trait rather than a
+1. Add a file under `src/text/languages/` implementing every method of `Text` and `LogMessages`. Traits rather than a
    `HashMap<&str, &str>` precisely so that a missing translation fails the build.
-2. Add `mod <file name>;` to `src/text.rs`, add an enum variant to `Language`, and add a branch to the `match` in
-   `Language::implementation()` (that is where `install()` takes the implementation; an uninstalled `get()` panics in
-   a production build and uses the English implementation in a test build).
-3. Add the language name to `Language::supported_names()`. That is the single source of valid values: config
-   validation, error texts, the example config and this document all take it from there, so there are never two lists
-   to drift apart. Copy the value from FishingBot's own `i18n.Language` enum constants - it is also what goes into
+2. Add `mod <file name>;` to `src/text/languages/mod.rs`, add an enum variant to `Language`, and add branches to
+   `Language::from_name()`, `Language::name()` and `Language::implementation()`.
+3. Add the language name to `Language::supported_names()` and keep it consistent with parsing and `name()`.
+   Copy the value from FishingBot's own `i18n.Language` enum constants - it is also what goes into
    `config.json` as `misc.language`, so do not invent another set of names (that would add a mapping table).
 
-No business layer and no config parsing changes are needed: the business layer only calls `text::get()`.
+No business layer and no config parsing changes are needed: the business layer only calls `config::Config::get().text()`.
 
 ## 3. Why not external language files (`.ftl`, `gettext`, a language pack toml)
 
@@ -107,47 +80,29 @@ implementations are in the binary, change the config). That fits the trade-offs 
 meant to be changed without a rebuild (`/help`) lives in the config as `text.help` anyway, so an English user who
 wants `/help` in English just replaces `text.help` (it was always meant to be written by the user).
 
-## 4. How it is read, and behavior before installation
+## 4. Reading texts
 
-* Business layers and utils always call `text::get().xxx(...)` (they do not touch the framework, only this).
-* Log and console texts go through `text::get().log_text(LogText::...)`. There are many of those and they have a
-  uniform shape, so they are funnelled through "an enum carrying data plus one method": the `match` in both language
-  files is exhaustive, so a missing translation, or a variant implemented on one side only, does not compile (the
-  same guarantee as method-by-method). The level (`info!`, `warn!`) is still decided at the call site, because that
-  is semantics rather than text.
-* `text::get()` only returns an installed implementation. A production build panics when none is installed (an
-  entry-point ordering error); a test build returns the English implementation so tests do not each have to call
-  `install()`. `Language` has no `Default` implementation; the first call in `validate()` is `validate_i18n`,
-  whose error text is fixed English, and the config entry then prints it to the terminal and exits with code 1. Text
-  assertions therefore fall into two kinds:
-  1. Wiring (which table this sentence comes from, and that it follows the language): expected values come from
-     `text::get()` (the JAR echoes, a bot name error, ...), so changing the test language does not turn them red;
-  2. Wording (sentences assembled from a field, a value and a requirement, such as config errors): pinned to
-     fragments of the English implementation.
-
-  The example config's `language = "ENGLISH"` only decides which language a new deployment runs in (change it to
-  `CHINESE_SIMPLIFIED` for a Chinese deployment); it has nothing to do with the English implementation used in a test
-  build before installation. It is also the value written into the generated `config.json` as `misc.language` (the same
-  value, not a mapped one, see [config.md section 3.2](../config/config-en_us.md)), so the jar speaks the same language
-  and the two can no longer disagree.
-* When the language is installed decides which messages can only be bootstrap English:
-  1. `config::Config::get_or_init()` installs once right after parsing succeeds, so config validation errors are in the configured
-     language too;
-  2. `main.rs` does not install a second time. The language is already installed in step 1, so `ProcessLog::get_or_init()`
-     starting the program log also uses the configured language. The entry point deliberately omits a second
-     `install()`, because it would have no effect and would only blur "where is the language chosen";
-  3. Anything sent before step 1 is fixed English: the config file is missing, cannot be read or fails to parse, the
-     template cannot be generated, the executable path cannot be located, `[i18n] language` is itself wrong, and the
-     `expect` for calling `config::Config::get()` before the config is loaded (`bootstrap::CONFIG_NOT_LOADED`), and
-     `bootstrap::TEXT_NOT_INSTALLED` when text is requested before a language is installed. No language
-     has been chosen then, so those hints are written in English. They all live in `crate::text::bootstrap`
-     (alongside the language tables but not implementing `Text`). The single criterion: is this note a product of the
-     config not having been read successfully.
-* Watchdog mutex-poisoning texts are provided by `crate::text::watchdog::WatchdogText` and
-  `Text::watchdog_text`, and follow `[i18n] language`; static strings avoid building a temporary `String` on every lock
-  operation.
-* Registration-time texts such as command descriptions read the same `get()`: `discord_commands::all_commands()` calls it
-  once after building the command tree (by then `install()` has run).
+* Business and runtime modules call `config::Config::get().text().xxx(...)` for localized messages without depending on the Discord framework.
+* Log and console texts use named `LogMessages` methods directly, for example
+  `config::Config::get().text().process_log_path(path)`. `Text` inherits `LogMessages`, so missing methods fail compilation in either
+  language. The log level (`info!`, `warn!`) remains the caller's responsibility.
+* Parsing converts the language name into `Language`, reporting unsupported names in English; the complete config is
+  published only after validation. `config::Config::get().text()` selects its language without a separate installed
+  language singleton. Accessing config before loading it panics; tests load config explicitly or select a language directly.
+  The same name is written into the game-side `config.json` as `misc.language`
+  (see [config.md section 3.2](../config/config-en_us.md)).
+* `text` does not depend on other project modules; callers supply the language and reply limit when creating a report.
+  Startup-specific configuration and game-side configuration errors are rendered by `text::bootstrap` in English.
+* Shared errors use the crate-root `bootstrap_error_text()`: English until the first framework setup succeeds, then the configured
+  language. Setup completes after the sync-command registration attempt; a per-server registration warning does not
+  prevent completion. Failed setup and retries before the first success remain in English; later reconnects do not
+  reset the boundary. External error details are preserved as supplied.
+  An application embedding the library must call the crate-root `complete_startup()` after its own successful setup;
+  otherwise shared errors remain in English.
+* Informational messages and command descriptions still use `config::Config::get().text()` and therefore the configured language.
+* Watchdog mutex-poisoning texts use `WatchdogText` and `Text::watchdog_text`; they follow the same startup error
+  boundary. Static strings avoid allocating on every lock operation.
+* Registration-time texts such as command descriptions also use the loaded configuration.
 
 ## 5. Layout rules: symbols follow the language, asides use round brackets
 
@@ -180,50 +135,24 @@ rules.
 
 The following text is provided through `Text` and the related enums:
 
-* `utils/reply.rs`: `Report` section labels, the "content too long" note, the count line `count_line`.
-* `utils/bot_status.rs`: the words in the `/show status` table and the fixed `jar_*` texts (the reconnect message prefix
-  and suffix; the `/pause` and `/unpause` echoes moved to `[command_echo]` for the "changes with the build" reason,
-  section 1).
-* `utils/bot_name.rs`: bot name errors.
-* `utils/bot_dirs.rs` (including the `Display` of `BotTokenStatus`) and `utils/running_bots.rs` (including the
+* `report.rs`: `Report` section labels, the "content too long" note, the count line `count_line`.
+* `runtime/bot_instances/bot_status.rs`: the `/show status` table and fixed `jar_*` texts for status responses.
+* `text::bot_name_error`: localizes validation errors from `utils::bot_name`.
+* `runtime/bot_instances/bot_dirs.rs` (including the `Display` of `BotTokenStatus`) and `runtime/bot_instances/bot_sessions.rs` (including the
   `/show status` column names).
-* `utils/screen.rs`, `runtime/startup.rs`, `utils/shutdown.rs`: the detail lines of the start and stop flows.
-* `handlers/bot_control/*`, `handlers/bot_manage/*`, `handlers/all_bots_control/*`, `show/*`, `general/*`.
-* `lib.rs` (the not-an-admin refusal) and the fixed command-layer texts ("started running", attachment bodies, usage
-  hints, `/whoami`).
+* `runtime/bot_instances/screen.rs`, `runtime/bot_startup/mod.rs`, `runtime/bot_instances/stop.rs`: the detail lines of the start and stop flows.
+* `operations/`: business operations and query results.
+* `operations/mod.rs` uses the not-an-admin refusal; `discord_commands/` uses progress messages, attachment bodies and usage hints.
 * Command metadata: command and option descriptions are supplied by the language table before registration; `/token`
   modal labels are read when the modal is created.
-* The program log (`log::*`), the bootstrap console notes and config errors (`config.rs` and `config/*`): through the
-  `LogText` enum and `log_text()`, with an exhaustive `match` in both languages.
-* Watchdog lock operations: through the `WatchdogText` enum and `watchdog_text()` (14 texts, following the language).
+* Program logs use the named methods of `LogMessages`. Startup-specific configuration errors live in `bootstrap`.
+* Watchdog lock operations use `WatchdogText` and `watchdog_text()`, with the startup error boundary described above.
 
 Out on purpose, by the boundary above: internal invariant messages (`expect(...)`, `panic!`) and test assertions. The
-sole exception is the watchdog lock-poisoning texts, which are runtime information and follow `[i18n] language`.
+sole exception is the watchdog lock-poisoning texts.
 
-`Text` currently has 163 methods (including `log_text`), 27 command descriptions, plus 77 `LogText` variants, 19
-`ConfigRequirement` variants and 14 `WatchdogText` variants, all of them with a call site. You can check that yourself
-(the first command cuts the `pub trait Text` block out of `src/text.rs` with `sed` and deduplicates the `fn` names, so
-a signature written across lines cannot be missed - that is how `command_log_attachment_body` is written; that first
-command also lists methods without a call site, and prints nothing when all is well; the last three count the variants
-of the three enums, and since the `match` is exhaustive the names that appear in a language file are exactly the
-variants):
-
-```bash
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sort -u | wc -l  # 163
-sed -n '/^pub trait Text/,/^}/p' src/text.rs | grep -oE 'fn [a-z_0-9]+' | sed 's/fn //' | sort -u | \
-while read -r m; do [ "$(grep -rn "\.$m(" src/ --include='*.rs' | grep -vc '^src/text')" -eq 0 ] && echo "未被调用: $m"; done
-grep -oE 'LogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l            # 77
-grep -oE 'ConfigRequirement::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l  # 19
-grep -oE 'WatchdogText::[A-Za-z]+' src/text/en_us.rs | sort -u | wc -l       # 14
-```
-
-The English implementation `src/text/en_us.rs` matches the Chinese one completely (163 methods, 27 command
-descriptions, 77 and 19 enum variants, plus 14 watchdog texts, not one missing: a missing method or `match` branch does
-not compile, a missing command description fails a test). To confirm English really comes up, set
-`language = "ENGLISH"` in the config and
-run once; the unit test `text::tests::english_impl_is_english` asserts against the English implementation directly
-(it does not call `install`, because `OnceLock` is process-wide and installing would disturb other tests running in
-parallel).
+Both language implementations must implement every `Text` and `LogMessages` method and exhaustively match
+`WatchdogText`; missing implementations fail compilation. Tests also validate the command-description tables.
 
 The wording follows the Chinese: change `zh_cn.rs` first, then align `en_us.rs`. A test process may not install a
 language, so `get()` returns the English implementation and wording assertions use English as their baseline.

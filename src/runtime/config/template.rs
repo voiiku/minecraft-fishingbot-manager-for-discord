@@ -24,7 +24,7 @@ pub(super) fn create_config_file_when_missing(path: &Path) -> Result<bool, Strin
     let mut file = match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
+        .mode(super::constants::PRIVATE_FILE_MODE)
         .open(path)
     {
         Ok(file) => file,
@@ -55,7 +55,7 @@ mod tests {
         let dir = temp_test_dir(&format!("template-{tag}"));
         std::fs::create_dir_all(&dir).expect("创建临时目录失败");
 
-        dir.join(crate::config::CONFIG_FILE_NAME)
+        dir.join(super::super::CONFIG_FILE_NAME)
     }
 
     /// 文件不存在时生成模板。
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn missing_parent_dir_is_error() {
         // 临时目录已清理，父目录不存在。
-        let path = temp_test_dir("template-absent").join(crate::config::CONFIG_FILE_NAME);
+        let path = temp_test_dir("template-absent").join(super::super::CONFIG_FILE_NAME);
 
         let err = create_config_file_when_missing(&path).expect_err("目录不存在时应当报错");
 
